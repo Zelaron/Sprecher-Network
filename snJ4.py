@@ -304,7 +304,7 @@ def plot_results(model, layers):
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 combined_forward, all_losses, layers = train_network_iterative(
-    target_function, n_layers=1, total_epochs=100000, print_every=20000, device=device
+    target_function, n_layers=1, total_epochs=300000, print_every=20000, device=device
 )
 
 # Create a model function for easy evaluation
