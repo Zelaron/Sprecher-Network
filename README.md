@@ -25,10 +25,6 @@ Run the training and visualization script:
    python snH9.py
    ```
 
-## Repository Name
-
-**SprecherSplineNet**
-
 ## License
 
-MIT License
+MIT License - see the [LICENSE](LICENSE) file for details.
