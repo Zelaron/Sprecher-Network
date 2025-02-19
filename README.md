@@ -22,7 +22,7 @@ This project implements a neural network with custom spline layers using PyTorch
 
 Run the training and visualization script:
    ```
-   python snH9.py
+   python snJ4.py
    ```
 
 ## License
