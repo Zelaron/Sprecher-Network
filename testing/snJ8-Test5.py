@@ -15,7 +15,7 @@ NUM_SURFACE_POINTS = 50
 # architecture = [7]
 # For two hidden layers (with 5 nodes in the first and 8 in the second):
 # architecture = [5, 8]
-architecture = [7]  # Change this to [5, 8] to use two hidden layers
+architecture = [5,8]  # Change this to [5, 8] to use two hidden layers
 
 # -----------------------------
 # Target function definition:
