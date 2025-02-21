@@ -25,7 +25,7 @@ Required packages:
 ## Usage
 Run the main script:
 ```
-python snJ7.py
+python snJ8.py
 ```
 ## Customization
 - Modify the target function in the code (uncomment the desired version for 1D or 2D).
