@@ -1,10 +1,3 @@
-architecture = [5, 8]  # two hidden layers – first with 5 nodes (which will output a vector) and second with 8 nodes that produces the final scalar output
-```)
-that controls whether the network is one‐ or two‐layer. In the one‐layer case the SprecherLayer works just as before (using two splines, φ and Φ), while in the two–hidden–layer network the first layer is “hidden” (it only uses its φ spline as an activation, without summing over nodes) and the second (final) layer uses both φ and Φ—thus overall you will see three splines in the plots (the first layer’s φ, then the second layer’s φ and its output‐spline Φ). The network is trained end‐to‐end with standard backpropagation. Also, the network‐structure subplot now adapts to the number of hidden layers, drawing four “columns” (input, hidden layer 1, hidden layer 2, output) for two–hidden–layer networks (with appropriate labels such as φ₁, φ₂, and Φ₂) while retaining the original style for one hidden layer.
-
-Here is the full updated code:
-
-```python
 import torch
 import torch.nn as nn
 import numpy as np
@@ -446,7 +439,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Train the network using the specified architecture.
 model, loss_history, layers = train_network(
-    target_function, architecture, total_epochs=100000, print_every=10000, device=device
+    target_function, architecture, total_epochs=500000, print_every=10000, device=device
 )
 
 # Create a simple model function for easy evaluation.
