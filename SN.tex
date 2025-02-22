@@ -21,7 +21,8 @@ We present \emph{Sprecher Networks}, a family of trainable neural architectures 
 
 \section{Introduction and Historical Background}
 Approximation of continuous functions by sums of univariate functions has been a recurring theme in mathematical analysis and neural networks. Kolmogorov's Superposition Theorem (1957), refined by Arnold, established that any multivariate continuous function $f : [0,1]^d \to \mathbb{R}$ can be represented as a finite sum of strictly increasing univariate functions applied to affine transformations of $x_1,\dots,x_d$.
-
+\\
+\\
 \textbf{David Sprecher's 1965 Construction.}$$f(\mathbf{x})=\sum_{q=0}^{2n}\Phi\Bigl(\,\sum_{p=1}^{n}\lambda_p\,\phi\bigl(x_p+\eta\,q\bigr)+q\Bigr)$$In his 1965 landmark paper, David Sprecher \cite{sprecher1965} proposed a simplified version of the Kolmogorov--Arnold representation that specifically replaces families of $\phi_{q,p}$ by a single monotonic function $\phi$ with suitable argument shifts. Concretely, Sprecher showed that this single-layer construction suffices to approximate any $d$‐variate continuous function when $n \ge d$ and the parameters $(\eta,\lambda_1,\dots,\lambda_n)$ and splines $(\phi,\Phi)$ are chosen carefully. His result preserves the key insight of \emph{shifting the input coordinates} by multiples of $\eta$ and summing the partial evaluations under a final univariate map $\Phi$.
 
 \section{Motivation and Overview of Sprecher Networks}
@@ -125,7 +126,7 @@ A natural conjecture is that stacking these blocks retains universal approximati
 In practice, we train Sprecher Networks on small data sets sampled from a target function $f$. Two classic examples are:
 \begin{itemize}
 \item \textbf{1D case:} A polynomial or sinusoidal function on $[0,1]$. The network learns $\phi$ and $\Phi$ splines that approximate $f$ very accurately, effectively acting like a learnable spline interpolant.
-\item \textbf{2D case:} A surface such as $f(x,y)=\exp(\sin(\pi x)+y^2)/7$. Once trained for sufficient epochs, good approximation is observed after $O(10^5)$ gradient updates. Layerwise spline plots offer an interpretable view of how the network transforms inputs.
+\item \textbf{2D case:} A surface such as $f(x,y)=\exp(\sin(\pi x)+y^2)/7$. Once trained for sufficient epochs, good approximation is generally observed after $O(10^5)$ gradient updates. Layerwise spline plots offer an interpretable view of how the network transforms inputs.
 \end{itemize}
 
 \section{Conclusion}
