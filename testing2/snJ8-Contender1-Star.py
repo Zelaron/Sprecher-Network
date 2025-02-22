@@ -22,9 +22,9 @@ architecture = [5, 8]  # Change this to [7] for one hidden layer
 # Uncomment the desired version.
 def target_function(x):
     # For 1D:
-    return (x[:, [0]] - 0.5)**5 - (x[:, [0]] - (1/3))**3 + (1/5)*(x[:, [0]] - 0.1)**2
+    # return (x[:, [0]] - 0.5)**5 - (x[:, [0]] - (1/3))**3 + (1/5)*(x[:, [0]] - 0.1)**2
     # For 2D:
-    # return (torch.exp(torch.sin(torch.pi * x[:, [0]]) + x[:, [1]]**2) - 1) / 7
+    return (torch.exp(torch.sin(torch.pi * x[:, [0]]) + x[:, [1]]**2) - 1) / 7
 
 # --- Utility: Determine input dimension ---
 def get_input_dimension(target_function):
@@ -393,7 +393,7 @@ def plot_results(model, layers):
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 model, losses, layers = train_network(
-    target_function, architecture=architecture, total_epochs=10000, print_every=10000, device=device
+    target_function, architecture=architecture, total_epochs=300000, print_every=10000, device=device
 )
 
 # Now pass the actual model (an nn.Module) to the plotting function.
