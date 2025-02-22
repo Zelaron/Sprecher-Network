@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
+import matplotlib.gridspec as gridspec
 
 # Settings for plotting resolution
 NUM_PLOT_POINTS = 200
@@ -57,7 +58,7 @@ class SimpleSpline(nn.Module):
         self.in_min, self.in_max = in_range
         self.out_min, self.out_max = out_range
         self.monotonic = monotonic
-        # Register knots as a buffer so they transfer with the module
+        # Register knots as a buffer so they move with the module when transferring devices
         self.register_buffer('knots', torch.linspace(self.in_min, self.in_max, num_knots))
         
         torch.manual_seed(SEED)
@@ -222,30 +223,17 @@ def train_network(target_function, architecture, total_epochs=100000, print_ever
         model.load_state_dict(best_state)
     return model, losses, model.layers
 
-# --- Plotting Functions ---
-def plot_network_structure(layers, input_dim):
+# --- Plotting Functions for Combined Figure ---
+def plot_network_structure_ax(ax, layers, input_dim):
     """
-    Plots a schematic of the network structure, including input, hidden, and output nodes,
-    with edges labeled by the associated activation functions. The labels adapt based on
-    the number of hidden layers.
+    Plots a schematic of the network structure on the given axis.
     """
-    # Determine the number of hidden layers.
-    # In our design, if architecture is non-empty, the final block is marked is_final.
-    num_hidden = len(layers) - 1 if len(layers) > 0 and layers[-1].is_final else len(layers)
-    total_layers = num_hidden + 2  # input and output layers included
-    layer_x = np.linspace(0.1, 0.9, total_layers)
-    
-    plt.figure(figsize=(8, 6))
-    plt.title("Network Structure with Parameters")
-    
-    # Define function symbols for the edges between layers.
-    if num_hidden == 1:
-        symbols = ["φ", "Φ"]
-    elif num_hidden == 2:
-        symbols = ["φ", "ψ", "Φ"]
+    # Determine total number of layers: input + hidden layers + output.
+    if len(layers) == 1 and layers[0].is_final:
+        total_layers = 2
     else:
-        # For more than 2 hidden layers, generate symbols dynamically.
-        symbols = ["φ"] + [f"ψ_{i}" for i in range(1, num_hidden)] + ["Φ"]
+        total_layers = len(layers) + 1  # input layer + blocks
+    layer_x = np.linspace(0.1, 0.9, total_layers)
     
     # Plot input nodes.
     if input_dim == 1:
@@ -253,12 +241,11 @@ def plot_network_structure(layers, input_dim):
     else:
         input_y = np.linspace(0.2, 0.8, input_dim)
     for i, y in enumerate(input_y):
-        plt.scatter([layer_x[0]], [y], c='black', s=100)
-        plt.text(layer_x[0] - 0.05, y, f'x_{i+1}', ha='right', va='center')
+        ax.scatter(layer_x[0], y, c='black', s=100)
+        ax.text(layer_x[0] - 0.05, y, f'x_{i+1}', ha='right', va='center')
     
-    prev_node_count = input_dim
     prev_y = input_y
-    # Plot each layer (hidden and output).
+    # Plot each subsequent layer.
     for idx, layer in enumerate(layers):
         if layer.is_final:
             node_count = 1
@@ -270,92 +257,93 @@ def plot_network_structure(layers, input_dim):
             color = 'blue'
             label = f'Hidden {idx+1}'
             current_y = np.linspace(0.2, 0.8, node_count)
-        # Plot nodes.
+        # Ensure x is repeated for each node.
+        ax.scatter([layer_x[idx+1]] * len(current_y), current_y, c=color, s=100)
         for j, y in enumerate(current_y):
-            plt.scatter([layer_x[idx+1]], [y], c=color, s=100)
             if not layer.is_final:
-                plt.text(layer_x[idx+1] + 0.05, y, f'q_{idx+1}{j}', ha='left', va='center')
+                ax.text(layer_x[idx+1] + 0.05, y, f'q_{idx+1}{j}', ha='left', va='center')
             else:
-                plt.text(layer_x[idx+1] + 0.05, y, label, ha='left', va='center')
-        # Draw connections from previous layer nodes to current layer nodes.
+                ax.text(layer_x[idx+1] + 0.05, y, label, ha='left', va='center')
+        # Draw connections from previous layer to current layer.
         for y_prev in prev_y:
             for y_curr in current_y:
-                plt.plot([layer_x[idx], layer_x[idx+1]], [y_prev, y_curr], 'k-', alpha=0.3)
-        # Place the activation function label in the middle between layers.
-        mid_x = (layer_x[idx] + layer_x[idx+1]) / 2
-        plt.text(mid_x, 0.15, symbols[idx] if idx < len(symbols) else '', ha='center', fontsize=14)
-        prev_y = current_y
-    plt.axis('off')
-    plt.show()
-
-def plot_splines(layers):
-    """
-    Plots the spline functions used in each block.
-    For hidden layers, plots the inner spline (φ).
-    For the final block, plots the outer spline (Φ).
-    """
-    # Total number of plots: one for each hidden block plus one for the final block.
-    num_plots = len(layers)
-    plt.figure(figsize=(5 * num_plots, 4))
-    plot_idx = 1
-    for i, layer in enumerate(layers):
-        plt.subplot(1, num_plots, plot_idx)
-        if not layer.is_final:
-            plt.title(f"Layer {i+1} Inner Spline (φ)")
-            with torch.no_grad():
-                x_vals = torch.linspace(layer.phi.in_min, layer.phi.in_max, NUM_PLOT_POINTS).to(layer.phi.knots.device)
-                y_vals = layer.phi(x_vals)
+                ax.plot([layer_x[idx], layer_x[idx+1]], [y_prev, y_curr], 'k-', alpha=0.3)
+        # Label the edge between layers.
+        if idx == 0:
+            edge_label = "φ"
+        elif layer.is_final:
+            edge_label = "Φ"
         else:
-            plt.title("Final Layer Outer Spline (Φ)")
+            edge_label = f"ψ_{idx}"
+        mid_x = (layer_x[idx] + layer_x[idx+1]) / 2
+        ax.text(mid_x, 0.15, edge_label, ha='center', fontsize=14)
+        prev_y = current_y
+    ax.axis('off')
+
+def plot_results(model, layers):
+    # Determine input dimension from first layer if available.
+    input_dim = layers[0].d_in if hasattr(layers[0], 'd_in') else get_input_dimension(target_function)
+    num_splines = len(layers)
+    top_cols = 1 + num_splines  # first column for network structure, rest for spline plots
+
+    fig = plt.figure(figsize=(4 * top_cols, 10))
+    gs = gridspec.GridSpec(2, top_cols, height_ratios=[1, 1.2])
+    
+    # Top row, first column: Network Structure
+    ax_net = fig.add_subplot(gs[0, 0])
+    plot_network_structure_ax(ax_net, layers, input_dim)
+    ax_net.set_title("Network Structure with Parameters", fontsize=12)
+    
+    # Top row, remaining columns: Spline Plots (one per block)
+    for i, layer in enumerate(layers):
+        ax_spline = fig.add_subplot(gs[0, i+1])
+        if layer.is_final:
+            ax_spline.set_title("Final Layer Outer Spline (Φ)", fontsize=12)
             with torch.no_grad():
                 x_vals = torch.linspace(layer.Phi.in_min, layer.Phi.in_max, NUM_PLOT_POINTS).to(layer.Phi.knots.device)
                 y_vals = layer.Phi(x_vals)
-        plt.plot(x_vals.cpu(), y_vals.cpu())
-        plt.grid(True)
-        plot_idx += 1
-    plt.show()
-
-def plot_function_comparison(model, input_dim):
-    """
-    Plots a comparison between the target function and the network output.
-    Uses 2D line plots for 1D input and 3D surface plots for 2D input.
-    """
-    plt.figure(figsize=(7, 5))
+            ax_spline.plot(x_vals.cpu(), y_vals.cpu(), 'm-')
+        else:
+            ax_spline.set_title(f"Hidden Layer {i+1} Inner Spline (φ)", fontsize=12)
+            with torch.no_grad():
+                x_vals = torch.linspace(layer.phi.in_min, layer.phi.in_max, NUM_PLOT_POINTS).to(layer.phi.knots.device)
+                y_vals = layer.phi(x_vals)
+            ax_spline.plot(x_vals.cpu(), y_vals.cpu(), 'c-')
+        ax_spline.grid(True)
+    
+    # Bottom row: Function Comparison
     if input_dim == 1:
-        plt.title("Function Comparison")
+        ax_func = fig.add_subplot(gs[1, :])
+        ax_func.set_title("Function Comparison", fontsize=12)
         x_test = torch.linspace(0, 1, NUM_PLOT_POINTS).reshape(-1, 1)
         y_true = target_function(x_test)
         with torch.no_grad():
             y_pred = model(x_test)
-        plt.plot(x_test.cpu(), y_true.cpu(), '--', label='Target f(x)')
-        plt.plot(x_test.cpu(), y_pred.cpu(), '-', label='Network output')
-        plt.grid(True)
-        plt.legend()
+        ax_func.plot(x_test.cpu(), y_true.cpu(), 'k--', label='Target f(x)')
+        ax_func.plot(x_test.cpu(), y_pred.cpu(), 'r-', label='Network output')
+        ax_func.grid(True)
+        ax_func.legend()
     else:
-        fig = plt.figure(figsize=(14, 6))
-        ax1 = fig.add_subplot(121, projection='3d')
+        # For 2D case, create 3D axes for target function and network output.
+        half = top_cols // 2 if top_cols > 2 else 1
+        ax_target = fig.add_subplot(gs[1, :half], projection='3d')
+        ax_target.set_title("Target Function", fontsize=12)
         n = NUM_SURFACE_POINTS
         x = torch.linspace(0, 1, n)
         y = torch.linspace(0, 1, n)
         X, Y = torch.meshgrid(x, y, indexing='ij')
         points = torch.stack([X.flatten(), Y.flatten()], dim=1)
         Z_true = target_function(points).reshape(n, n)
-        ax1.plot_surface(X.cpu().numpy(), Y.cpu().numpy(), Z_true.cpu().numpy(), cmap='viridis')
-        ax1.set_title('Target Function')
+        ax_target.plot_surface(X.cpu().numpy(), Y.cpu().numpy(), Z_true.cpu().numpy(), cmap='viridis')
         
-        ax2 = fig.add_subplot(122, projection='3d')
+        ax_output = fig.add_subplot(gs[1, half:], projection='3d')
+        ax_output.set_title("Network Output", fontsize=12)
         with torch.no_grad():
             Z_pred = model(points.to(next(model.parameters()).device)).reshape(n, n)
-        ax2.plot_surface(X.cpu().numpy(), Y.cpu().numpy(), Z_pred.cpu().numpy(), cmap='viridis')
-        ax2.set_title('Network Output')
+        ax_output.plot_surface(X.cpu().numpy(), Y.cpu().numpy(), Z_pred.cpu().numpy(), cmap='viridis')
+    
+    plt.tight_layout()
     plt.show()
-
-def plot_results(model, layers):
-    # Determine input dimension from the first layer if available.
-    input_dim = layers[0].d_in if hasattr(layers[0], 'd_in') else get_input_dimension(target_function)
-    plot_network_structure(layers, input_dim)
-    plot_splines(layers)
-    plot_function_comparison(model, input_dim)
 
 # --- Main Execution ---
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -364,10 +352,8 @@ model, losses, layers = train_network(
     target_function, architecture=architecture, total_epochs=100000, print_every=10000, device=device
 )
 
-# Create a model function for easy evaluation.
-model_fn = lambda x: model(x)
-
-plot_results(model_fn, layers)
+# Now pass the actual model (an nn.Module) to the plotting function.
+plot_results(model, layers)
 
 # Plot loss curve.
 plt.figure(figsize=(8, 5))
