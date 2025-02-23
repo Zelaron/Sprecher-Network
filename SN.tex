@@ -37,6 +37,14 @@ $$(x_i)_{i=1}^{d_\mathrm{in}}\;\;\mapsto\;\;\Bigl[\Phi\bigl(\textstyle\sum_i\lam
 $$d_0\to d_1\to\dots\to d_{L-1}\to 1$$
 in multiple \emph{layer blocks}, each embedding the shift‐and‐sum routine. By doing so, we recover a deeper analog of the Kolmogorov--Arnold--Sprecher construction with additional expressive power, while retaining a clear theoretical link to the classical result.
 
+This recovers the structure of Sprecher's formula when $L=1$, but generalized to multiple layers for $L>1$. If we introduce the operator
+$$T^{(\ell)}: \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell},\quad \text{defined by}\quad \bigl(T^{(\ell)}(z)\bigr)_q=\Phi^{(\ell)}\Bigl(\sum_{i=1}^{d_{\ell-1}}\lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\bigl(z_i+\eta^{(\ell)}\,q\bigr)+q\Bigr),$$
+with the convention $\mathbf{h}^{(0)}=\mathbf{x}$, then we can write
+\begin{equation}
+f(\mathbf{x})=\sum_{q=0}^{d_L-1}\Bigl(T^{(L)}\circ T^{(L-1)}\circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x})_q.
+\label{eq:composition}
+\end{equation}
+
 \section{Core Architectural Details}
 \subsection{Single Block Structure}
 A single \emph{Sprecher block}, which transforms $\mathbb{R}^{d_{\mathrm{in}}}$ to $\mathbb{R}^{d_{\mathrm{out}}}$, consists of:
