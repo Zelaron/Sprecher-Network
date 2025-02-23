@@ -37,14 +37,6 @@ $$(x_i)_{i=1}^{d_\mathrm{in}}\;\;\mapsto\;\;\Bigl[\Phi\bigl(\textstyle\sum_i\lam
 $$d_0\to d_1\to\dots\to d_{L-1}\to 1$$
 in multiple \emph{layer blocks}, each embedding the shift‐and‐sum routine. By doing so, we recover a deeper analog of the Kolmogorov--Arnold--Sprecher construction with additional expressive power, while retaining a clear theoretical link to the classical result.
 
-This recovers the structure of Sprecher's formula when $L=1$, but generalized to multiple layers for $L>1$. If we introduce the operator
-$$T^{(\ell)}: \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell},\quad \text{defined by}\quad \bigl(T^{(\ell)}(z)\bigr)_q=\Phi^{(\ell)}\Bigl(\sum_{i=1}^{d_{\ell-1}}\lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\bigl(z_i+\eta^{(\ell)}\,q\bigr)+q\Bigr),$$
-with the convention $\mathbf{h}^{(0)}=\mathbf{x}$, then we can write
-\begin{equation}
-f(\mathbf{x})=\sum_{q=0}^{d_L-1}\Bigl(T^{(L)}\circ T^{(L-1)}\circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x})_q.
-\label{eq:composition}
-\end{equation}
-
 \section{Core Architectural Details}
 \subsection{Single Block Structure}
 A single \emph{Sprecher block}, which transforms $\mathbb{R}^{d_{\mathrm{in}}}$ to $\mathbb{R}^{d_{\mathrm{out}}}$, consists of:
@@ -62,7 +54,13 @@ Let $L$ be the number of blocks. Suppose the $\ell$-th block maps $\mathbb{R}^{d
 $$\mathbf{h}^{(\ell)}_q=\Phi^{(\ell)}\Bigl(\sum_{i=1}^{d_{\ell-1}}\lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\bigl(\mathbf{h}^{(\ell-1)}_i+\eta^{(\ell)}\,q\bigr)+q\Bigr),\quad q=0,\dots,d_\ell-1.$$ 
 If the final block has $d_L=1$, we \emph{sum} its $q$-outputs to get a scalar function value,
 $$f(\mathbf{x})=\sum_{q=0}^{d_L-1}\mathbf{h}^{(L)}_q.$$
-This recovers the structure of Sprecher's formula when $L=1$, but generalized to multiple layers for $L>1$.
+This recovers the structure of Sprecher's formula when $L=1$, but generalized to multiple layers for $L>1$. If we introduce the operator
+$$T^{(\ell)}: \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell},\quad \text{defined by}\quad \bigl(T^{(\ell)}(z)\bigr)_q=\Phi^{(\ell)}\Bigl(\sum_{i=1}^{d_{\ell-1}}\lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\bigl(z_i+\eta^{(\ell)}\,q\bigr)+q\Bigr),$$
+with the convention $\mathbf{h}^{(0)}=\mathbf{x}$, then we can write
+\begin{equation}
+f(\mathbf{x})=\sum_{q=0}^{d_L-1}\Bigl(T^{(L)}\circ T^{(L-1)}\circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x})_q.
+\label{eq:composition}
+\end{equation}
 
 \subsubsection{Single Hidden Layer ($L=1$)}
 For a $\mathrm{SprecherNetwork}$ with $d_0=d_{\mathrm{in}}$ inputs, one block of dimension $d_1$, and final summation, we have
@@ -134,7 +132,7 @@ A natural conjecture is that stacking these blocks retains universal approximati
 In practice, we train Sprecher Networks on small data sets sampled from a target function $f$. Two classic examples are:
 \begin{itemize}
 \item \textbf{1D case:} A polynomial or sinusoidal function on $[0,1]$. The network learns $\phi$ and $\Phi$ splines that approximate $f$ very accurately, effectively acting like a learnable spline interpolant.
-\item \textbf{2D case:} A surface such as $f(x,y)=\exp(\sin(\pi x)+y^2)/7$. Once trained for sufficient epochs, good approximation is generally observed after $O(10^5)$ gradient updates. Layerwise spline plots offer an interpretable view of how the network transforms inputs.
+\item \textbf{2D case:} A surface such as $f(x,y)=\frac{1}{7}(\exp(\sin(\pi x)+y^2) - 1)$. Once trained for sufficient epochs, good approximation is generally observed after $O(10^5)$ gradient updates. Layerwise spline plots offer an interpretable view of how the network transforms inputs.
 \end{itemize}
 
 \section{Conclusion}
