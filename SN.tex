@@ -6,6 +6,7 @@
 
 \newtheorem{theorem}{Theorem}
 \newtheorem{remark}{Remark}
+\newtheorem{conjecture}{Conjecture}
 
 \title{Sprecher Networks: A generalized neural architecture \\for multivariate function approximation}
 \author{Christian Hägg \and Boris Shapiro}
@@ -165,12 +166,19 @@ where the penalty encourages smoother spline functions.
 \subsection{Parameter counting}
 Since each block contains two splines (each with potentially hundreds of knot parameters), the total number of trainable parameters is typically dominated by the spline coefficients. If each $\phi^{(\ell)}$ has $K_\phi$ knots and each $\Phi^{(\ell)}$ has $K_\Phi$ knots, then each block contributes roughly $K_\phi + K_\Phi$ spline parameters, plus $d_{\ell-1}\,d_\ell$ weight parameters and one $\eta^{(\ell)}$. Summing over all blocks yields the total parameter count.
 
-\section{Universal approximation perspective}
-
 \subsection{Sprecher-like theorems}
 If we restrict to one layer with $d_{\mathrm{out}}=2d+1$, a monotonic $\phi$, and suitable constants $(\lambda_i,\eta)$, then we reproduce the original Sprecher formula. Sprecher’s 1965 argument implies that this single-layer network can approximate any continuous function $f:[0,1]^d\to\mathbb{R}$ arbitrarily well, provided $\phi$ and $\Phi$ are sufficiently flexible.
 
 An interesting possibility arises when we consider the case of a single hidden layer with vector output. In particular, for a network approximating a function $f:[0,1]^d\to\mathbb{R}^m$ with $m>1$, one could set $d_{\mathrm{out}}=2d+1$ in the hidden layer and then append an output block that omits the final summation over $q$. This construction would then possibly generalize Sprecher's original scalar formulation to the vector-valued setting. Although the precise relationship between the number of hidden nodes and the output dimension may depend on further architectural details—and the universality of such an extension remains highly conjectural—it suggests a natural direction for future theoretical investigation.
+
+Explicitly, we can formulate this conjecture as follows:
+\begin{conjecture}[Vector-Valued Sprecher Representation]
+Let \(n\in\mathbb{N}\) and let \(f:[0,1]^n \to \mathbb{R}^m\) be any continuous function with \(m>1\). Then there exist monotonic splines \(\phi^{(1)}:[0,1]\to\mathbb{R}\) and \(\phi^{(2)}:J\to\mathbb{R}\), general splines \(\Phi^{(1)}:I_1\to\mathbb{R}\) and \(\Phi^{(2)}:J\to\mathbb{R}\) (defined on suitable intervals \(I_1\) and \(J\)), mixing weight matrices \(\lambda^{(1)}_{i,r}\) for \(1\le i\le n\) and \(0\le r\le 2n\) and \(\lambda^{(2)}_{r,q}\) for \(0\le r\le 2n\) and \(0\le q\le m-1\), and shift parameters \(\eta^{(1)},\eta^{(2)}>0\) such that for every \(\mathbf{x}=(x_1,\dots,x_n)\in [0,1]^n\) one has
+\[
+f(\mathbf{x}) = \Biggl[\Phi^{(2)}\Biggl(\sum_{r=0}^{2n} \lambda^{(2)}_{r,q}\,\phi^{(2)}\Biggl(\Phi^{(1)}\Bigl(\sum_{i=1}^{n} \lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr)+\eta^{(2)}\,q\Biggr)+q\Biggr]_{q=0}^{m-1}.
+\]
+In the case \(m=1\), this representation reduces (upon summing over \(q\)) to Sprecher’s original formulation.
+\end{conjecture}
 
 \subsection{Deeper extensions}
 A natural conjecture is that stacking these blocks preserves universal approximation capability while potentially requiring fewer summation nodes. Intuitively, multi-layer compositions can capture complex structure more efficiently. However, a complete theoretical treatment of depth versus width for Sprecher Networks remains an active area of research.
