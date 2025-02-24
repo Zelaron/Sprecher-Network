@@ -75,7 +75,7 @@ as
 $$f(\mathbf{x}) = \sum_{q=0}^{d_L-1} \Bigl(T^{(L)} \circ T^{(L-1)} \circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x})_q. \eqno{(1)}$$
 
 \paragraph{(b) Vector-valued output ($m>1$):}  
-When the target function $f$ maps into $\mathbb{R}^m$ with $m>1$, the network first constructs $L$ hidden layers (each implemented as a Sprecher block), yielding a hidden representation $\mathbf{h}^{(L)} \in \mathbb{R}^{d_L}$. An additional output block is then appended to map $\mathbf{h}^{(L)}$ to $\mathbb{R}^m$ without performing any summation. In particular, define
+When the target function $f$ maps into $\mathbb{R}^m$ with $m>1$, the network first constructs $L$ hidden layers (each implemented as a Sprecher block), yielding a hidden representation $\mathbf{h}^{(L)} \in \mathbb{R}^{d_L}$. An additional output block is then appended to map $\mathbf{h}^{(L)}$ to $\mathbb{R}^m$ without performing any summation (i.e., leaving the output as a $q$-dependent vector rather than collapsing it to a scalar, to preserve the distinct contributions of each channel). In particular, define
 $$\Bigl(T^{(L+1)}(z)\Bigr)_q = \Phi^{(L+1)}\Biggl(\,\sum_{r=0}^{d_L-1} \lambda^{(L+1)}_{r,q}\,\phi^{(L+1)}\Bigl(z_r+\eta^{(L+1)}\,q\Bigr)+q\Biggr),\quad q=0,\dots,m-1,$$
 with $z = \mathbf{h}^{(L)}$. Then the overall network function is given by
 $$f(\mathbf{x}) = \Bigl(T^{(L+1)} \circ T^{(L)} \circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x}) \in \mathbb{R}^m. \eqno{(2)}$$
