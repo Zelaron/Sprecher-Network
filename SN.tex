@@ -181,8 +181,10 @@ Let $n\in\mathbb{N}$ and let $f:[0,1]^n \to \mathbb{R}^m$ be any continuous func
 \begin{equation}\label{eq:SprecherVector}
 f(\mathbf{x}) = \Biggl[\Phi^{(2)}\Biggl(\sum_{r=0}^{2n} \lambda^{(2)}_{r,q}\,\phi^{(2)}\Biggl(\Phi^{(1)}\Bigl(\sum_{i=1}^{n} \lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr)+\eta^{(2)}\,q\Biggr)+q\Biggr]_{q=0}^{m-1}.
 \end{equation}
-In the case $m=1$, this representation reduces (upon summing over $q$) to Sprecher’s original formulation.
 \end{conjecture}
+\begin{remark}
+In the case $m=1$, the representation in \eqref{eq:SprecherVector} reduces (upon summing over $q$) to Sprecher’s original formulation.
+\end{remark}
 
 \subsection{Deeper extensions}
 A natural conjecture is that stacking these blocks preserves universal approximation capability while potentially requiring fewer summation nodes. Intuitively, multi-layer compositions can capture complex structure more efficiently. However, a complete theoretical treatment of depth versus width for Sprecher Networks warrants further research.
