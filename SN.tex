@@ -92,11 +92,11 @@ In summary, when $L \ge 1$ and the final output is scalar, the network consists 
 \medskip
 We illustrate the case of $L=3$ hidden layers with $m>1$ outputs below. Let $X^{(0)}$ be the input, and $X^{(3)}$ the output of the third block. The ``extra'' final block then maps $X^{(3)}$ to $\mathbb{R}^m$:
 $$\begin{array}{ccccccc}
-X^{(0)} & \xrightarrow{\text{Sprecher Block } 1} & X^{(1)} & 
-\xrightarrow{\text{Sprecher Block } 2} & X^{(2)} &
-\xrightarrow{\text{Sprecher Block } 3} & X^{(3)} \\
+X^{(0)} & \xrightarrow{\text{Sprecher block } 1} & X^{(1)} & 
+\xrightarrow{\text{Sprecher block } 2} & X^{(2)} &
+\xrightarrow{\text{Sprecher block } 3} & X^{(3)} \\
  & & & & & & \downarrow \\
- & & & & & & \text{Output Block} \\
+ & & & & & & \text{output block} \\
  & & & & & & \downarrow \\
  & & & & & & \mathbb{R}^m \ (\text{output})
 \end{array}$$
