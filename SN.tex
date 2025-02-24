@@ -164,7 +164,7 @@ $$\text{(MSE on training data)} + \alpha \times \text{(penalty on spline second 
 where the penalty encourages smoother spline functions.
 
 \subsection{Parameter counting}
-Since each block contains two splines (each with potentially hundreds of knot parameters), the total number of trainable parameters is typically dominated by the spline coefficients. If each $\phi^{(\ell)}$ has $K_\phi$ knots and each $\Phi^{(\ell)}$ has $K_\Phi$ knots, then each block contributes roughly $K_\phi + K_\Phi$ spline parameters, plus $d_{\ell-1}\,d_\ell$ weight parameters and one $\eta^{(\ell)}$. Summing over all blocks yields the total parameter count.
+Since each block contains two splines (each with potentially hundreds of knot parameters), the total number of trainable parameters is typically dominated by the spline coefficients. If each $\phi^{(\ell)}$ has $K_\phi$ knots and each $\Phi^{(\ell)}$ has $K_\Phi$ knots, then each block contributes roughly $K_\phi + K_\Phi$ spline parameters, plus $d_{\ell-1}\,d_\ell$ weight parameters and one $\eta^{(\ell)}$. Summing over all blocks yields the total parameter count. Note that Sprecher Networks have a significant advantage over KANs (see \cite{liu2024kan}) in that their parameter counts don't explode for wide networks.
 
 \subsection{Sprecher-like theorems}
 If we restrict to one layer with $d_{\mathrm{out}}=2d+1$, a monotonic $\phi$, and suitable constants $(\lambda_i,\eta)$, then we reproduce the original Sprecher formula. Sprecher’s 1965 argument implies that this single-layer network can approximate any continuous function $f:[0,1]^d\to\mathbb{R}$ arbitrarily well, provided $\phi$ and $\Phi$ are sufficiently flexible.
