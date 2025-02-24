@@ -73,14 +73,18 @@ $$f(\mathbf{x}) = \sum_{q=0}^{d_L-1} \mathbf{h}^{(L)}_q.$$
 Thus, the overall function can be written in terms of the operators
 $$T^{(\ell)}: \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell},\quad \text{with}\quad \Bigl(T^{(\ell)}(z)\Bigr)_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\ell-1}} \lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(z_i+\eta^{(\ell)}\,q\Bigr) + q\Biggr),$$
 as
-$$f(\mathbf{x}) = \sum_{q=0}^{d_L-1} \Bigl(T^{(L)} \circ T^{(L-1)} \circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x})_q. \eqno{(1)}$$
+\begin{equation}\label{eq:compositionScalar}
+f(\mathbf{x}) = \sum_{q=0}^{d_L-1} \Bigl(T^{(L)} \circ T^{(L-1)} \circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x})_q.
+\end{equation}
 
 \paragraph{(b) Vector-valued output ($m>1$):}  
 When the target function $f$ maps into $\mathbb{R}^m$ with $m>1$, the network first constructs $L$ hidden layers (each implemented as a Sprecher block), yielding a hidden representation $\mathbf{h}^{(L)} \in \mathbb{R}^{d_L}$. An additional output block is then appended to map $\mathbf{h}^{(L)}$ to $\mathbb{R}^m$ without performing any summation (i.e., leaving the output as a $q$-dependent vector rather than collapsing it to a scalar, to preserve the distinct contributions of each channel). In particular, define
 $$\Bigl(T^{(L+1)}(z)\Bigr)_q = \Phi^{(L+1)}\Biggl(\,\sum_{r=0}^{d_L-1} \lambda^{(L+1)}_{r,q}\,\phi^{(L+1)}\Bigl(z_r+\eta^{(L+1)}\,q\Bigr)+q\Biggr),\quad q=0,\dots,m-1,$$
 with $z = \mathbf{h}^{(L)}$. Then the overall network function is given by
-$$f(\mathbf{x}) = \Bigl(T^{(L+1)} \circ T^{(L)} \circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x}) \in \mathbb{R}^m. \eqno{(2)}$$
-Note that this output block is constructed in the same manner as the hidden Sprecher blocks (with its own $\phi^{(L+1)}$ and $\Phi^{(L+1)}$), except that it does not include a summation over its outputs. Its role is solely to transform the final hidden representation into an \(m\)-dimensional output.
+\begin{equation}\label{eq:compositionVector}
+f(\mathbf{x}) = \Bigl(T^{(L+1)} \circ T^{(L)} \circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x}) \in \mathbb{R}^m.
+\end{equation}
+Note that this output block is constructed in the same manner as the hidden Sprecher blocks (with its own $\phi^{(L+1)}$ and $\Phi^{(L+1)}$), except that it does not include a summation over its outputs. Its role is solely to transform the final hidden representation into an $m$-dimensional output.
 
 \medskip
 In summary, when $L \ge 1$ and the final output is scalar, the network consists of exactly $L$ blocks and thus $2L$ spline functions (one pair per block). When the output is vector-valued (with $m>1$), an additional block is appended, resulting in $L+1$ blocks and $2(L+1)$ spline functions. This extra block naturally extends Sprecher's original construction to the vector-valued setting.
@@ -110,7 +114,7 @@ In our architecture, the transformation between hidden layers is performed by a 
 $$f(\mathbf{x}) = \sum_{q=0}^{d_1-1} \Phi^{(1)}\Biggl(\sum_{i=1}^{d_0} \lambda^{(1)}_{i,q}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,q\Bigr)+q\Biggr).$$
 This precisely reproduces Sprecher’s 1965 construction
 $$f(\mathbf{x}) = \sum_{q=0}^{2n}\Phi\Biggl(\sum_{p=1}^{n}\lambda_p\,\phi\Bigl(x_p+\eta\,q\Bigr)+q\Biggr)$$
-when we set \(d_1=2d_0+1\) and identify \(\phi^{(1)}=\phi,\;\Phi^{(1)}=\Phi\).
+when we set $d_1=2d_0+1$ and identify $\phi^{(1)}=\phi,\;\Phi^{(1)}=\Phi$.
 
 \subsubsection{Two hidden layers ($L=2$)}
 Let $d_0=d_{\mathrm{in}},d_1$ be the size of the first hidden layer, and $d_2$ the size of the second (final) layer, which is summed to yield a scalar output. Denoting the intermediate output as
@@ -172,12 +176,12 @@ If we restrict to one layer with $d_{\mathrm{out}}=2d+1$, a monotonic $\phi$, an
 An interesting possibility arises when we consider the case of a single hidden layer with vector output. In particular, for a network approximating a function $f:[0,1]^d\to\mathbb{R}^m$ with $m>1$, one could set $d_{\mathrm{out}}=2d+1$ in the hidden layer and then append an output block that omits the final summation over $q$. This construction would then possibly generalize Sprecher's original scalar formulation to the vector-valued setting. Although the precise relationship between the number of hidden nodes and the output dimension may depend on further architectural details—and the universality of such an extension remains highly conjectural—it suggests a natural direction for future theoretical investigation.
 
 Explicitly, we can formulate this conjecture as follows:
-\begin{conjecture}[Vector-Valued Sprecher Representation]
-Let \(n\in\mathbb{N}\) and let \(f:[0,1]^n \to \mathbb{R}^m\) be any continuous function with \(m>1\). Then there exist monotonic splines \(\phi^{(1)}:[0,1]\to\mathbb{R}\) and \(\phi^{(2)}:J\to\mathbb{R}\), general splines \(\Phi^{(1)}:I_1\to\mathbb{R}\) and \(\Phi^{(2)}:J\to\mathbb{R}\) (defined on suitable intervals \(I_1\) and \(J\)), mixing weight matrices \(\lambda^{(1)}_{i,r}\) for \(1\le i\le n\) and \(0\le r\le 2n\) and \(\lambda^{(2)}_{r,q}\) for \(0\le r\le 2n\) and \(0\le q\le m-1\), and shift parameters \(\eta^{(1)},\eta^{(2)}>0\) such that for every \(\mathbf{x}=(x_1,\dots,x_n)\in [0,1]^n\) one has
-\[
+\begin{conjecture}[Vector-valued Sprecher representation]
+Let $n\in\mathbb{N}$ and let $f:[0,1]^n \to \mathbb{R}^m$ be any continuous function with $m>1$. Then there exist monotonic splines $\phi^{(1)}:[0,1]\to\mathbb{R}$ and $\phi^{(2)}:J\to\mathbb{R}$, general splines $\Phi^{(1)}:I_1\to\mathbb{R}$ and $\Phi^{(2)}:J\to\mathbb{R}$ (defined on suitable intervals $I_1$ and $J$), mixing weight matrices $\lambda^{(1)}_{i,r}$ for $1\le i\le n$ and $0\le r\le 2n$ and $\lambda^{(2)}_{r,q}$ for $0\le r\le 2n$ and $0\le q\le m-1$, and shift parameters $\eta^{(1)},\eta^{(2)}>0$ such that for every $\mathbf{x}=(x_1,\dots,x_n)\in [0,1]^n$ one has
+\begin{equation}\label{eq:SprecherVector}
 f(\mathbf{x}) = \Biggl[\Phi^{(2)}\Biggl(\sum_{r=0}^{2n} \lambda^{(2)}_{r,q}\,\phi^{(2)}\Biggl(\Phi^{(1)}\Bigl(\sum_{i=1}^{n} \lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr)+\eta^{(2)}\,q\Biggr)+q\Biggr]_{q=0}^{m-1}.
-\]
-In the case \(m=1\), this representation reduces (upon summing over \(q\)) to Sprecher’s original formulation.
+\end{equation}
+In the case $m=1$, this representation reduces (upon summing over $q$) to Sprecher’s original formulation.
 \end{conjecture}
 
 \subsection{Deeper extensions}
