@@ -179,7 +179,7 @@ Explicitly, we can formulate this conjecture as follows:
 \begin{conjecture}[Vector-valued Sprecher representation]
 Let $n\in\mathbb{N}$ and let $f:[0,1]^n \to \mathbb{R}^m$ be any continuous function with $m>1$. Then there exist monotonic splines $\phi^{(1)}:[0,1]\to\mathbb{R}$ and $\phi^{(2)}:J\to\mathbb{R}$, general splines $\Phi^{(1)}:I_1\to\mathbb{R}$ and $\Phi^{(2)}:J\to\mathbb{R}$ (defined on suitable intervals $I_1$ and $J$), mixing weight matrices $\lambda^{(1)}_{i,r}$ for $1\le i\le n$ and $0\le r\le 2n$ and $\lambda^{(2)}_{r,q}$ for $0\le r\le 2n$ and $0\le q\le m-1$, and shift parameters $\eta^{(1)},\eta^{(2)}>0$ such that for every $\mathbf{x}=(x_1,\dots,x_n)\in [0,1]^n$ one has
 \begin{equation}\label{eq:SprecherVector}
-f(\mathbf{x}) = \Biggl[\Phi^{(2)}\Biggl(\sum_{r=0}^{2n} \lambda^{(2)}_{r,q}\,\phi^{(2)}\Biggl(\Phi^{(1)}\Bigl(\sum_{i=1}^{n} \lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr)+\eta^{(2)}\,q\Biggr)+q\Biggr]_{q=0}^{m-1}.
+f(\mathbf{x}) = \Biggl[\Phi^{(2)}\Biggl(\sum_{r=0}^{2n} \lambda^{(2)}_{r,q}\,\phi^{(2)}\Biggl(\Phi^{(1)}\Bigl(\sum_{i=1}^{n} \lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr)+\eta^{(2)}\,q\Biggr)+q\Biggr)\Biggr]_{q=0}^{m-1}.
 \end{equation}
 \end{conjecture}
 \begin{remark}
