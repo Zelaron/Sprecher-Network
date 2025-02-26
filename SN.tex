@@ -202,6 +202,15 @@ In practice, we train Sprecher Networks on small data sets sampled from a target
     With sufficient training (typically after $O(10^5)$ gradient updates), the network achieves good approximation. Layerwise spline plots provide an interpretable view of how the network transforms inputs.
 \end{itemize}
 
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{TwoVarsThreeBlocks.png}
+\caption{Visualization of a trained $2\to[5,8,5]\to1$ Sprecher Network approximating a 2D target function. \textbf{Top row:} The learned spline functions for each block - monotonic splines $\phi^{(\ell)}$ (cyan) and general splines $\Phi^{(\ell)}$ (magenta). \textbf{Bottom row:} Comparison between the target function (left) and the network approximation (right) showing the high-quality fit achieved after training.}
+\label{fig:twovarsprecher}
+\end{figure}
+
+Figure~\ref{fig:twovarsprecher} demonstrates a trained Sprecher Network with architecture $2\to[5,8,5]\to1$, approximating a 2D surface. The top row shows the learned spline functions for each block, illustrating how they adaptively shape themselves during training. Note how the monotonic splines (cyan) maintain their increasing property while developing distinct patterns in each layer. The general splines (magenta) exhibit more complex shapes that capture the nonlinearities required for accurate function approximation. The bottom row comparison confirms that even with just three blocks, the network achieves a remarkably precise fit to the target function.
+
 \section{Conclusion}
 We have introduced and motivated the design of \emph{Sprecher Networks}, a modern, trainable extension of Sprecher's single-layer shift-and-sum formula for function approximation. By using two splines ($\phi$ and $\Phi$) per block, along with careful index shifting and summation, we retain the theoretical grounding of the Kolmogorov--Arnold approach, thereby enabling deeper networks with potentially greater expressive power.
 
