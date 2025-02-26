@@ -7,6 +7,7 @@
 \newtheorem{theorem}{Theorem}
 \newtheorem{remark}{Remark}
 \newtheorem{conjecture}{Conjecture}
+\newtheorem{definition}{Definition}
 
 \title{Sprecher Networks: A generalized neural architecture \\for multivariate function approximation}
 \author{Christian Hägg \and Boris Shapiro}
@@ -39,6 +40,9 @@ and in the scalar-output case the outputs of the final Sprecher block are aggreg
 $$d_0 \to d_1 \to \cdots \to d_{L-1} \to 1,$$
 by stacking $L$ Sprecher blocks (each embedding the shift-and-sum transformation). In this way, we recover a deeper analog of the Kolmogorov--Arnold--Sprecher construction with enhanced expressive power while maintaining a clear theoretical connection to the classical result.
 
+\begin{definition}[Network notation]
+Throughout this paper, we denote Sprecher Network architectures using arrow notation of the form $d_{\mathrm{in}}\to[d_1,d_2,\ldots,d_L]\to d_{\mathrm{out}}$, where $d_{\mathrm{in}}$ is the input dimension, $[d_1,d_2,\ldots,d_L]$ represents the hidden layer dimensions, and $d_{\mathrm{out}}$ is the output dimension. For example, $2\to[5,3,8]\to1$ describes a network with 2-dimensional input, three hidden layers of widths 5, 3, and 8 respectively, and a scalar output. When input or output dimensions are clear from context, we may use the abbreviated notation $[d_1,d_2,\ldots,d_L]$ to focus on the hidden layer structure.
+\end{definition}
 
 \section{Core architectural details}
 In our architecture, the fundamental building unit is the \emph{Sprecher block}. The network is composed of a sequence of Sprecher blocks, each of which performs a shift‐and‐sum transformation inspired by Sprecher's original construction. The following subsection details the structure of a single Sprecher block.
@@ -90,7 +94,7 @@ Note that this output block is constructed in the same manner as the hidden Spre
 In summary, when $L \ge 1$ and the final output is scalar, the network consists of exactly $L$ blocks and thus $2L$ spline functions (one pair per block). When the output is vector-valued (with $m>1$), an additional block is appended, resulting in $L+1$ blocks and $2(L+1)$ spline functions. This extra block naturally extends Sprecher's original construction to the vector-valued setting.
 
 \medskip
-We illustrate the case of $L=3$ hidden layers with $m>1$ outputs below. Let $X^{(0)}$ be the input, and $X^{(3)}$ the output of the third block. The ``extra'' final block then maps $X^{(3)}$ to $\mathbb{R}^m$:
+We illustrate the case of a network with architecture $d_0\to[d_1,d_2,d_3]\to m$ (i.e., $L=3$ hidden layers with $m>1$ outputs) below. Let $X^{(0)}$ be the input, and $X^{(3)}$ the output of the third block. The ``extra'' final block then maps $X^{(3)}$ to $\mathbb{R}^m$:
 $$\begin{array}{ccccccc}
 X^{(0)} & \xrightarrow{\text{Sprecher block } 1} & X^{(1)} & 
 \xrightarrow{\text{Sprecher block } 2} & X^{(2)} &
@@ -110,9 +114,9 @@ We will now illustrate three examples with $L=1,2,3$ hidden layers in the common
 
 \subsubsection{Single hidden layer ($L=1$)}
 
-In our architecture, the transformation between hidden layers is performed by a Sprecher block — a function that applies a pair of spline functions $(\phi$ and $\Phi$), a weight matrix, and a shift parameter to its input. Here, “hidden layer” specifically denotes the collection of nodes produced by this transformation, which are not individually parameterized as in traditional neural networks. For a network with $d_0 = d_{\mathrm{in}}$ inputs and one hidden layer (a Sprecher block) of dimension $d_1$, the network computes
+In our architecture, the transformation between hidden layers is performed by a Sprecher block — a function that applies a pair of spline functions $(\phi$ and $\Phi$), a weight matrix, and a shift parameter to its input. Here, ``hidden layer'' specifically denotes the collection of nodes produced by this transformation, which are not individually parameterized as in traditional neural networks. For a network with architecture $d_{\mathrm{in}}\to[d_1]\to1$ (i.e., $d_0 = d_{\mathrm{in}}$ inputs and one hidden layer of dimension $d_1$), the network computes
 $$f(\mathbf{x}) = \sum_{q=0}^{d_1-1} \Phi^{(1)}\Biggl(\sum_{i=1}^{d_0} \lambda^{(1)}_{i,q}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,q\Bigr)+q\Biggr).$$
-This precisely reproduces Sprecher’s 1965 construction
+This precisely reproduces Sprecher's 1965 construction
 $$f(\mathbf{x}) = \sum_{q=0}^{2n}\Phi\Biggl(\sum_{p=1}^{n}\lambda_p\,\phi\Bigl(x_p+\eta\,q\Bigr)+q\Biggr)$$
 when we set $d_1=2d_0+1$ and identify $\phi^{(1)}=\phi,\;\Phi^{(1)}=\Phi$.
 
@@ -171,7 +175,7 @@ where the penalty encourages smoother spline functions.
 Since each block contains two splines (each with potentially hundreds of knot parameters), the total number of trainable parameters is typically dominated by the spline coefficients. If each $\phi^{(\ell)}$ has $K_\phi$ knots and each $\Phi^{(\ell)}$ has $K_\Phi$ knots, then each block contributes roughly $K_\phi + K_\Phi$ spline parameters, plus $d_{\ell-1}\,d_\ell$ weight parameters and one $\eta^{(\ell)}$. Summing over all blocks yields the total parameter count. Note that Sprecher Networks have a significant advantage over KANs (see \cite{liu2024kan}) in that their parameter counts don't explode for wide networks.
 
 \subsection{Sprecher-like theorems}
-If we restrict to one layer with $d_{\mathrm{out}}=2d+1$, a monotonic $\phi$, and suitable constants $(\lambda_i,\eta)$, then we reproduce the original Sprecher formula. Sprecher’s 1965 argument implies that this single-layer network can approximate any continuous function $f:[0,1]^d\to\mathbb{R}$ arbitrarily well, provided $\phi$ and $\Phi$ are sufficiently flexible.
+If we restrict to one layer with $d_{\mathrm{out}}=2d+1$, a monotonic $\phi$, and suitable constants $(\lambda_i,\eta)$, then we reproduce the original Sprecher formula. Sprecher's 1965 argument implies that this single-layer network can approximate any continuous function $f:[0,1]^d\to\mathbb{R}$ arbitrarily well, provided $\phi$ and $\Phi$ are sufficiently flexible.
 
 An interesting possibility arises when we consider the case of a single hidden layer with vector output. In particular, for a network approximating a function $f:[0,1]^d\to\mathbb{R}^m$ with $m>1$, one could set $d_{\mathrm{out}}=2d+1$ in the hidden layer and then append an output block that omits the final summation over $q$. This construction would then possibly generalize Sprecher's original scalar formulation to the vector-valued setting. Although the precise relationship between the number of hidden nodes and the output dimension may depend on further architectural details—and the universality of such an extension remains highly conjectural—it suggests a natural direction for future theoretical investigation.
 
@@ -183,7 +187,7 @@ f(\mathbf{x}) = \Biggl[\Phi^{(2)}\Biggl(\sum_{r=0}^{2n} \lambda^{(2)}_{r,q}\,\ph
 \end{equation}
 \end{conjecture}
 \begin{remark}
-In the case $m=1$, the representation in \eqref{eq:SprecherVector} reduces (upon summing over $q$) to Sprecher’s original formulation.
+In the case $m=1$, the representation in \eqref{eq:SprecherVector} reduces (upon summing over $q$) to Sprecher's original formulation.
 \end{remark}
 
 \subsection{Deeper extensions}
