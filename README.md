@@ -11,9 +11,6 @@ This project implements a neural network that:
 ## Output Files
 During training, the network produces and saves visualizations (e.g., network structure plots, spline function plots, and loss curves) in the `plots` directory.
 
-## Output Files
-During training, the network produces and saves visualizations (e.g., network structure plots, spline function plots, and loss curves) in the `plots` directory.
-
 ## Installation
 1. **Create and activate a virtual environment:**
    ```
