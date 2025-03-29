@@ -11,6 +11,9 @@ This project implements a neural network that:
 ## Output Files
 During training, the network produces and saves visualizations (e.g., network structure plots, spline function plots, and loss curves) in the `plots` directory.
 
+## Output Files
+During training, the network produces and saves visualizations (e.g., network structure plots, spline function plots, and loss curves) in the `plots` directory.
+
 ## Installation
 1. **Create and activate a virtual environment:**
    ```
@@ -31,10 +34,12 @@ Run the main script:
 ```
 python snJ12.py
 ```
+
 ## Customization
-- Modify the target function in the code (uncomment the desired version for 1D or 2D).
-- Adjust training parameters such as the number of layers, epochs, and learning rate.
-- Tweak visualization settings (e.g., NUM_PLOT_POINTS and NUM_SURFACE_POINTS).
-- Change the random seed (SEED=45) for different but reproducible results.
+Users are encouraged to experiment by modifying the code, particularly the sections labeled **"CONFIGURABLE SETTINGS"** and **"TARGET FUNCTION DEFINITION"**. Adjust training parameters (e.g., number of layers, epochs, learning rates) or alter the target function to explore different function approximation tasks. Other aspects, such as visualization settings, can be tweaked directly in the code.
+
+## Hardware
+The code automatically detects whether a GPU is available and uses it if possible.
+
 ## License
 MIT License - see the [LICENSE](LICENSE) file for details.
