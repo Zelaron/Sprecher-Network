@@ -166,6 +166,8 @@ Each block has two spline modules:
 \end{itemize}
 Both spline types typically have many knots (e.g. 100--300), which goes well beyond the requirements of the original theorem that only demanded continuity and monotonicity for $\phi$.
 
+In practice, a flatness penalty can be introduced to encourage smooth approximations, a design choice partially inspired by earlier numerical methods (see \cite{koppen}). This penalty serves to regularize the spline functions.
+
 \subsection{Shifts and weights}
 Each block has a scalar $\eta^{(\ell)}$ controlling how the block's index $q$ shifts its input coordinates, plus a matrix $\lambda^{(\ell)}_{i,q}$ mixing each input. These free parameters are updated via gradient-based optimizers to minimize a loss function of the form
 $$\text{(MSE on training data)} + \alpha \times \text{(penalty on spline second derivatives)},$$
@@ -229,14 +231,17 @@ We have introduced and motivated the design of \emph{Sprecher Networks}, a moder
 \bigskip
 
 \begin{thebibliography}{9}
+\bibitem{arnold}
+Arnold, V.~I.~(1963). ``On functions of three variables,'' \emph{Doklady Akademii Nauk SSSR}, \textbf{48}.
+
 \bibitem{sprecher1965}
 Sprecher, D.~A.~(1965). ``On the Structure of Continuous Functions of Several Variables,'' \emph{Transactions of the American Mathematical Society}, \textbf{115}, 340--355.
 
 \bibitem{kolmogorov}
 Kolmogorov, A.~N.~(1957). ``On the representation of continuous functions of many variables by superposition of continuous functions of one variable and addition,'' \emph{Doklady Akademii Nauk SSSR}, \textbf{114}.
 
-\bibitem{arnold}
-Arnold, V.~I.~(1963). ``On functions of three variables,'' \emph{Doklady Akademii Nauk SSSR}, \textbf{48}.
+\bibitem{koppen}
+K{\"o}ppen, M.~(2002). ``On the training of a Kolmogorov Network,'' in \emph{Artificial Neural Networks—ICANN 2002: International Conference, Madrid, Spain, August 28--30, 2002 Proceedings 12}, pp. 474--479. Springer.
 
 \bibitem{liu2024kan}
 Liu, Z., Wang, Y., Vaidya, S., Ruehle, F., Halverson, J., Solja\v{c}i\'{c}, M., Hou, T.Y., Tegmark, M.~(2025).  
