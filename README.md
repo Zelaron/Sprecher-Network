@@ -32,11 +32,13 @@ Required packages:
 ## Usage
 Run the main script:
 ```
-python snJ12.py
+python sprecher.py
 ```
 
 ## Customization
-Users are encouraged to experiment by modifying the code, particularly the sections labeled **"CONFIGURABLE SETTINGS"** and **"TARGET FUNCTION DEFINITION"**. Adjust training parameters (e.g., number of layers, epochs, learning rates) or alter the target function to explore different function approximation tasks. Other aspects, such as visualization settings, can be tweaked directly in the code.
+Users are encouraged to experiment by modifying the code, particularly in the sections labeled "**CONFIGURABLE SETTINGS**" and "**TARGET FUNCTION DEFINITION**". You can adjust training parameters (e.g., number of layers, epochs, learning rates) or alter the target function to explore different function approximation tasks.
+
+**Note:** The code uses a fixed random seed (SEED=45) for reproducibility by calling `torch.manual_seed(SEED)`, `np.random.seed(SEED)`, and related functions. If you prefer different random initializations on each run, you can remove or comment out these seed-setting lines in the code.
 
 ## Hardware
 The code automatically detects whether a GPU is available and uses it if possible.
