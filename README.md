@@ -7,6 +7,10 @@ This project implements a neural network that:
 - Supports both 1D and 2D function approximation with automatic input dimension detection
 - Employs an iterative, layer-by-layer training process
 - Provides detailed visualizations for network structure, spline functions, function comparison, and training loss curves
+
+## Output Files
+During training, the network produces and saves visualizations (e.g., network structure plots, spline function plots, and loss curves) in the `plots` directory.
+
 ## Installation
 1. **Create and activate a virtual environment:**
    ```
