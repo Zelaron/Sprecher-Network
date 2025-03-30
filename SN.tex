@@ -206,14 +206,14 @@ In practice, we train Sprecher Networks on small data sets sampled from a target
 
 \begin{figure}[ht]
 \centering
-\includegraphics[width=\textwidth]{TwoVarsThreeBlocks.png}
+\includegraphics[width=\textwidth]{Figures/TwoVarsThreeBlocks.png}
 \caption{Visualization of a trained $2\to[5,8,5]\to1$ Sprecher Network approximating a 2D target function $z = f(x,y)$. \textbf{Top row:} The learned spline functions for each block - monotonic splines $\phi^{(\ell)}$ (cyan) and general splines $\Phi^{(\ell)}$ (magenta). \textbf{Bottom row:} Comparison between the target function (left) and the network approximation (right) showing the high-quality fit achieved after training.}
 \label{fig:twovarsprecher}
 \end{figure}
 
 \begin{figure}[ht]
 \centering
-\includegraphics[width=\textwidth]{TwoVarsSixBlocks.png}
+\includegraphics[width=\textwidth]{Figures/TwoVarsSixBlocks.png}
 \caption{Visualization of a trained Sprecher Network with architecture $2\to[20,20,20,20,20]\to2$, implemented with six Sprecher blocks, that approximates the vector-valued function 
 $f(x,y)=\Bigl(\frac{\exp\bigl(\sin(\pi x)+y^2\bigr)-1}{7},\;\frac{1}{4}\,y+\frac{1}{5}\,y^2-x^3+\frac{1}{5}\sin(7x)\Bigr).$ The top row shows the learned spline functions for each block (monotonic splines in cyan and general splines in magenta), while the bottom row compares the target surfaces with the network outputs for both output dimensions.}
 \label{fig:twovarsprechervector}
