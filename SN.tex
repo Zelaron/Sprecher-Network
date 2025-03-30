@@ -211,7 +211,17 @@ In practice, we train Sprecher Networks on small data sets sampled from a target
 \label{fig:twovarsprecher}
 \end{figure}
 
-Figure~\ref{fig:twovarsprecher} demonstrates a trained Sprecher Network with architecture $2\to[5,8,5]\to1$, approximating a 2D surface. The top row shows the learned spline functions for each block, illustrating how they adaptively shape themselves during training. Note how the monotonic splines (cyan) maintain their increasing property while developing distinct patterns in each layer. The general splines (magenta) exhibit more complex shapes that capture the nonlinearities required for accurate function approximation. The bottom row comparison confirms that even with just three blocks, the network achieves a remarkably precise fit to the target function.
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{TwoVarsSixBlocks.png}
+\caption{Visualization of a trained Sprecher Network with architecture $2\to[20,20,20,20,20]\to2$, implemented with six Sprecher blocks, that approximates the vector-valued function 
+$f(x,y)=\Bigl(\frac{\exp\bigl(\sin(\pi x)+y^2\bigr)-1}{7},\;\frac{1}{4}\,y+\frac{1}{5}\,y^2-x^3+\frac{1}{5}\sin(7x)\Bigr).$ The top row shows the learned spline functions for each block (monotonic splines in cyan and general splines in magenta), while the bottom row compares the target surfaces with the network outputs for both output dimensions.}
+\label{fig:twovarsprechervector}
+\end{figure}
+
+Figure~\ref{fig:twovarsprecher} demonstrates a trained Sprecher Network with architecture $2\to[5,8,5]\to1$, approximating a 2D surface. Similarly, Figure~\ref{fig:twovarsprechervector} shows a Sprecher Network approximating a vector-valued function 
+$$f(x,y)=\Bigl(\frac{\exp\bigl(\sin(\pi x)+y^2\bigr)-1}{7},\;\frac{1}{4}\,y+\frac{1}{5}\,y^2-x^3+\frac{1}{5}\sin(7x)\Bigr)$$
+with domain and codomain in $\mathbb{R}^2$. In this case the network has architecture $2\to[20,20,20,20,20]\to2$, which is implemented with six Sprecher blocks (where the sixth Sprecher block is used for the vector-valued output). In both figures the top row displays the learned spline functions for each block (monotonic splines in cyan and general splines in magenta), while the bottom row compares the target surfaces with the network outputs. This illustrates that the network, whether approximating an $\mathbb{R}^2\to\mathbb{R}$ or an $\mathbb{R}^2\to\mathbb{R}^2$ function, is capable of capturing the underlying function's intricacies.
 
 \section{Challenges and future directions}
 
