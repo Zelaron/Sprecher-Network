@@ -2,9 +2,11 @@ import os
 import torch
 import torch.nn as nn
 import numpy as np
+
 # --- Force a non-interactive backend if Tcl/Tk is not properly installed ---
 # import matplotlib
 # matplotlib.use('Agg') # Renders plots to files instead of interactive windows
+
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from mpl_toolkits.mplot3d import Axes3D  # needed for 3D plotting
@@ -33,15 +35,18 @@ SEED = 45
 # Variance penalty weight.
 LAMBDA_VAR = 1.0
 
-# Global outer spline (Φ) configuration.
-# You can specify different ranges for the default input (domain) and output (codomain) of Φ, which will be trained.
+# Global outer spline (𝛷) configuration.
+# You can specify different ranges for the default input (domain) and output (codomain) of 𝛷, which will be trained if TRAIN_PHI_RANGE is set to true.
 PHI_IN_RANGE = (-10.0, 10.0)
 PHI_OUT_RANGE = (-10.0, 10.0)
+
+# Determines whether the spline ranges for 𝛷 are trainable
+TRAIN_PHI_RANGE = True
 
 # Number of knots (control points defining spline segments) for the inner monotonic splines (φ)
 PHI_KNOTS = 300
 
-# Number of knots for the outer general splines (Φ)
+# Number of knots for the outer general splines (𝛷)
 PHI_CAPITAL_KNOTS = 200
 
 ##############################################################################
@@ -55,7 +60,8 @@ def target_function(x):
     # 2D scalar function example:
     # return torch.exp(torch.sin(11 * x[:, [0]])) + 3 * x[:, [1]] + 4 * torch.sin(8 * x[:, [1]])
 
-    # 2D vector function example:
+    # 2D vector function example
+    # Try setting e.g. architecture = [10, 10, 10, 10, 10], TOTAL_EPOCHS = 100000, TRAIN_PHI_RANGE = False for this example:
     # return torch.cat([
     #     (torch.exp(torch.sin(torch.pi * x[:, [0]]) + x[:, [1]]**2) - 1) / 7,
     #     (1/4)*x[:, [1]] + (1/5)*x[:, [1]]**2 - x[:, [0]]**3 + (1/5)*torch.sin(7*x[:, [0]])
@@ -115,17 +121,17 @@ if torch.cuda.is_available():
 
 class PhiRangeParams(nn.Module):
     """
-    Global, trainable range parameters for all Φ splines.
+    Global, trainable range parameters for all 𝛷 splines.
     The domain and codomain are defined via a center and a radius:
-      in_range = (in_center - in_radius, in_center + in_radius)
-      out_range = (out_center - out_radius, out_center + out_radius)
+      domain: (dc - dr, dc + dr)
+      codomain: (cc - cr, cc + cr)
     """
-    def __init__(self, in_center=0.0, in_radius=1.0, out_center=0.0, out_radius=1.0):
+    def __init__(self, dc=0.0, dr=1.0, cc=0.0, cr=1.0):
         super().__init__()
-        self.in_center = nn.Parameter(torch.tensor(in_center, dtype=torch.float32))
-        self.in_radius = nn.Parameter(torch.tensor(in_radius, dtype=torch.float32))
-        self.out_center = nn.Parameter(torch.tensor(out_center, dtype=torch.float32))
-        self.out_radius = nn.Parameter(torch.tensor(out_radius, dtype=torch.float32))
+        self.dc = nn.Parameter(torch.tensor(dc, dtype=torch.float32))  # dc: domain center for 𝛷
+        self.dr = nn.Parameter(torch.tensor(dr, dtype=torch.float32))  # dr: domain radius for 𝛷
+        self.cc = nn.Parameter(torch.tensor(cc, dtype=torch.float32))  # cc: codomain center for 𝛷
+        self.cr = nn.Parameter(torch.tensor(cr, dtype=torch.float32))  # cr: codomain radius for 𝛷
 
 ##############################################################################
 #                             SIMPLE SPLINE MODULE                           #
@@ -135,11 +141,11 @@ class SimpleSpline(nn.Module):
     """
     A piecewise-linear spline.
     
-    If train_range is False, the domains and codomains of the splines Phi are not trained.
+    If train_range is False, the domains and codomains of the splines 𝛷 are not trained.
     If train_range is True and a valid range_params (of type PhiRangeParams)
     is provided, then:
       - The input range (domain) is computed on the fly from normalized knots
-        and the current in_center and in_radius.
+        and the current dc and dr.
       - After linear interpolation, the raw output is normalized using the
         initial (stored) min and max and then re-scaled to the current output range.
     """
@@ -169,21 +175,21 @@ class SimpleSpline(nn.Module):
             self.coeffs = nn.Parameter(torch.cumsum(increments, 0))
             with torch.no_grad():
                 if self.train_range and (self.range_params is not None):
-                    out_center = self.range_params.out_center.item()
-                    out_radius = self.range_params.out_radius.item()
-                    out_min = out_center - out_radius
-                    out_max = out_center + out_radius
+                    cc = self.range_params.cc.item()
+                    cr = self.range_params.cr.item()
+                    out_min = cc - cr
+                    out_max = cc + cr
                 else:
                     out_min, out_max = out_range
                 self.coeffs.data = (self.coeffs - self.coeffs.min()) / (self.coeffs.max() - self.coeffs.min() + 1e-8)
                 self.coeffs.data = self.coeffs * (out_max - out_min) + out_min
         else:
-            # For general splines (Φ), initialize with a balanced distribution
+            # For general splines (𝛷), initialize with a balanced distribution
             if self.train_range and (self.range_params is not None):
-                out_center = self.range_params.out_center.item()
-                out_radius = self.range_params.out_radius.item()
-                out_min = out_center - out_radius
-                out_max = out_center + out_radius
+                cc = self.range_params.cc.item()
+                cr = self.range_params.cr.item()
+                out_min = cc - cr
+                out_max = cc + cr
             else:
                 out_min, out_max = out_range
             self.coeffs = nn.Parameter(
@@ -193,16 +199,16 @@ class SimpleSpline(nn.Module):
     def forward(self, x):
         if self.train_range and (self.range_params is not None):
             # Compute dynamic in_range from current trainable parameters.
-            in_center = self.range_params.in_center
-            in_radius = self.range_params.in_radius
-            in_min = in_center - in_radius
-            in_max = in_center + in_radius
+            dc = self.range_params.dc
+            dr = self.range_params.dr
+            in_min = dc - dr
+            in_max = dc + dr
             knots = self.normalized_knots * (in_max - in_min) + in_min
             # Also compute dynamic out_range.
-            out_center = self.range_params.out_center
-            out_radius = self.range_params.out_radius
-            out_min = out_center - out_radius
-            out_max = out_center + out_radius
+            cc = self.range_params.cc
+            cr = self.range_params.cr
+            out_min = cc - cr
+            out_max = cc + cr
         else:
             knots = self.knots
             in_min = self.in_min
@@ -225,7 +231,7 @@ class SimpleSpline(nn.Module):
             sorted_coeffs = torch.sort(self.coeffs)[0]
             raw = (1 - t) * sorted_coeffs[intervals] + t * sorted_coeffs[intervals + 1]
         else:
-            # For Φ splines, use coefficients directly
+            # For 𝛷 splines, use coefficients directly
             raw = (1 - t) * self.coeffs[intervals] + t * self.coeffs[intervals + 1]
         
         # If train_range is enabled, re-scale the raw output.
@@ -257,7 +263,7 @@ class SprecherLayerBlock(nn.Module):
     """
     A single Sprecher block that transforms d_in -> d_out using:
       - A monotonic spline φ (with fixed (0,1) domain and range)
-      - A general spline Φ (with trainable in/out ranges)
+      - A general spline 𝛷 (with trainable domain and codomain)
       - A trainable shift (η)
       - A trainable weight matrix (λ)
     If is_final is True, the block sums its outputs to produce a scalar.
@@ -272,16 +278,16 @@ class SprecherLayerBlock(nn.Module):
         # This represents the 'inner function' in Sprecher's theorem
         self.phi = SimpleSpline(num_knots=PHI_KNOTS, in_range=(0, 1), out_range=(0, 1), monotonic=True)
         
-        # The outer general spline Φ with trainable range parameters
+        # The outer general spline 𝛷 with trainable range parameters
         # This represents the 'outer function' in Sprecher's theorem
         self.Phi = SimpleSpline(num_knots=PHI_CAPITAL_KNOTS, in_range=PHI_IN_RANGE, out_range=PHI_OUT_RANGE,
-                                train_range=True, range_params=phi_range_params)
+                                train_range=TRAIN_PHI_RANGE, range_params=phi_range_params)
         with torch.no_grad():
             if phi_range_params is not None:
-                out_center = phi_range_params.out_center.item()
-                out_radius = phi_range_params.out_radius.item()
-                out_min = out_center - out_radius
-                out_max = out_center + out_radius
+                cc = phi_range_params.cc.item()
+                cr = phi_range_params.cr.item()
+                out_min = cc - cr
+                out_max = cc + cr
             else:
                 out_min, out_max = PHI_OUT_RANGE
             self.Phi.coeffs.data = torch.linspace(out_min, out_max, self.Phi.num_knots)
@@ -311,7 +317,7 @@ class SprecherLayerBlock(nn.Module):
         weighted = phi_out * self.lambdas.unsqueeze(0)
         s = weighted.sum(dim=1) + self.q_values  # shape: (batch_size, d_out)
         
-        # Pass through the general outer spline Φ
+        # Pass through the general outer spline 𝛷
         activated = self.Phi(s)
         
         if self.is_final:
@@ -327,7 +333,7 @@ class SprecherLayerBlock(nn.Module):
 class SprecherMultiLayerNetwork(nn.Module):
     """
     Builds the Sprecher network with a given hidden-layer architecture and final output dimension.
-    A single global PhiRangeParams instance is created and shared among all Φ splines.
+    A single global PhiRangeParams instance is created and shared among all 𝛷 splines.
     """
     def __init__(self, input_dim, architecture, final_dim=1):
         super().__init__()
@@ -335,15 +341,14 @@ class SprecherMultiLayerNetwork(nn.Module):
         self.architecture = architecture
         self.final_dim = final_dim
         
-        # Compute centers and radii from the configured outer ranges.
-        in_center = (PHI_IN_RANGE[0] + PHI_IN_RANGE[1]) / 2.0
-        in_radius = (PHI_IN_RANGE[1] - PHI_IN_RANGE[0]) / 2.0
-        out_center = (PHI_OUT_RANGE[0] + PHI_OUT_RANGE[1]) / 2.0
-        out_radius = (PHI_OUT_RANGE[1] - PHI_OUT_RANGE[0]) / 2.0
+        # Compute domain and codomain centers and radii (for 𝛷) from the configured outer ranges.
+        dc = (PHI_IN_RANGE[0] + PHI_IN_RANGE[1]) / 2.0
+        dr = (PHI_IN_RANGE[1] - PHI_IN_RANGE[0]) / 2.0
+        cc = (PHI_OUT_RANGE[0] + PHI_OUT_RANGE[1]) / 2.0
+        cr = (PHI_OUT_RANGE[1] - PHI_OUT_RANGE[0]) / 2.0
 
-        # Create global trainable parameters for all Φ splines
-        self.phi_range_params = PhiRangeParams(in_center=in_center, in_radius=in_radius,
-                                               out_center=out_center, out_radius=out_radius)
+        # Create global trainable parameters for all 𝛷 splines
+        self.phi_range_params = PhiRangeParams(dc=dc, dr=dr, cc=cc, cr=cr)
         
         layers = []
         if len(architecture) == 0:
@@ -409,7 +414,7 @@ def train_network(target_function, architecture, total_epochs=100000, print_ever
     model = SprecherMultiLayerNetwork(input_dim=input_dim,
                                       architecture=architecture,
                                       final_dim=final_dim).to(device)
-    # Use two parameter groups: one for global Phi range parameters (with a higher LR)
+    # Use two parameter groups: one for global 𝛷 range parameters (with a higher LR)
     # and one for the rest of the parameters.
     params = [
         {"params": [p for n, p in model.named_parameters() if "phi_range_params" in n], "lr": 0.001},
@@ -443,24 +448,29 @@ def train_network(target_function, architecture, total_epochs=100000, print_ever
         loss.backward()
         
         # Capture gradients for the global range parameters for debugging
-        ic_grad = model.phi_range_params.in_center.grad.item() if model.phi_range_params.in_center.grad is not None else 0.0
-        ir_grad = model.phi_range_params.in_radius.grad.item() if model.phi_range_params.in_radius.grad is not None else 0.0
-        oc_grad = model.phi_range_params.out_center.grad.item() if model.phi_range_params.out_center.grad is not None else 0.0
-        or_grad = model.phi_range_params.out_radius.grad.item() if model.phi_range_params.out_radius.grad is not None else 0.0
+        dc_val = model.phi_range_params.dc.item()
+        dr_val = model.phi_range_params.dr.item()
+        cc_val = model.phi_range_params.cc.item()
+        cr_val = model.phi_range_params.cr.item()
+        
+        dc_grad = model.phi_range_params.dc.grad.item() if model.phi_range_params.dc.grad is not None else 0.0
+        dr_grad = model.phi_range_params.dr.grad.item() if model.phi_range_params.dr.grad is not None else 0.0
+        cc_grad = model.phi_range_params.cc.grad.item() if model.phi_range_params.cc.grad is not None else 0.0
+        cr_grad = model.phi_range_params.cr.grad.item() if model.phi_range_params.cr.grad is not None else 0.0
         
         optimizer.step()
         losses.append(loss.item())
         
         pbar.set_postfix({
             'loss': f'{loss.item():.2e}',
-            'ic': f'{model.phi_range_params.in_center.item():.3f}',
-            'ir': f'{model.phi_range_params.in_radius.item():.3f}',
-            'oc': f'{model.phi_range_params.out_center.item():.3f}',
-            'or': f'{model.phi_range_params.out_radius.item():.3f}',
-            'g_ic': f'{ic_grad:.3e}',
-            'g_ir': f'{ir_grad:.3e}',
-            'g_oc': f'{oc_grad:.3e}',
-            'g_or': f'{or_grad:.3e}',
+            'dc': f'{dc_val:.3f}',
+            'dr': f'{dr_val:.3f}',
+            'cc': f'{cc_val:.3f}',
+            'cr': f'{cr_val:.3f}',
+            'g_dc': f'{dc_grad:.3e}',
+            'g_dr': f'{dr_grad:.3e}',
+            'g_cc': f'{cc_grad:.3e}',
+            'g_cr': f'{cr_grad:.3e}',
             'std_out': f'{std_output.item():.3f}',
             'std_tar': f'{std_target.item():.3f}',
             'var_loss': f'{var_loss.item():.2e}'
@@ -531,7 +541,7 @@ def plot_network_structure_ax(ax, layers, input_dim, final_dim=1):
             for ny in new_y:
                 ax.plot([layer_x[block_index], new_x], [py, ny], 'k-', alpha=0.5)
                 
-        # Place φ and Φ labels
+        # Place φ and 𝛷 labels
         mid_x = 0.5 * (layer_x[block_index] + new_x)
         ax.text(mid_x, 0.14, f"$\\phi^{{({j})}}$", ha='center', fontsize=9, color='green')
         ax.text(mid_x, 0.09, f"$\\Phi^{{({j})}}$", ha='center', fontsize=9, color='green')
@@ -594,10 +604,10 @@ def plot_results(model, layers):
         ax_Phi.set_title(f"{block_label} $\\Phi^{{({j})}}$", fontsize=11)
         with torch.no_grad():
             if layer.Phi.train_range and (layer.Phi.range_params is not None):
-                in_center = layer.Phi.range_params.in_center.item()
-                in_radius = layer.Phi.range_params.in_radius.item()
-                in_min = in_center - in_radius
-                in_max = in_center + in_radius
+                dc = layer.Phi.range_params.dc.item()  # dc: domain center for 𝛷
+                dr = layer.Phi.range_params.dr.item()  # dr: domain radius for 𝛷
+                in_min = dc - dr
+                in_max = dc + dr
             else:
                 in_min, in_max = layer.Phi.fixed_in_range
             x_vals = torch.linspace(in_min, in_max, 200).to(layer.Phi.coeffs.device)
