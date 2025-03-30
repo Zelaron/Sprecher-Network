@@ -61,7 +61,7 @@ def target_function(x):
     # return torch.exp(torch.sin(11 * x[:, [0]])) + 3 * x[:, [1]] + 4 * torch.sin(8 * x[:, [1]])
 
     # 2D vector function example
-    # Try setting e.g. architecture = [10, 10, 10, 10, 10], TOTAL_EPOCHS = 100000, TRAIN_PHI_RANGE = False for this example:
+    # Try setting e.g. architecture = [20, 20, 20, 20, 20], TOTAL_EPOCHS = 100000, PHI_KNOTS = PHI_CAPITAL_KNOTS = 500 for this example:
     # return torch.cat([
     #     (torch.exp(torch.sin(torch.pi * x[:, [0]]) + x[:, [1]]**2) - 1) / 7,
     #     (1/4)*x[:, [1]] + (1/5)*x[:, [1]]**2 - x[:, [0]]**3 + (1/5)*torch.sin(7*x[:, [0]])
