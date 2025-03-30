@@ -129,7 +129,9 @@ Finally, the network output is
 $$f(\mathbf{x})=\sum_{q=0}^{d_2-1}\mathbf{h}^{(2)}_q.$$
 
 Equivalently, we can write this as
-$$f(\mathbf{x})=\sum_{q=0}^{d_2-1}\Phi^{(2)}\Bigl(\sum_{r=0}^{d_1-1}\lambda^{(2)}_{r,q}\,\phi^{(2)}\Bigl(\Phi^{(1)}\Bigl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr)+\eta^{(2)}\,q\Bigr)+q\Bigr).$$
+\begin{equation}\label{eq:two-layer}
+f(\mathbf{x})=\sum_{q=0}^{d_2-1}\Phi^{(2)}\Bigl(\sum_{r=0}^{d_1-1}\lambda^{(2)}_{r,q}\,\phi^{(2)}\Bigl(\Phi^{(1)}\Bigl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr)+\eta^{(2)}\,q\Bigr)+q\Bigr).
+\end{equation}
 
 \subsubsection{Three hidden layers ($L=3$)}
 Now let the layer dimensions be $d_0\to d_1\to d_2\to d_3$, with the final block summed to yield a scalar output. In recursive form, we have
@@ -142,10 +144,20 @@ Then the network output is
 $$f(\mathbf{x})=\sum_{q=0}^{d_3-1}\mathbf{h}^{(3)}_q.$$
 
 The equivalent formulation with nested sums is
-$$f(\mathbf{x})=\sum_{q=0}^{d_3-1}\Phi^{(3)}\Bigl(\sum_{s=0}^{d_2-1}\lambda^{(3)}_{s,q}\,\phi^{(3)}\Bigl(\Phi^{(2)}\Bigl(\sum_{r=0}^{d_1-1}\lambda^{(2)}_{r,s}\,\phi^{(2)}\Bigl(\Phi^{(1)}\Bigl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr)+\eta^{(2)}\,s\Bigr)+s\Bigr)+\eta^{(3)}\,q\Bigr)+q\Bigr).$$
+\begin{equation}\label{eq:three-layer}
+f(\mathbf{x})=\sum_{q=0}^{d_3-1}\Phi^{(3)}\Bigl(\sum_{s=0}^{d_2-1}\lambda^{(3)}_{s,q}\,\phi^{(3)}\Bigl(\Phi^{(2)}\Bigl(\sum_{r=0}^{d_1-1}\lambda^{(2)}_{r,s}\,\phi^{(2)}\Bigl(\Phi^{(1)}\Bigl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr)+\eta^{(2)}\,s\Bigr)+s\Bigr)+\eta^{(3)}\,q\Bigr)+q\Bigr).
+\end{equation}
 
 \begin{remark}
 These expansions show how each layer's output is obtained by a shift-and-sum transformation using a pair of splines $\phi^{(\ell)}$ and $\Phi^{(\ell)}$. In the scalar-output case, the final layer sums over its output index $q$ to yield a single scalar. In the vector-valued output case (i.e. when $f:[0,1]^d\to\mathbb{R}^m$ with $m>1$), we append an extra output block that is constructed exactly as a Sprecher block but, unlike the final block in the scalar-output case, it does not perform a summation over its outputs. In other words, the extra block produces an $m$-dimensional vector directly (the formula remains the same as for a hidden block, except that the summation over the output index $q$ is omitted).
+\end{remark}
+
+\begin{remark}
+It is tempting to try to merge the spline pairs into single composite functions—for example, one might consider replacing the pair
+$$\phi^{(2)}\Bigl(\Phi^{(1)}(\cdot)+\eta^{(2)}q\Bigr)$$
+in \eqref{eq:two-layer} (or, in the three-layer case, the pairs
+$$\phi^{(2)}\Bigl(\Phi^{(1)}(\cdot)+\eta^{(2)}s\Bigr) \quad \text{and} \quad \phi^{(3)}\Bigl(\Phi^{(2)}(\cdot)+\eta^{(3)}q\Bigr)$$
+from \eqref{eq:three-layer}) by removing the explicit shift terms. However, experiments indicate that such modifications break the network's functionality. The precise reason why these extra shift terms (e.g. $+\eta^{(2)}q$, $+\eta^{(2)}s$, $+\eta^{(3)}q$) are essential (in addition to the $+q$ and $+s$ shifts) remains unclear and is an interesting subject for further investigation.
 \end{remark}
 
 \section{Relation to Sprecher (1965) and its generalization}
