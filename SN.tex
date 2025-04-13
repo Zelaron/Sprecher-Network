@@ -2,12 +2,15 @@
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amsthm,amssymb,mathrsfs}
 \usepackage{graphicx}
-\usepackage{hyperref}
+\usepackage[pdfencoding=auto, psdextra]{hyperref}
+\usepackage[figurename=Figure]{caption}
 
 \newtheorem{theorem}{Theorem}
 \newtheorem{remark}{Remark}
 \newtheorem{conjecture}{Conjecture}
 \newtheorem{definition}{Definition}
+
+\newcommand{\mathpdf}[2]{\texorpdfstring{$#1$}{#2}}
 
 \title{Sprecher Networks: A generalized neural architecture \\for multivariate function approximation}
 \author{Christian Hägg \and Boris Shapiro}
@@ -18,77 +21,76 @@
 \maketitle
 
 \begin{abstract}
-We present \emph{Sprecher Networks}, a family of trainable neural architectures inspired by the classical Kolmogorov--Arnold--Sprecher construction for approximating multivariate continuous functions. Unlike typical deep networks, these models rely on \emph{monotonic and general splines} to implement learnable transformations with explicit shifts and summations. Our approach reproduces Sprecher's original one-layer ``sum of shifted splines'' formula and extends it to deeper, multi-layer compositions. We discuss theoretical motivations, implementation details, and potential advantages in interpretability and universality.
+We present \emph{Sprecher Networks}, a family of trainable neural architectures inspired by the classical Kolmogorov--Arnold--Sprecher construction for approximating multivariate continuous functions. Unlike typical deep networks, these models rely on \emph{monotonic and general splines} to implement learnable transformations with explicit shifts and summations. Our approach reproduces Sprecher's original one-layer ``sum of shifted splines'' formula and extends it to deeper, multi-layer compositions. We discuss theoretical motivations, implementation details, and potential advantages in interpretability, universality, and parameter efficiency compared to related architectures such as Kolmogorov-Arnold Networks (KANs).
 \end{abstract}
 
 \section{Introduction and historical background}
-Approximation of continuous functions by sums of univariate functions has been a recurring theme in mathematical analysis and neural networks. Kolmogorov's Superposition Theorem (1957), refined by Arnold, established that any multivariate continuous function $f : [0,1]^d \to \mathbb{R}$ can be represented as a finite sum of strictly increasing univariate functions applied to affine transformations of $x_1,\dots,x_d$.
+Approximation of continuous functions by sums of univariate functions has been a recurring theme in mathematical analysis and neural networks. Kolmogorov's Superposition Theorem (1957), refined by Arnold, established that any multivariate continuous function $f : [0,1]^d \to \mathbb{R}$ can be represented as a finite sum of strictly increasing univariate functions applied to affine transformations of $x_1,\dots,x_d$ \cite{kolmogorov, arnold}.
 
 \vspace{1mm}
-\textbf{David Sprecher's 1965 construction.} $$f(\mathbf{x})=\sum_{q=0}^{2n}\Phi\Bigl(\,\sum_{p=1}^{n}\lambda_p\,\phi\bigl(x_p+\eta\,q\bigr)+q\Bigr)$$ In his 1965 landmark paper, David Sprecher \cite{sprecher1965} proposed a simplified version of the Kolmogorov--Arnold representation that specifically replaces families of $\phi_{q,p}$ by a single monotonic function $\phi$ with suitable argument shifts. Concretely, Sprecher showed that this single-layer construction suffices to approximate any $d$-variate continuous function when $n \ge d$ and the parameters $(\eta,\lambda_1,\dots,\lambda_n)$ and splines $(\phi,\Phi)$ are chosen carefully. His result preserves the key insight of \emph{shifting the input coordinates} by multiples of $\eta$ and summing the partial evaluations under a final univariate map $\Phi$.
+\textbf{David Sprecher's 1965 construction.} $$f(\mathbf{x})=\sum_{q=0}^{2n}\Phi\Bigl(\,\sum_{p=1}^{n}\lambda_p\,\phi\bigl(x_p+\eta\,q\bigr)+q\Bigr)$$ In his 1965 landmark paper, David Sprecher \cite{sprecher1965} proposed a simplified version of the Kolmogorov--Arnold representation that specifically replaces families of inner functions $\phi_{q,p}$ by a single monotonic function $\phi$ with suitable argument shifts. Concretely, Sprecher showed that this single-layer construction suffices to approximate any $d$-variate continuous function when $n \ge d$ and the parameters $(\eta,\lambda_1,\dots,\lambda_n)$ and splines $(\phi,\Phi)$ are chosen carefully. His result preserves the key insight of \emph{shifting the input coordinates} by multiples of $\eta$ and summing the partial evaluations under a final univariate map $\Phi$.
+
+Recent work has revitalized interest in leveraging Kolmogorov-Arnold representations for modern deep learning, notably with the introduction of Kolmogorov-Arnold Networks (KANs) \cite{liu2024kan}, which place learnable splines on the edges of the network graph rather than on nodes.
 
 \section{Motivation and overview of Sprecher Networks}
-Modern deep learning practice often focuses on conventional feedforward architectures. However, Sprecher's approach offers a highly interpretable alternative:
+Modern deep learning practice often focuses on conventional feedforward architectures (MLPs), where fixed nonlinear activation functions are applied at nodes, and learnable linear weights operate on edges. However, Sprecher's specific construction offers a foundation for a highly interpretable alternative that may also possess advantages in parameter efficiency. Our \emph{Sprecher Networks} are built upon the following principles:
 \begin{itemize}
-    \item Each layer in our network is organized around a fixed monotonic spline $\phi(\cdot)$ and a more general spline $\Phi(\cdot)$.
-    \item It incorporates trainable shifts via a scalar $\eta$, and trainable weights $\lambda$ that mix each input coordinate before passing them into $\phi$.
-    \item Finally, the network sums over shifted partial evaluations inside an outer spline, closely mimicking Sprecher's formula.
+    \item Each layer in our network is organized around a shared \emph{monotonic} spline $\phi(\cdot)$ and a shared \emph{general} spline $\Phi(\cdot)$, both learnable.
+    \item The network incorporates trainable shifts via a scalar $\eta$, and trainable weights $\lambda$ that mix each input coordinate before applying $\phi$.
+    \item Finally, the network sums over shifted partial evaluations inside the outer spline $\Phi$, closely mimicking Sprecher's formulation.
 \end{itemize}
-Our \emph{Sprecher Networks} generalize the classical shift-and-sum construction to a multi-layer architecture by stacking hidden layers. In our design, the mapping from one hidden layer (i.e. the collection of nodes in that layer) to the next is realized by a \emph{Sprecher block}: a functional operator that applies a shift-and-sum transformation using a shared pair of spline functions. Unlike conventional networks, the nodes within each hidden layer are not individually parameterized; rather, they are produced uniformly by the common transformation defined by the Sprecher block. That is, each Sprecher block applies
-$$(x_i)_{i=1}^{d_\mathrm{in}} \;\mapsto\; \Bigl[\Phi\Bigl(\sum_{i}\lambda_{i,q}\,\phi(x_i+\eta\,q)+q\Bigr)\Bigr]_{q=0}^{d_{\mathrm{out}}-1},$$
-and in the scalar-output case the outputs of the final Sprecher block are aggregated (via summation over $q$) to produce a single-dimensional output. In the original 1965 paper, Sprecher used only one such layer (with $2n+1$ summands). Our approach allows the network to follow the progression
-$$d_0 \to d_1 \to \cdots \to d_{L-1} \to 1,$$
-by stacking $L$ Sprecher blocks (each embedding the shift-and-sum transformation). In this way, we recover a deeper analog of the Kolmogorov--Arnold--Sprecher construction with enhanced expressive power while maintaining a clear theoretical connection to the classical result.
+Our architecture generalizes the classical shift-and-sum construction to a multi-layer network by stacking hidden layers. In our design, the mapping from one hidden layer (i.e., the collection of nodes in that layer) to the next is realized by a \emph{Sprecher block}: a functional operator that applies a shift-and-sum transformation using a shared pair of spline functions. Unlike conventional networks where each edge may have its own nonlinearity, or KANs where splines are assigned per edge, the nodes within each hidden layer of a Sprecher Network are produced uniformly by the block's shared parameters ($\phi, \Phi, \eta$). Diversity arises solely from the mixing weights ($\lambda$) and the index shift ($q$).
+
+That is, each Sprecher block applies
+$$ (x_i)_{i=1}^{d_{\mathrm{in}}} \;\mapsto\; \Bigl[\Phi\Bigl(\sum_{i}\lambda_{i,q}\,\phi(x_i+\eta\,q)+q\Bigr)\Bigr]_{q=0}^{d_{\mathrm{out}}-1}, $$
+and in the scalar-output case the outputs of the final Sprecher block are aggregated (via summation over $q$) to produce a single-dimensional output. In the original 1965 paper, Sprecher used one layer with $2n+1$ summands. Our approach uses $L$ Sprecher blocks to create the progression
+$$ d_0 \to d_1 \to \cdots \to d_{L-1} \to d_L, $$
+where $d_0=d_{\mathrm{in}}$ and $d_L$ is the dimension before potential final aggregation. This provides a deeper analog of the Kolmogorov--Arnold--Sprecher construction with enhanced expressive power while maintaining a clear theoretical connection to the classical result.
 
 \begin{definition}[Network notation]
-Throughout this paper, we denote Sprecher Network architectures using arrow notation of the form $d_{\mathrm{in}}\to[d_1,d_2,\ldots,d_L]\to d_{\mathrm{out}}$, where $d_{\mathrm{in}}$ is the input dimension, $[d_1,d_2,\ldots,d_L]$ represents the hidden layer dimensions, and $d_{\mathrm{out}}$ is the output dimension. For example, $2\to[5,3,8]\to1$ describes a network with 2-dimensional input, three hidden layers of widths 5, 3, and 8 respectively, and a scalar output. When input or output dimensions are clear from context, we may use the abbreviated notation $[d_1,d_2,\ldots,d_L]$ to focus on the hidden layer structure.
+Throughout this paper, we denote Sprecher Network architectures using arrow notation of the form $d_{\mathrm{in}}\to[d_1,d_2,\ldots,d_L]\to d_{\mathrm{out}}$, where $d_{\mathrm{in}}$ is the input dimension, $[d_1,d_2,\ldots,d_L]$ represents the hidden layer dimensions (widths), and $d_{\mathrm{out}}$ is the final output dimension. For example, $2\to[5,3,8]\to1$ describes a network with 2-dimensional input, three hidden layers of widths 5, 3, and 8 respectively, and a scalar output. When input or output dimensions are clear from context, we may use the abbreviated notation $[d_1,d_2,\ldots,d_L]$ to focus on the hidden layer structure.
 \end{definition}
 
 \section{Core architectural details}
-In our architecture, the fundamental building unit is the \emph{Sprecher block}. The network is composed of a sequence of Sprecher blocks, each of which performs a shift‐and‐sum transformation inspired by Sprecher's original construction. The following subsection details the structure of a single Sprecher block.
+In our architecture, the fundamental building unit is the \emph{Sprecher block}. The network is composed of a sequence of Sprecher blocks, each of which performs a shift‐and‐sum transformation inspired by Sprecher's original construction. The following subsections describe a single block and the layer-by-layer composition.
 
 \subsection{Sprecher block structure}
-A Sprecher block transforms an input vector from $\mathbb{R}^{d_{\mathrm{in}}}$ to an output vector in $\mathbb{R}^{d_{\mathrm{out}}}$ and consists of the following components:
+A Sprecher block transforms an input vector from $\mathbb{R}^{d_{\mathrm{in}}}$ to an output vector in $\mathbb{R}^{d_{\mathrm{out}}}$. This transformation is implemented using the following shared, learnable components:
 \begin{itemize}
-    \item \textbf{Monotonic spline} $\phi(\cdot)$: an increasing piecewise-linear function defined on a prescribed interval (typically $[0,1]$ or a slightly wider interval).
-    \item \textbf{General spline} $\Phi(\cdot)$: a piecewise-linear function defined on a sufficiently large interval (e.g., $[-10,12]$) that does not require monotonicity.
-    \item A matrix of \textbf{mixing weights} $\{\lambda_{i,q}\}$ of size $d_{\mathrm{in}} \times d_{\mathrm{out}}$, which linearly combines the outputs of the monotonic spline.
-    \item A scalar \textbf{shift parameter} $\eta > 0$, which controls how the index $q$ shifts each coordinate.
+    \item \textbf{Monotonic spline} $\phi(\cdot)$: an increasing piecewise-linear function defined on a prescribed interval (typically $[0,1]$ or a slightly wider interval). This function is shared across all connections within the block and is learnable.
+    \item \textbf{General spline} $\Phi(\cdot)$: a piecewise-linear function defined on a sufficiently large interval (e.g., $[-10,12]$) that does not require monotonicity. This function is also shared across the block and is learnable.
+    \item A matrix of \textbf{mixing weights} $\{\lambda_{i,q}\}$ of size $d_{\mathrm{in}} \times d_{\mathrm{out}}$, which linearly combines the outputs of the monotonic spline. These are learnable.
+    \item A scalar \textbf{shift parameter} $\eta > 0$, which controls how the index $q$ shifts each coordinate. This is learnable.
 \end{itemize}
 
 Concretely, given an input vector $\mathbf{x} \in \mathbb{R}^{d_{\mathrm{in}}}$, a single Sprecher block (with its own parameters $\phi$, $\Phi$, $\eta$, and $\lambda$) computes its $q$-th output (with $q=0,\dots,d_{\mathrm{out}}-1$) via
-$$\text{Block}_{\phi,\Phi,\eta,\lambda}(\mathbf{x})_q = \Phi\Biggl(\,\sum_{i=1}^{d_{\mathrm{in}}}\lambda_{i,q}\,\phi\Bigl(x_i+\eta\,q\Bigr) + q\Biggr).$$
+$$ \text{Block}_{\phi,\Phi,\eta,\lambda}(\mathbf{x})_q = \Phi\Biggl(\,\sum_{i=1}^{d_{\mathrm{in}}}\lambda_{i,q}\,\phi\Bigl(x_i+\eta\,q\Bigr) + q\Biggr). $$
 
-Note that in a network with two or more hidden layers, each Sprecher block is endowed with its own set of parameters (which may be denoted by $\phi^{(\ell)}$, $\Phi^{(\ell)}$, $\eta^{(\ell)}$, and $\lambda^{(\ell)}$ for the $\ell$-th block). This operation implements a shift-and-sum transformation: each input coordinate is shifted by a multiple of $\eta$, passed through the monotonic spline $\phi$, linearly combined with the mixing weights, and then transformed by the general spline $\Phi$ (with an added constant term $q$ to preserve the shift). By stacking Sprecher blocks as hidden layers, our network constructs a deep, compositional representation that generalizes Sprecher's original one-layer shift-and-sum formulation.
+Note that in a network with two or more hidden layers, each Sprecher block (indexed by $\ell$) uses its own set of shared parameters $\phi^{(\ell)}$, $\Phi^{(\ell)}$, $\eta^{(\ell)}$, and mixing weights $\lambda^{(\ell)}$. This operation implements a shift-and-sum transformation: each input coordinate is shifted by a multiple of $\eta$, passed through the shared monotonic spline $\phi$, linearly combined with the mixing weights, and then transformed by the shared general spline $\Phi$ (with an added constant term $q$ related to the output index). By stacking Sprecher blocks as hidden layers, our network constructs a deep, compositional representation that generalizes Sprecher's original one-layer shift-and-sum formulation.
 
 \subsection{Layer composition and final mapping}
-Let $L$ denote the number of hidden layers in the network. In our architecture, a ``hidden layer'' refers to the collection of nodes produced by a transformation, while the mapping from one hidden layer to the next is implemented by a \emph{Sprecher block}: a function that applies a shift‐and‐sum operation via a shared pair of spline functions. This means that, unlike traditional neural networks where each neuron is separately parameterized, the nodes in each hidden layer here are generated uniformly by the Sprecher block's common spline parameters, with diversity arising only through their associated mixing weights and index shifts.
+Let $L$ be the number of hidden layers in the network. In our architecture, a ``hidden layer'' refers to the collection of nodes produced by a transformation, while the mapping from one hidden layer to the next is implemented by a \emph{Sprecher block}. Suppose that the $\ell$-th Sprecher block maps
+$$ \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell}, $$
+with $d_0$ equal to the input dimension. Denote the output of the $\ell$-th block by $\mathbf{h}^{(\ell)}$ (and set $\mathbf{h}^{(0)}=\mathbf{x}$). Then the $\ell$-th block computes
+$$ \mathbf{h}^{(\ell)}_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\ell-1}} \lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(\mathbf{h}^{(\ell-1)}_i+\eta^{(\ell)}\,q\Bigr) + q\Biggr),\quad q=0,\dots,d_\ell-1. $$
 
-Suppose that the $\ell$-th Sprecher block maps 
-$$\mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell},$$
-with $d_0$ equal to the input dimension. In the $\ell$-th Sprecher block, a monotonic spline $\phi^{(\ell)}$ and a general spline $\Phi^{(\ell)}$ are applied together with the mixing weights $\{\lambda^{(\ell)}_{i,q}\}$ and a shift parameter $\eta^{(\ell)}$. If we denote the output of the $\ell$-th block by $\mathbf{h}^{(\ell)}$ (with $\mathbf{h}^{(0)}=\mathbf{x}$), then the $\ell$-th block computes its $q$-th output as
-$$\mathbf{h}^{(\ell)}_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\ell-1}} \lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(\mathbf{h}^{(\ell-1)}_i+\eta^{(\ell)}\,q\Bigr) + q\Biggr),\quad q=0,\dots,d_\ell-1.$$
+There are two cases for composing the blocks, depending on the desired final output dimension $m$:
 
-There are two cases for composing the blocks, depending on the desired final output dimension $m$ (i.e. the number of nodes in the output layer):
+\paragraph{(a) Scalar output ($m=1$):}
+The final block (block $L$) is designed so its $d_L$ outputs are summed to yield a scalar:
+$$ f(\mathbf{x}) = \sum_{q=0}^{d_L-1} \mathbf{h}^{(L)}_q. $$
+If we define the operator for the $\ell$-th block as
+$$ T^{(\ell)}: \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell}, \quad \text{with} \quad \Bigl(T^{(\ell)}(z)\Bigr)_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\ell-1}} \lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(z_i+\eta^{(\ell)}\,q\Bigr) + q\Biggr), $$
+then the overall function is
+$$ f(\mathbf{x}) = \sum_{q=0}^{d_L-1} \Bigl(T^{(L)} \circ T^{(L-1)} \circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x})_q. $$
+In this case, the network uses $L$ blocks and $2L$ shared spline functions.
 
-\paragraph{(a) Scalar output ($m=1$):}  
-In this configuration, the final Sprecher block is designed so that its $d_L$ outputs are aggregated by summation to yield a scalar output. Formally, we define
-$$f(\mathbf{x}) = \sum_{q=0}^{d_L-1} \mathbf{h}^{(L)}_q.$$
-Thus, the overall function can be written in terms of the operators
-$$T^{(\ell)}: \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell},\quad \text{with}\quad \Bigl(T^{(\ell)}(z)\Bigr)_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\ell-1}} \lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(z_i+\eta^{(\ell)}\,q\Bigr) + q\Biggr),$$
-as
-\begin{equation}\label{eq:compositionScalar}
-f(\mathbf{x}) = \sum_{q=0}^{d_L-1} \Bigl(T^{(L)} \circ T^{(L-1)} \circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x})_q.
-\end{equation}
-
-\paragraph{(b) Vector-valued output ($m>1$):}  
-When the target function $f$ maps into $\mathbb{R}^m$ with $m>1$, the network first constructs $L$ hidden layers (each implemented as a Sprecher block), yielding a hidden representation $\mathbf{h}^{(L)} \in \mathbb{R}^{d_L}$. An additional output block is then appended to map $\mathbf{h}^{(L)}$ to $\mathbb{R}^m$ without performing any summation (i.e., leaving the output as a $q$-dependent vector rather than collapsing it to a scalar, to preserve the distinct contributions of each channel). In particular, define
-$$\Bigl(T^{(L+1)}(z)\Bigr)_q = \Phi^{(L+1)}\Biggl(\,\sum_{r=0}^{d_L-1} \lambda^{(L+1)}_{r,q}\,\phi^{(L+1)}\Bigl(z_r+\eta^{(L+1)}\,q\Bigr)+q\Biggr),\quad q=0,\dots,m-1,$$
-with $z = \mathbf{h}^{(L)}$. Then the overall network function is given by
-\begin{equation}\label{eq:compositionVector}
-f(\mathbf{x}) = \Bigl(T^{(L+1)} \circ T^{(L)} \circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x}) \in \mathbb{R}^m.
-\end{equation}
-Note that this output block is constructed in the same manner as the hidden Sprecher blocks (with its own $\phi^{(L+1)}$ and $\Phi^{(L+1)}$), except that it does not include a summation over its outputs. Its role is solely to transform the final hidden representation into an $m$-dimensional output.
+\paragraph{(b) Vector-valued output ($m>1$):}
+When $f$ maps into $\mathbb{R}^m$ with $m>1$, the network first constructs $L$ hidden layers yielding a representation $\mathbf{h}^{(L)} \in \mathbb{R}^{d_L}$. An additional output block (block $L+1$) is appended to map $\mathbf{h}^{(L)}$ to $\mathbb{R}^m$ without summation. This output block computes:
+$$ \Bigl(T^{(L+1)}(z)\Bigr)_q = \Phi^{(L+1)}\Biggl(\,\sum_{r=0}^{d_L-1} \lambda^{(L+1)}_{r,q}\,\phi^{(L+1)}\Bigl(z_r+\eta^{(L+1)}\,q\Bigr)+q\Biggr),\quad q=0,\dots,m-1, $$
+with $z = \mathbf{h}^{(L)}$. The network output function is then
+$$ f(\mathbf{x}) = \Bigl(T^{(L+1)} \circ T^{(L)} \circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x}) \in \mathbb{R}^m. $$
+In this configuration, the network uses $L+1$ blocks and $2(L+1)$ shared spline functions. The extra block transforms the final hidden representation into an $m$-dimensional output without collapsing the index $q$.
 
 \medskip
 In summary, when $L \ge 1$ and the final output is scalar, the network consists of exactly $L$ blocks and thus $2L$ spline functions (one pair per block). When the output is vector-valued (with $m>1$), an additional block is appended, resulting in $L+1$ blocks and $2(L+1)$ spline functions. This extra block naturally extends Sprecher's original construction to the vector-valued setting.
@@ -96,7 +98,7 @@ In summary, when $L \ge 1$ and the final output is scalar, the network consists 
 \medskip
 We illustrate the case of a network with architecture $d_0\to[d_1,d_2,d_3]\to m$ (i.e., $L=3$ hidden layers with $m>1$ outputs) below. Let $X^{(0)}$ be the input, and $X^{(3)}$ the output of the third block. The ``extra'' final block then maps $X^{(3)}$ to $\mathbb{R}^m$:
 $$\begin{array}{ccccccc}
-X^{(0)} & \xrightarrow{\text{Sprecher block } 1} & X^{(1)} & 
+X^{(0)} & \xrightarrow{\text{Sprecher block } 1} & X^{(1)} &
 \xrightarrow{\text{Sprecher block } 2} & X^{(2)} &
 \xrightarrow{\text{Sprecher block } 3} & X^{(3)} \\
  & & & & & & \downarrow \\
@@ -105,168 +107,207 @@ X^{(0)} & \xrightarrow{\text{Sprecher block } 1} & X^{(1)} &
  & & & & & & \mathbb{R}^m \ (\text{output})
 \end{array}$$
 
-\textbf{Note:} Here, $X^{(\ell)}$ denotes the output of the $\ell$-th Sprecher block (i.e., the hidden-layer representation after $\ell$ transformations). Each Sprecher Block internally applies a pair of spline functions $(\phi^{(\ell)}, \Phi^{(\ell)})$, a weight matrix, and a shift parameter to transform its input. The diagram now emphasizes that the hidden representations $X^{(1)}, X^{(2)}, X^{(3)}$ are the complete outputs of their respective blocks, and the final (output) block transforms $X^{(3)}$ into the $m$-dimensional output without an additional summation.
+\textbf{Note:} Here, $X^{(\ell)}$ denotes the output of the $\ell$-th Sprecher block (i.e., the hidden-layer representation after $\ell$ transformations). Each Sprecher Block internally applies a pair of spline functions $(\phi^{(\ell)}, \Phi^{(\ell)})$, a weight matrix, and a shift parameter to transform its input. The diagram emphasizes that the hidden representations $X^{(1)}, X^{(2)}, X^{(3)}$ are the complete outputs of their respective blocks, and the final (output) block transforms $X^{(3)}$ into the $m$-dimensional output without an additional summation.
 
 This clarifies that while the classical Sprecher formula involves two splines in a single block (with summation to yield a scalar), a vector-valued extension naturally introduces an extra block and an additional pair of splines.
+\medskip
+
 
 \medskip
-We will now illustrate three examples with $L=1,2,3$ hidden layers in the common scalar-output case (i.e. $m = 1$). These examples demonstrate how the architecture—when used in its most common setting—retains the simplicity and interpretability of Sprecher's original one-layer, shift-and-sum formulation while allowing for deeper, compositional representations.
+\textbf{Illustrative Examples (Scalar Output)}
+
+To clarify the compositional structure, we write out the full expansions for networks with $L=1, 2, 3$ hidden layers producing a scalar output.
 
 \subsubsection{Single hidden layer ($L=1$)}
-
-In our architecture, the transformation between hidden layers is performed by a Sprecher block — a function that applies a pair of spline functions $(\phi$ and $\Phi$), a weight matrix, and a shift parameter to its input. Here, ``hidden layer'' specifically denotes the collection of nodes produced by this transformation, which are not individually parameterized as in traditional neural networks. For a network with architecture $d_{\mathrm{in}}\to[d_1]\to1$ (i.e., $d_0 = d_{\mathrm{in}}$ inputs and one hidden layer of dimension $d_1$), the network computes
+For a network with architecture $d_{\mathrm{in}}\to[d_1]\to1$ (i.e., $d_0=d_{\mathrm{in}}$), the network computes
 $$f(\mathbf{x}) = \sum_{q=0}^{d_1-1} \Phi^{(1)}\Biggl(\sum_{i=1}^{d_0} \lambda^{(1)}_{i,q}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,q\Bigr)+q\Biggr).$$
-This precisely reproduces Sprecher's 1965 construction
-$$f(\mathbf{x}) = \sum_{q=0}^{2n}\Phi\Biggl(\sum_{p=1}^{n}\lambda_p\,\phi\Bigl(x_p+\eta\,q\Bigr)+q\Biggr)$$
-when we set $d_1=2d_0+1$ and identify $\phi^{(1)}=\phi,\;\Phi^{(1)}=\Phi$.
+This precisely reproduces Sprecher's 1965 construction when $d_1=2d_0+1$ and identifying $\phi^{(1)}=\phi,\;\Phi^{(1)}=\Phi$.
 
 \subsubsection{Two hidden layers ($L=2$)}
-Let $d_0=d_{\mathrm{in}},d_1$ be the size of the first hidden layer, and $d_2$ the size of the second (final) layer, which is summed to yield a scalar output. Denoting the intermediate output as
-$$\mathbf{h}^{(1)}_r=\Phi^{(1)}\Bigl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr),\quad r=0,\dots,d_1-1,$$
-the second block becomes
+Let $d_0=d_{\mathrm{in}}$, $d_1$ be the size of the first hidden layer, and $d_2$ the size of the second (final) layer, which is summed. The intermediate output is
+$$\mathbf{h}^{(1)}_r=\Phi^{(1)}\Bigl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr),\quad r=0,\dots,d_1-1.$$
+The second block computes
 $$\mathbf{h}^{(2)}_q=\Phi^{(2)}\Bigl(\sum_{r=0}^{d_1-1}\lambda^{(2)}_{r,q}\,\phi^{(2)}\Bigl(\mathbf{h}^{(1)}_r+\eta^{(2)}\,q\Bigr)+q\Bigr),\quad q=0,\dots,d_2-1.$$
-Finally, the network output is
-$$f(\mathbf{x})=\sum_{q=0}^{d_2-1}\mathbf{h}^{(2)}_q.$$
-
-Equivalently, we can write this as
-\begin{equation}\label{eq:two-layer}
-f(\mathbf{x})=\sum_{q=0}^{d_2-1}\Phi^{(2)}\Bigl(\sum_{r=0}^{d_1-1}\lambda^{(2)}_{r,q}\,\phi^{(2)}\Bigl(\Phi^{(1)}\Bigl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr)+\eta^{(2)}\,q\Bigr)+q\Bigr).
+The final network output is $f(\mathbf{x})=\sum_{q=0}^{d_2-1}\mathbf{h}^{(2)}_q$. Equivalently, the fully expanded form is:
+\begin{equation}\label{eq:two-layer-restored}
+f(\mathbf{x})=\sum_{q=0}^{d_2-1}\Phi^{(2)}\Biggl(\sum_{r=0}^{d_1-1}\lambda^{(2)}_{r,q}\,\phi^{(2)}\Biggl(\Phi^{(1)}\Biggl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Biggr)+\eta^{(2)}\,q\Biggr)+q\Biggr).
 \end{equation}
 
 \subsubsection{Three hidden layers ($L=3$)}
-Now let the layer dimensions be $d_0\to d_1\to d_2\to d_3$, with the final block summed to yield a scalar output. In recursive form, we have
+Let the layer dimensions be $d_0\to d_1\to d_2\to d_3$, with the final block summed. The recursive definition involves:
 $$\begin{aligned}
 \mathbf{h}^{(1)}_r &= \Phi^{(1)}\Bigl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr),\\[1mm]
 \mathbf{h}^{(2)}_s &= \Phi^{(2)}\Bigl(\sum_{r=0}^{d_1-1}\lambda^{(2)}_{r,s}\,\phi^{(2)}\Bigl(\mathbf{h}^{(1)}_r+\eta^{(2)}\,s\Bigr)+s\Bigr),\\[1mm]
 \mathbf{h}^{(3)}_q &= \Phi^{(3)}\Bigl(\sum_{s=0}^{d_2-1}\lambda^{(3)}_{s,q}\,\phi^{(3)}\Bigl(\mathbf{h}^{(2)}_s+\eta^{(3)}\,q\Bigr)+q\Bigr).
 \end{aligned}$$
-Then the network output is
-$$f(\mathbf{x})=\sum_{q=0}^{d_3-1}\mathbf{h}^{(3)}_q.$$
-
-The equivalent formulation with nested sums is
-\begin{equation}\label{eq:three-layer}
-f(\mathbf{x})=\sum_{q=0}^{d_3-1}\Phi^{(3)}\Bigl(\sum_{s=0}^{d_2-1}\lambda^{(3)}_{s,q}\,\phi^{(3)}\Bigl(\Phi^{(2)}\Bigl(\sum_{r=0}^{d_1-1}\lambda^{(2)}_{r,s}\,\phi^{(2)}\Bigl(\Phi^{(1)}\Bigl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr)+\eta^{(2)}\,s\Bigr)+s\Bigr)+\eta^{(3)}\,q\Bigr)+q\Bigr).
-\end{equation}
+The network output is $f(\mathbf{x})=\sum_{q=0}^{d_3-1}\mathbf{h}^{(3)}_q$. The equivalent nested formulation is:
+\begin{multline}\label{eq:three-layer-restored}
+f(\mathbf{x})=\sum_{q=0}^{d_3-1}\Phi^{(3)}\Biggl(\sum_{s=0}^{d_2-1}\lambda^{(3)}_{s,q}\,\phi^{(3)}\Biggl(\Phi^{(2)}\Biggl(\sum_{r=0}^{d_1-1}\lambda^{(2)}_{r,s}\,\phi^{(2)}\Biggl(\Phi^{(1)}\Biggl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Biggr)\\
++\eta^{(2)}\,s\Biggr)+s\Biggr)+\eta^{(3)}\,q\Biggr)+q\Biggr).
+\end{multline}
 
 \begin{remark}
-These expansions show how each layer's output is obtained by a shift-and-sum transformation using a pair of splines $\phi^{(\ell)}$ and $\Phi^{(\ell)}$. In the scalar-output case, the final layer sums over its output index $q$ to yield a single scalar. In the vector-valued output case (i.e. when $f:[0,1]^d\to\mathbb{R}^m$ with $m>1$), we append an extra output block that is constructed exactly as a Sprecher block but, unlike the final block in the scalar-output case, it does not perform a summation over its outputs. In other words, the extra block produces an $m$-dimensional vector directly (the formula remains the same as for a hidden block, except that the summation over the output index $q$ is omitted).
+These expansions show how each layer's output is obtained by a shift-and-sum transformation using a shared pair of splines $\phi^{(\ell)}$ and $\Phi^{(\ell)}$. In the scalar-output case, the final layer sums over its output index $q$. For vector outputs ($m>1$), an extra block is used without this final summation.
 \end{remark}
 
 \begin{remark}
-It is tempting to try to merge the spline pairs in \eqref{eq:two-layer} and \eqref{eq:three-layer} into single composite functions. For example, one might consider replacing the pair
+It is tempting to try to merge the spline pairs in \eqref{eq:two-layer-restored} and \eqref{eq:three-layer-restored} into single composite functions. For example, one might consider replacing the pair
 $$\phi^{(2)}\Bigl(\Phi^{(1)}(\cdot)+\eta^{(2)}q\Bigr)$$
-in \eqref{eq:two-layer} (or, in the three-layer case, the pairs
+in \eqref{eq:two-layer-restored} (or, in the three-layer case, the pairs
 $$\phi^{(2)}\Bigl(\Phi^{(1)}(\cdot)+\eta^{(2)}s\Bigr) \quad \text{and} \quad \phi^{(3)}\Bigl(\Phi^{(2)}(\cdot)+\eta^{(3)}q\Bigr)$$
-from \eqref{eq:three-layer}) by removing the explicit shift terms. However, experiments indicate that such modifications break the network's functionality. The precise reason why these extra shift terms (e.g. $+\eta^{(2)}q$, $+\eta^{(2)}s$, $+\eta^{(3)}q$) are essential (in addition to the $+q$ and $+s$ shifts) remains unclear and is an interesting subject for further investigation.
+from \eqref{eq:three-layer-restored}) by removing the explicit shift terms (the $\eta^{(\ell)} q$ or $\eta^{(\ell)} s$ terms inside $\phi^{(\ell)}$). However, experiments indicate that such modifications break the network's functionality. The precise reason why these internal shift terms are essential (in addition to the outer $+q$ or $+s$ shifts) remains unclear and is an interesting subject for further investigation.
 \end{remark}
 
 \section{Relation to Sprecher (1965) and its generalization}
 In his 1965 paper \cite{sprecher1965}, David Sprecher proved a version of the Kolmogorov--Arnold theorem by showing that
-$$f(\mathbf{x})=\sum_{q=0}^{2n}\Phi\Bigl(\sum_{p=1}^{n}\lambda_p\,\phi\bigl(x_p+\eta\,q\bigr)+q\Bigr),$$
-for suitable choices of monotonic $\phi$ and continuous $\Phi$. Our single-layer Sprecher Network with $d=n$ inputs and $d_{\mathrm{out}}=2n+1$ outputs, \emph{followed by a sum over $q$}, reproduces precisely that formula.
+$$ f(\mathbf{x})=\sum_{q=0}^{2n}\Phi\Bigl(\sum_{p=1}^{n}\lambda_p\,\phi\bigl(x_p+\eta\,q\bigr)+q\Bigr), $$
+for suitable monotonic $\phi$ and continuous $\Phi$. Our single-layer Sprecher Network with $d=n$ inputs and $d_{\mathrm{out}}=2n+1$ outputs, followed by a sum over $q$, reproduces this formula exactly.
 
-\vspace{1mm}
-\textbf{Going deeper.} While Sprecher's original construction used one layer, we can compose multiple shift-and-sum blocks to form a deeper architecture. Each block can reduce or transform the intermediate dimension, thereby creating new function classes that remain ``Sprecher-like'' but with greater representational flexibility.
+\medskip
+\textbf{Going deeper.} While Sprecher's original construction uses a single layer, our approach composes multiple shift-and-sum blocks (each constituting a Sprecher block) to form a deep network. This stacking increases expressivity while preserving the theoretical foundations of the original construction.
 
-\section{Implementation Highlights}
+\section{Implementation highlights}
 
 \subsection{Trainable splines}
-Each block has two spline modules:
+Each block employs two learnable spline modules:
 \begin{itemize}
-    \item $\phi^{(\ell)}$, a monotonic piecewise-linear spline defined on $[0,1]$ (or a slightly wider interval), initialized so that it is increasing.
-    \item $\Phi^{(\ell)}$, a general piecewise-linear spline defined on, say, $[-10,12]$ (or any sufficiently wide domain). This spline is not necessarily monotonic and can be initialized near the identity function.
+    \item $\phi^{(\ell)}$: a monotonic piecewise-linear spline defined on $[0,1]$ (or a slightly wider interval), initialized to be increasing.
+    \item $\Phi^{(\ell)}$: a general piecewise-linear spline defined on an interval such as $[-10,12]$, which may be initialized near the identity. It does not require monotonicity.
 \end{itemize}
-Both spline types typically have many knots (e.g. 100--300), which goes well beyond the requirements of the original theorem that only demanded continuity and monotonicity for $\phi$.
-
-In practice, a flatness penalty can be introduced to encourage smooth approximations, a design choice partially inspired by earlier numerical methods (see \cite{koppen}). This penalty serves to regularize the spline functions.
+In our reference implementation, each spline is represented using 100--300 knots (though fewer may suffice). A flatness penalty (based on the second derivative of the spline coefficients) can be applied to enforce smoothness and act as a regularizer, inspired by \cite{koppen}.
 
 \subsection{Shifts and weights}
-Each block has a scalar $\eta^{(\ell)}$ controlling how the block's index $q$ shifts its input coordinates, plus a matrix $\lambda^{(\ell)}_{i,q}$ mixing each input. These free parameters are updated via gradient-based optimizers to minimize a loss function of the form
-$$\text{(MSE on training data)} + \alpha \times \text{(penalty on spline second derivatives)},$$
-where the penalty encourages smoother spline functions.
+Each block includes:
+\begin{itemize}
+    \item A trainable scalar shift parameter $\eta^{(\ell)}$, which controls the amount by which the input is shifted for each index $q$.
+    \item A matrix of trainable mixing weights $\lambda^{(\ell)}_{i,q}$ (with dimensions $d_{\ell-1} \times d_\ell$) that linearly combine the transformed inputs $\phi^{(\ell)}(\cdot)$.
+\end{itemize}
+These parameters, along with the spline coefficients, are learned via gradient-based optimization, typically minimizing a loss function that includes a Mean Squared Error (MSE) term and optionally the spline flatness penalty.
 
-\subsection{Parameter counting}
-Since each block contains two splines (each with potentially hundreds of knot parameters), the total number of trainable parameters is typically dominated by the spline coefficients. If each $\phi^{(\ell)}$ has $K_\phi$ knots and each $\Phi^{(\ell)}$ has $K_\Phi$ knots, then each block contributes roughly $K_\phi + K_\Phi$ spline parameters, plus $d_{\ell-1}\,d_\ell$ weight parameters and one $\eta^{(\ell)}$. Summing over all blocks yields the total parameter count. Note that Sprecher Networks have a significant advantage over KANs (see \cite{liu2024kan}) in that their parameter counts don't explode for wide networks.
+\subsection{Parameter counting and comparison with KANs}
+Throughout this section, we assume cubic splines (order $k=3$) and an effective grid size of $G$ intervals, so that each spline is represented by approximately $G+k$ parameters (often approximated as $G$ for large $G$).
+
+The parameterization of Sprecher Networks (SNs) is fundamentally different from Kolmogorov-Arnold Networks (KANs) \cite{liu2024kan}. In KANs, each edge (with roughly $N_{in}\times N_{out}$ edges per layer, where $N_{in}, N_{out}$ are layer widths) is assigned its own spline function. If each spline has approximately $G+k$ parameters, the parameter count per layer in a KAN is
+$$ O\bigl(N_{in} \times N_{out} \times (G+k)\bigr). $$
+Over $L$ layers with average width $N$, this yields roughly $O(L \cdot N^2 \cdot (G+k))$, which we approximate as $O(L \cdot N^2 \cdot G)$ for large $G$.
+
+In contrast, an SN block uses only \emph{two shared splines} (one for $\phi^{(\ell)}$ and one for $\Phi^{(\ell)}$) independent of layer widths. The parameters per block include:
+\begin{itemize}
+    \item Mixing weights scaling as $d_{\ell-1}\times d_\ell$ (approximately $O(N^2)$ for average width $N$).
+    \item Shared spline parameters totaling $K_\phi + K_\Phi$, where $K_\phi, K_\Phi$ are the number of parameters for $\phi, \Phi$ respectively. Assuming $K_\phi \approx K_\Phi \approx G+k$, these contribute an overhead of $O(G+k)$ per block.
+    \item One scalar shift parameter $\eta^{(\ell)}$ per block.
+\end{itemize}
+Thus, for a network of depth $L$ (meaning $L$ blocks for scalar output, $L+1$ for vector) and average width $N$, the total parameter count scales as
+$$ O(L \cdot N^2 + L \cdot (K_\phi+K_\Phi)). $$
+Assuming $K_\phi+K_\Phi$ is of the order of $G+k$, the dominant term in KANs scales with $N^2 \cdot G$, while in SNs the spline parameter count $G$ contributes only an \emph{additive} overhead $L \cdot G$ to the $L \cdot N^2$ weights. In other words, while KAN parameters scale roughly as $O(N^2 \cdot G)$, SN parameters scale roughly as $O(N^2 + G)$ per block. This reduction in dependence on $G$ becomes especially significant when the required spline resolution $G$ is large relative to the layer widths $N$.
 
 \subsection{Sprecher-like theorems}
-If we restrict to one layer with $d_{\mathrm{out}}=2d+1$, a monotonic $\phi$, and suitable constants $(\lambda_i,\eta)$, then we reproduce the original Sprecher formula. Sprecher's 1965 argument implies that this single-layer network can approximate any continuous function $f:[0,1]^d\to\mathbb{R}$ arbitrarily well, provided $\phi$ and $\Phi$ are sufficiently flexible.
+Restricting to a single layer ($L=1$) with $d_{\mathrm{out}}=2d+1$, a monotonic $\phi$, and appropriate constants $(\lambda_i,\eta)$ reproduces the original Sprecher construction:
+$$ f(\mathbf{x})=\sum_{q=0}^{2d}\Phi\Biggl(\sum_{p=1}^{d}\lambda_p\,\phi\Bigl(x_p+\eta\,q\Bigr)+q\Biggr). $$
+Thus, Sprecher's argument implies that this network can approximate any continuous function $f:[0,1]^d\to\mathbb{R}$ arbitrarily well if $\phi$ and $\Phi$ are sufficiently flexible.
 
-An interesting possibility arises when we consider the case of a single hidden layer with vector output. In particular, for a network approximating a function $f:[0,1]^d\to\mathbb{R}^m$ with $m>1$, one could set $d_{\mathrm{out}}=2d+1$ in the hidden layer and then append an output block that omits the final summation over $q$. This construction would then possibly generalize Sprecher's original scalar formulation to the vector-valued setting. Although the precise relationship between the number of hidden nodes and the output dimension may depend on further architectural details—and the universality of such an extension remains highly conjectural—it suggests a natural direction for future theoretical investigation.
+For vector-valued functions $f:[0,1]^d\to\mathbb{R}^m$ with $m>1$, our construction uses $L$ hidden blocks and appends an output block (block $L+1$, without final summation) to generate an $m$-dimensional output. The universality of this specific construction for vector-valued functions is conjectured below.
 
-Explicitly, we can formulate this conjecture as follows:
 \begin{conjecture}[Vector-valued Sprecher representation]
-Let $n\in\mathbb{N}$ and let $f:[0,1]^n \to \mathbb{R}^m$ be any continuous function with $m>1$. Then there exist monotonic splines $\phi^{(1)}:[0,1]\to\mathbb{R}$ and $\phi^{(2)}:J\to\mathbb{R}$, general splines $\Phi^{(1)}:I_1\to\mathbb{R}$ and $\Phi^{(2)}:J\to\mathbb{R}$ (defined on suitable intervals $I_1$ and $J$), mixing weight matrices $\lambda^{(1)}_{i,r}$ for $1\le i\le n$ and $0\le r\le 2n$ and $\lambda^{(2)}_{r,q}$ for $0\le r\le 2n$ and $0\le q\le m-1$, and shift parameters $\eta^{(1)},\eta^{(2)}>0$ such that for every $\mathbf{x}=(x_1,\dots,x_n)\in [0,1]^n$ one has
-\begin{equation}\label{eq:SprecherVector}
-f(\mathbf{x}) = \Biggl[\Phi^{(2)}\Biggl(\sum_{r=0}^{2n} \lambda^{(2)}_{r,q}\,\phi^{(2)}\Biggl(\Phi^{(1)}\Bigl(\sum_{i=1}^{n} \lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr)+\eta^{(2)}\,q\Biggr)+q\Biggr)\Biggr]_{q=0}^{m-1}.
-\end{equation}
+Let $n\in\mathbb{N}$ and let $f:[0,1]^n \to \mathbb{R}^m$ be any continuous function with $m>1$. Then there exist monotonic splines $\phi^{(1)}:[0,1]\to\mathbb{R}$ and $\phi^{(2)}:J_2\to\mathbb{R}$, general splines $\Phi^{(1)}:I_1\to\mathbb{R}$ and $\Phi^{(2)}:J_2\to\mathbb{R}$ (for suitable intervals $I_1$ and $J_2$), mixing weight matrices $\lambda^{(1)}_{i,r}$ for $1\le i\le n$ and $0\le r\le 2n$, and $\lambda^{(2)}_{r,q}$ for $0\le r\le 2n$ and $0\le q\le m-1$, and shift parameters $\eta^{(1)},\eta^{(2)}>0$ such that for every $\mathbf{x}=(x_1,\dots,x_n)\in [0,1]^n$ one has
+$$ f(\mathbf{x}) = \Biggl[\Phi^{(2)}\Biggl(\sum_{r=0}^{2n} \lambda^{(2)}_{r,q}\,\phi^{(2)}\Biggl(\Phi^{(1)}\Bigl(\sum_{i=1}^{n} \lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr)+\eta^{(2)}\,q\Biggr)+q\Biggr)\Biggr]_{q=0}^{m-1}. $$
+This formulation uses $L=1$ hidden block producing $d_1=2n+1$ nodes, and one output block ($L+1=2$).
 \end{conjecture}
 \begin{remark}
-In the case $m=1$, the representation in \eqref{eq:SprecherVector} reduces (upon summing over $q$) to Sprecher's original formulation.
+For $m=1$, this representation reduces (after summing over $q$) to Sprecher's original formulation.
 \end{remark}
 
 \subsection{Deeper extensions}
-A natural conjecture is that stacking these blocks preserves universal approximation capability while potentially requiring fewer summation nodes. Intuitively, multi-layer compositions can capture complex structure more efficiently. However, a complete theoretical treatment of depth versus width for Sprecher Networks warrants further research.
+A natural conjecture is that stacking multiple Sprecher blocks ($L>1$) preserves universal approximation capabilities while possibly requiring fewer nodes per layer or offering other benefits like capturing complex compositional structures more efficiently. A complete theoretical treatment of depth versus width trade-offs for Sprecher Networks remains an avenue for future work.
 
 \section{Empirical demonstrations}
-In practice, we train Sprecher Networks on small data sets sampled from a target function $f$. Two classic examples are:
+We train Sprecher Networks on small datasets sampled from a target function $f$. The network learns the parameters ($\eta^{(\ell)}$, $\lambda^{(\ell)}$) and spline coefficients ($\phi^{(\ell)}$, $\Phi^{(\ell)}$) via gradient descent. Two classic examples are:
 \begin{itemize}
-    \item \textbf{1D case:} A polynomial or sinusoidal function on $[0,1]$. The network learns $\phi$ and $\Phi$ splines that approximate $f$ very accurately, effectively acting as a learnable spline interpolant.
-    \item \textbf{2D case:} A surface such as 
-    $$f(x,y)=\frac{1}{7}\Bigl(\exp\bigl(\sin(\pi x)+y^2\bigr)-1\Bigr).$$ 
-    With sufficient training (typically after $O(10^5)$ gradient updates), the network achieves good approximation. Layerwise spline plots provide an interpretable view of how the network transforms inputs.
+    \item \textbf{1D case:} A polynomial or sinusoidal function on $[0,1]$ where the network learns $\phi$ and $\Phi$ that accurately interpolate the function, effectively acting as a learnable spline interpolant.
+    \item \textbf{2D case:} A surface defined as
+    $$ f(x,y)=\frac{1}{7}\Bigl(\exp\bigl(\sin(\pi x)+y^2\bigr)-1\Bigr). $$
+    With sufficient training (typically after $O(10^5)$ gradient updates using Adam), the network achieves high accuracy. Layerwise spline plots provide an interpretable view of the internal transformation dynamics.
 \end{itemize}
+
+Figures~\ref{fig:twovarsprecher} and \ref{fig:twovarsprechervector} illustrate typical network outputs for 2D scalar and vector-valued functions, respectively.
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\textwidth]{Figures/TwoVarsThreeBlocks.png}
-\caption{Visualization of a trained $2\to[5,8,5]\to1$ Sprecher Network approximating a 2D target function $z = f(x,y) = (\exp\bigl(\sin(\pi x)+y^2\bigr)-1)/7$. \textbf{Top row:} The learned spline functions for each block - monotonic splines $\phi^{(\ell)}$ (cyan) and general splines $\Phi^{(\ell)}$ (magenta). \textbf{Bottom row:} Comparison between the target function (left) and the network approximation (right) showing the high-quality fit achieved after training.}
+% Corrected Figure 1 Caption (BELOW image)
+\caption{Visualization of a trained \texorpdfstring{$2\to[5,8,5]\to1$}{2 -> [5,8,5] -> 1} Sprecher Network approximating a 2D target function 
+\texorpdfstring{$z = f(x,y) = \frac{\exp\bigl(\sin(\pi x)+y^2\bigr)-1}{7}$}{z = f(x,y) = (exp(sin(pi*x)+y^2)-1)/7}. 
+Top row: Learned spline functions for each block --- monotonic splines \texorpdfstring{$\phi^{(\ell)}$}{phi(l)} (cyan) and general splines \texorpdfstring{$\Phi^{(\ell)}$}{Phi(l)} (magenta). Bottom row: Comparison between the target function (left) and the network approximation (right).}
 \label{fig:twovarsprecher}
 \end{figure}
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\textwidth]{Figures/TwoVarsSixBlocks.png}
-\caption{Visualization of a trained Sprecher Network with architecture $2\to[20,20,20,20,20]\to2$, implemented with six Sprecher blocks, that approximates the vector-valued function 
-$f(x,y)=\Bigl(\frac{\exp\bigl(\sin(\pi x)+y^2\bigr)-1}{7},\;\frac{1}{4}\,y+\frac{1}{5}\,y^2-x^3+\frac{1}{5}\sin(7x)\Bigr).$ The top row shows the learned spline functions for each block (monotonic splines in cyan and general splines in magenta), while the bottom row compares the target surfaces with the network outputs for both output dimensions.}
+% Corrected Figure 2 Caption (BELOW image)
+\caption{Visualization of a trained Sprecher Network with architecture \texorpdfstring{$2\to[20,20,20,20,20]\to2$}{2 -> [20,...] -> 2}, implemented with six Sprecher blocks, approximating a vector-valued function 
+\texorpdfstring{$f(x,y)=\Bigl(\frac{\exp\bigl(\sin(\pi x)+y^2\bigr)-1}{7},\;\frac{1}{4}\,y+\frac{1}{5}\,y^2-x^3+\frac{1}{5}\sin(7x)\Bigr)$}{f(x,y)=((exp(sin(pi*x)+y^2)-1)/7, ...)}. 
+The top row shows the learned spline functions for each block (monotonic splines \texorpdfstring{$\phi^{(\ell)}$}{phi(l)} in cyan and general splines \texorpdfstring{$\Phi^{(\ell)}$}{Phi(l)} in magenta), while the bottom row compares the target surfaces with the network outputs for both output dimensions.}
 \label{fig:twovarsprechervector}
 \end{figure}
 
-Figure~\ref{fig:twovarsprecher} demonstrates a trained Sprecher Network with architecture $2\to[5,8,5]\to1$, approximating a 2D surface. Similarly, Figure~\ref{fig:twovarsprechervector} shows a Sprecher Network approximating a vector-valued function 
-$$f(x,y)=\Bigl(\frac{\exp\bigl(\sin(\pi x)+y^2\bigr)-1}{7},\;\frac{1}{4}\,y+\frac{1}{5}\,y^2-x^3+\frac{1}{5}\sin(7x)\Bigr)$$
-with domain and codomain in $\mathbb{R}^2$. In this case the network has architecture $2\to[20,20,20,20,20]\to2$, which is implemented with six Sprecher blocks (where the sixth Sprecher block is used for the vector-valued output). In both figures the top row displays the learned spline functions for each block (monotonic splines in cyan and general splines in magenta), while the bottom row compares the target surfaces with the network outputs. This illustrates that the network, whether approximating an $\mathbb{R}^2\to\mathbb{R}$ or an $\mathbb{R}^2\to\mathbb{R}^2$ function, is capable of capturing the underlying function's intricacies.
+\subsection{Potential advantages in parameter efficiency: placeholder examples}
+Preliminary estimates suggest that Sprecher Networks (SNs) could offer significant parameter reductions compared to KANs, based on examples from \cite{liu2024kan}. These require empirical validation via direct SN training on the same tasks.
+
+\paragraph{PDE solving example (Ref KAN \S 3.4):}
+A KAN architecture of $[2, 10, 1]$ was reported effective for a Poisson equation task.
+\begin{itemize}
+    \item \textbf{KAN parameter estimate:} The KAN has $2\times10 + 10\times1 = 30$ edges/splines. Assuming $G=20$ grid intervals and cubic splines ($k=3$, giving approximately $G+k = 23$ parameters per spline), the total KAN parameter count is about $30 \times 23 = 690$ parameters. (Note: The original KAN paper might use different spline implementations or parameter counting conventions).
+    \item \textbf{SN parameter estimate (equivalent structure):} An SN architecture $[2, 10, 1]$ corresponds to $d_0=2, d_1=10, d_2=1$ (output dimension). This uses $L=2$ blocks (scalar output), hence 4 shared splines. With the same spline assumptions ($G=20, k=3$), shared spline parameters total roughly $4 \times 23 = 92$. In addition, there are $d_0 \times d_1 + d_1 \times d_2 = 2\times10 + 10\times1 = 30$ mixing weights and $L=2$ shift parameters $\eta^{(1)}, \eta^{(2)}$. The approximate total SN parameter count is $92 + 30 + 2 = 124$ parameters.
+    \item \textbf{Potential advantage:} This represents a potential reduction by roughly a factor of 5.5 (124 versus 690). (\emph{Placeholder: Empirical validation required to confirm if an SN of this structure performs comparably.}).
+\end{itemize}
+
+\paragraph{Knot Theory Example (Ref KAN \S 4.3):}
+A pruned KAN architecture $[17, 1, 14]$ with $G=3, k=3$ was used to predict knot signature.
+\begin{itemize}
+    \item \textbf{KAN parameters:} The KAN has $17\times1 + 1\times14 = 31$ edges/splines. Parameters per spline $\approx G+k = 3+3 = 6$. Total KAN params $\approx 31 \times 6 = 186$.
+    \item \textbf{SN parameter estimate (equivalent structure):} An SN architecture $[17, 1, 14]$ (vector output $m=14$) implies $L=1$ hidden layer ($d_0=17, d_1=1$) and an output layer mapping $d_1 \to d_2=14$. This uses $L+1=2$ blocks total. Number of shared splines is $2(L+1) = 4$. Spline parameters $\approx 4 \times (G+k) = 4 \times 6 = 24$. Mixing weights: $d_0 \times d_1 + d_1 \times d_2 = 17\times1 + 1\times14 = 31$. Shift parameters: $L+1=2$. Total SN params $\approx 24 + 31 + 2 = 57$ parameters.
+    \item \textbf{Potential Advantage:} This yields a potential reduction of approximately 3.3x (57 versus 186). (\emph{Placeholder: Empirical validation required. Achieving this structure may need SN pruning development, as the intermediate dimension $d_1=1$ is very narrow.}).
+\end{itemize}
+
+These calculations illustrate the *potential* for parameter savings in SNs due to the use of shared splines, especially when the effective grid size $G$ is large relative to the mixing weights $N^2$.
 
 \section{Challenges and future directions}
+While Sprecher Networks offer a theoretically grounded and potentially efficient architecture, several challenges and opportunities for future work exist.
 
 \subsection{Implementation challenges}
-
 \begin{enumerate}
-\item \textbf{Difficulties in training spline functions:} \\
-Finding good spline shapes through gradient-based optimization can be quite challenging. Due to the inherent flexibility of the trainable splines, the network can sometimes settle into local minima where the learned functions flatten out, resulting in ``horizontal'' outputs; that is, outputs that remain nearly constant regardless of the input. For example, when training on data from a scalar function $f:\mathbb{R}\to\mathbb{R}$, the network may produce an output that is nearly a horizontal line; for data from a function $f:\mathbb{R}^2\to\mathbb{R}$, the output may form a nearly horizontal plane; and more generally, for a function $f:\mathbb{R}^m\to\mathbb{R}$ with $m>2$, the network output can yield horizontal hyperplanes. Similarly, for vector-valued outputs the network may settle on multiple flat outputs, often resulting in parallel horizontal hyperplanes. This stagnation significantly impedes the network's ability to accurately approximate the target function, and escaping such flat regions in the loss landscape may require better spline initialization strategies.
+    \item \textbf{Difficulties in training spline functions:} \\
+    Finding good spline shapes through gradient-based optimization can be challenging. Due to the inherent flexibility of the trainable splines, the network can sometimes settle into local minima where the learned functions flatten out, resulting in ``horizontal'' outputs (outputs that remain nearly constant regardless of the input). This stagnation significantly impedes the network's ability to accurately approximate the target function. Escaping such flat regions in the loss landscape may require better spline initialization strategies, adaptive learning rates, or second-order optimization methods. Training can be slower compared to simpler models like MLPs.
 
-\item \textbf{Initialization and domain/codomain selection:} \\
-The original Sprecher construction suggests that the monotonic spline $\phi$ should be defined as a mapping from $[0,1]$ to $[0,1]$ while the general spline $\Phi$ is a function from $\mathbb{R}$ to $\mathbb{R}$. In implementations, however, restricting the domains and codomains of these splines to bounded intervals is necessary, e.g. by choosing intervals of the form $[ -a, a ]$ with a sufficiently large $a$ (for example, $a \approx 10$). Although this empirical choice works well across different function approximation tasks, it remains unclear how to determine these intervals optimally. A natural idea is to initialize the $\Phi$ functions as $[0,1]\to[0,1]$ mappings and then let the network learn appropriate scaling parameters. However, this approach often exacerbates the problem of converging to flat, uninformative solutions.
+    \item \textbf{Initialization and domain/codomain Selection:} \\
+    The original Sprecher construction suggests specific domains/codomains (e.g., $\phi: [0,1] \to [0,1]$). In implementations, restricting the domains and codomains of the shared splines to bounded intervals (e.g., $[-10,10]$ or $[-10,12]$ for $\Phi$) is a practical necessity. However, determining these intervals optimally a priori is difficult. While trainable range parameters (as used in the provided Python code) offer a solution, they can sometimes exacerbate convergence issues if not carefully regularized or initialized.
 
-\item \textbf{Architectural sensitivity:} \\
-The selection of a suitable network architecture appears to be highly dependent on the nature of the target function. For example, when training on data from a scalar function $f:\mathbb{R}\to\mathbb{R}$, a network with a single hidden layer typically suffices. In contrast, data from functions $f:\mathbb{R}^2\to\mathbb{R}$ may require deeper networks, often with around four hidden layers, to achieve smooth and accurate outputs with piecewise smooth splines. The situation becomes even more complex for vector-valued functions, where determining the optimal balance between network depth and width is even less straightforward and warrants further investigation. More systematic experimentation is needed to develop general hypotheses and design guidelines for choosing the appropriate network architecture.
+    \item \textbf{Architectural sensitivity:} \\
+    The selection of a suitable network architecture (depth $L$ and widths $d_1,\dots,d_L$) appears to be highly dependent on the nature of the target function. Simple functions might only require shallow networks, whereas more complex or higher-dimensional functions may need deeper architectures. The optimal balance between network depth and width is not well understood and warrants further investigation. Systematic guidelines for these choices are needed. Although our parameter counts are compared for equivalent structures, the optimal architecture may differ between SNs and KANs.
+
+    \item \textbf{Knot count selection:} \\
+    The optimal number of knots ($K_\phi, K_\Phi$) for the shared splines is critical. Too few knots limit expressivity, while too many increase parameters and may lead to overfitting or optimization difficulties. Unlike KANs where spline complexity can vary per edge, the shared nature of SN splines affects the entire layer’s nonlinearity uniformly. Adaptive knot placement strategies or methods to automatically determine knot density based on data would be highly beneficial.
 \end{enumerate}
 
 \subsection{Directions for further research}
-
 \begin{itemize}
-    \item \emph{High-dimensional} spline adaptations (e.g., tensor-product or multi-dimensional $\phi,\Phi$).
-    \item Incorporation of \emph{residual} or \emph{skip connections} for more powerful deep architectures.
-    \item Theoretical comparisons of depth versus width in Sprecher-style networks.
-    \item \emph{Function dimensionality discovery:} Sprecher Networks offer a promising approach for discovering the intrinsic dimensionality of unknown functions. Given a dataset of output values in $\mathbb{R}^m$ (e.g., $m$-dimensional measurements), one could train multiple Sprecher Networks with varying input dimensions $d_{\mathrm{in}}\to[...]\to m$ and compare their performance. The network achieving optimal approximation with minimal complexity would likely reveal the true input dimensionality of the underlying function, assuming that it exists and is sufficiently well-behaved. This approach leverages the network's interpretable spline components to visualize functional relationships, effectively ``reverse-engineering'' complex data manifolds. For instance, when approximating data generated by an unknown function $f: \mathbb{R}^2 \to \mathbb{R}^5$, a Sprecher Network with architecture $2\to[...]\to5$ should yield more regular splines and lower error than architectures with incorrect input dimensionality. Applications include scientific data analysis, where understanding the minimal parametrization of complex phenomena is often as valuable as the predictive model itself.
+    \item \textbf{Improved training strategies:} Develop better initialization schemes (e.g., initializing $\Phi$ closer to identity, $\phi$ closer to linear), adaptive optimization methods (e.g., second-order techniques), or alternative regularization approaches tailored for training shared splines in the Sprecher framework.
+    \item \textbf{Sparsity and pruning techniques:} Implement L1/entropy-based regularization on mixing weights ($\lambda$) and pruning strategies (e.g., removing nodes with low contribution) specifically for SNs to automatically discover compact architectures and further improve parameter efficiency and interpretability.
+    \item \textbf{High-dimensional spline adaptations:} Explore if alternative representations for the shared functions $\phi, \Phi$, such as tensor-product splines or small neural networks, could be beneficial, particularly for higher-dimensional inputs.
+    \item \textbf{Residual or skip connections:} Investigate incorporating residual connections around Sprecher blocks to improve gradient flow, potentially enabling deeper and more stable networks, analogous to ResNets.
+    \item \textbf{Theoretical analysis:} Further study the approximation capabilities of deep SNs, rigorously analyze the trade-offs between depth and width, and compare their sample complexity and generalization properties with KANs and traditional MLPs. Understanding the role of the internal shifts ($\eta^{(\ell)} q$) remains crucial.
+    \item \textbf{Function dimensionality discovery:} Leverage the interpretability of SNs for scientific discovery. By training networks with varying input dimensions $d_{\mathrm{in}}\to[...]\to m$ on data with unknown structure, the architecture achieving the best trade-off between fit quality and complexity could reveal the intrinsic dimensionality of the underlying function. This uses the network structure itself as an investigative tool. For instance, when approximating data generated by an unknown function $f: \mathbb{R}^2 \to \mathbb{R}^5$, a Sprecher Network with architecture $2\to[...]\to5$ should yield more regular splines and lower error than architectures with incorrect input dimensionality. Applications include scientific data analysis, where understanding the minimal parametrization of complex phenomena is often as valuable as the predictive model itself.
 \end{itemize}
 
 \section{Conclusion}
-We have introduced and motivated the design of \emph{Sprecher Networks}, a modern, trainable extension of Sprecher's single-layer shift-and-sum formula for function approximation. By using two splines ($\phi$ and $\Phi$) per block, along with careful index shifting and summation, we retain the theoretical grounding of the Kolmogorov--Arnold approach, thereby enabling deeper networks with potentially greater expressive power.
+We have introduced and motivated \emph{Sprecher Networks}, a modern, trainable extension of Sprecher's single-layer shift-and-sum formulation for function approximation. By utilizing two shared spline functions ($\phi$ and $\Phi$) per block, along with learnable mixing weights and shifts, SNs retain the theoretical underpinnings of the Kolmogorov--Arnold--Sprecher construction while offering enhanced interpretability and significant potential for parameter efficiency compared to Kolmogorov-Arnold Networks.
 
-\vspace{1mm}
-\textbf{Further related work:} Recent work in neural network design has re-examined the Kolmogorov--Arnold theorem from fresh perspectives. In particular, \emph{Kolmogorov--Arnold Networks (KANs)} \cite{liu2024kan} propose learnable spline functions on edges instead of nodes, showing that such architectures can sometimes surpass MLPs in accuracy and interpretability for certain tasks. While KANs share the general KA motivation, the \emph{Sprecher Network} approach here uses one monotonic and one non-monotonic spline in each layer, with a summation over shifted inputs. It would be interesting in future work to compare these designs more thoroughly and unify them under the broader KA umbrella.
+Our parameter analysis indicates that, under reasonable assumptions, SNs can significantly reduce the dependence of the total parameter count on the spline grid size $G$ compared to KANs for equivalent network structures, potentially offering substantial savings (e.g., by factors of 3 to 5 in the examples analyzed). Although challenges remain in training stability, speed, hyperparameter selection (e.g., optimal knot counts and domain choices), and rigorous empirical validation across diverse tasks, further work—particularly in improved optimization, regularization, and pruning strategies—could unlock the full potential of Sprecher Networks.
+
+SNs represent a novel direction that bridges classical approximation theory with modern deep learning practices. They offer a unique blend of interpretability derived from their explicit structure and potential parameter efficiency stemming from shared nonlinearities, making them a promising avenue for future research in function approximation and scientific machine learning.
 
 \bigskip
-
 \begin{thebibliography}{9}
 \bibitem{arnold}
 Arnold, V.~I.~(1963). ``On functions of three variables,'' \emph{Doklady Akademii Nauk SSSR}, \textbf{48}.
@@ -278,11 +319,11 @@ Sprecher, D.~A.~(1965). ``On the Structure of Continuous Functions of Several Va
 Kolmogorov, A.~N.~(1957). ``On the representation of continuous functions of many variables by superposition of continuous functions of one variable and addition,'' \emph{Doklady Akademii Nauk SSSR}, \textbf{114}.
 
 \bibitem{koppen}
-K{\"o}ppen, M.~(2002). ``On the training of a Kolmogorov Network,'' in \emph{Artificial Neural Networks—ICANN 2002: International Conference, Madrid, Spain, August 28--30, 2002 Proceedings 12}, pp. 474--479. Springer.
+K{\"o}ppen, M.~(2002). ``On the training of a Kolmogorov Network,'' in \emph{Artificial Neural Networks---ICANN 2002: International Conference, Madrid, Spain, August 28--30, 2002 Proceedings 12}, pp. 474--479. Springer.
 
 \bibitem{liu2024kan}
-Liu, Z., Wang, Y., Vaidya, S., Ruehle, F., Halverson, J., Solja\v{c}i\'{c}, M., Hou, T.Y., Tegmark, M.~(2025).  
-``KAN: Kolmogorov-Arnold Networks,'' \emph{ICLR 2025 (to appear)}.  
+Liu, Z., Wang, Y., Vaidya, S., Ruehle, F., Halverson, J., Solja\v{c}i\'{c}, M., Hou, T.~Y., Tegmark, M.~(2025).
+``KAN: Kolmogorov-Arnold Networks,'' \emph{ICLR 2025 (to appear)}.
 arXiv preprint \href{https://arxiv.org/abs/2404.19756}{arXiv:2404.19756}.
 \end{thebibliography}
 
