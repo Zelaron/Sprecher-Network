@@ -485,8 +485,8 @@ These examples demonstrate the feasibility of training SNs and the potential int
 \label{fig:twovarsprechervector_revised}
 \end{figure}
 
-\begin{remark}[Biological analogy for $\Phi$-shapes]
-Several learned $\Phi^{(\ell)}$ splines exhibit a sharp central peak flanked by dips, e.g. as seen for $\Phi^{(1)}$ from Block~1 in Figure~\ref{fig:twovarsprecher_revised}. This shape resembles biphasic neural waveforms, such as extracellular spike templates or synaptic kernels. In neurophysiology, similar features arise from \emph{inhibitory post-synaptic potentials (IPSPs)} before a spike and \emph{afterhyperpolarizations (AHPs)} following it. Related motifs also appear in early sensory systems, for example, biphasic temporal filters and center-surround receptive fields emphasize changes and contrast. The recurrence of such structures in learned splines suggests that Sprecher Networks may naturally discover biologically relevant signal-processing patterns when approximating structured functions.
+\begin{remark}[Spline ringing artifacts]
+Learned outer splines $\Phi^{(\ell)}$ often develop a pronounced central peak with adjacent undershoots, superficially reminiscent of biphasic neural waveforms. This pattern arises when approximating high‑curvature features with piecewise‑linear splines of finite resolution: the spline can exhibit ringing around sharp bends, producing local overshoot and undershoot analogous to interpolation artifacts.
 \end{remark}
 
 \subsection{Systematic benchmarks (selected examples)}
