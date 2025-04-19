@@ -438,7 +438,7 @@ This suggests that SNs have the \emph{potential} for significant parameter savin
 In such regimes ($G \gg N$), the $L N^2$ term might dominate in SNs, while the $L N^2 G$ term dominates in KANs.
 
 \subsection{Placeholder examples (illustrative calculations)}
-We present some illustrative calculations, based on examples in \cite{liu2024kan}, to highlight this potential, emphasizing that these require empirical validation of comparable performance for the given architectures. Generally, however, greater network depths than those used in the KAN paper may be required to offset the lower parameter counts from shared splines across edges in SNs.
+We present some illustrative calculations, based on examples in \cite{liu2024kan}, to highlight this potential, emphasizing that these require empirical validation of comparable performance for the given architectures. In practice, however, greater network depths than those in the corresponding KAN examples may be required to offset the lower parameter counts from shared splines across edges in SNs.
 
 \paragraph{PDE solving example (KAN Ref \S 3.4):}
 KAN architecture $[2, 10, 1]$, reported effective. $N_{in}=2, N_{hid}=10, N_{out}=1$.
@@ -484,6 +484,10 @@ These examples demonstrate the feasibility of training SNs and the potential int
 \caption{Visualization of a trained Sprecher Network with architecture \texorpdfstring{$2\to[20,20,20,20,20]\to2$}{2 -> [20,...] -> 2} (5 hidden layers, 6 blocks total), approximating a vector-valued function $f(x,y)=((\exp(\sin(\pi x)+y^2)-1)/7,\; \frac{1}{4}y+\frac{1}{5}y^2-x^3+\frac{1}{5}\sin(7x))$. Top row: Learned spline functions for each block ($\phi^{(\ell)}$ in cyan, $\Phi^{(\ell)}$ in magenta). Bottom row: Comparison between the target surfaces and the network outputs for both output dimensions (dim 0 left, dim 1 right; target=viridis/blue-green, prediction=autumn/red-yellow overlay).}
 \label{fig:twovarsprechervector_revised}
 \end{figure}
+
+\begin{remark}[Biological analogy for $\Phi$-shapes]
+Several learned $\Phi^{(\ell)}$ splines exhibit a sharp central peak flanked by dips, e.g. as seen for $\Phi^{(1)}$ from Block~1 in Figure~\ref{fig:twovarsprecher_revised}. This shape resembles biphasic neural waveforms, such as extracellular spike templates or synaptic kernels. In neurophysiology, similar features arise from \emph{inhibitory post-synaptic potentials (IPSPs)} before a spike and \emph{afterhyperpolarizations (AHPs)} following it. Related motifs also appear in early sensory systems, for example, biphasic temporal filters and center-surround receptive fields emphasize changes and contrast. The recurrence of such structures in learned splines suggests that Sprecher Networks may naturally discover biologically relevant signal-processing patterns when approximating structured functions.
+\end{remark}
 
 \subsection{Systematic benchmarks (selected examples)}
 To provide more quantitative insight, we illustrate SNs in a few examples from the KAN article, focusing on parameter efficiency and scaling. (Actual execution of these experiments is needed for confirmation; the placeholder numbers of parameters for the SNs below may need to be significantly higher.)
