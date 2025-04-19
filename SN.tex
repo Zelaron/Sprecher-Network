@@ -485,8 +485,8 @@ These examples demonstrate the feasibility of training SNs and the potential int
 \label{fig:twovarsprechervector_revised}
 \end{figure}
 
-\begin{remark}[Spline ringing artifacts]
-Learned outer splines $\Phi^{(\ell)}$ often develop a pronounced central peak with adjacent undershoots, superficially reminiscent of biphasic neural waveforms (see $\Phi^{(1)}$ in Block 1 of Figure~\ref{fig:twovarsprecher_revised}). This pattern arises when approximating high‑curvature features with piecewise‑linear splines of finite resolution: the spline can exhibit ringing around sharp bends, producing local overshoot and undershoot analogous to interpolation artifacts.
+\begin{remark}[Spline artifacts]
+Learned outer splines $\Phi^{(\ell)}$ occasionally develop pronounced peaks with adjacent undershoots, resembling biphasic waveforms, see $\Phi^{(1)}$ in Block 1 of Figure~\ref{fig:twovarsprecher_revised}. While such shapes can arise from approximating sharp features with finite-resolution splines, the precise reason for this specific pattern appearing in $\Phi^{(1)}$, especially when contrasted with $\Phi^{(2)}$ that has the same number of knots and handles high-curvature features very well, is not determined and likely relates to the complex interplay during optimization for this particular network.
 \end{remark}
 
 \subsection{Systematic benchmarks (selected examples)}
