@@ -54,8 +54,13 @@ PHI_CAPITAL_KNOTS = 200
 ##############################################################################
 
 def target_function(x):
-    # 1D scalar function example:
+    # 1D scalar function, example 1:
+    # TOTAL_EPOCHS = 50000 is enough for a rough approximation
     return (x[:, [0]] - 0.5)**5 - (x[:, [0]] - (1/3))**3 + (1/5)*(x[:, [0]] - 0.1)**2
+    
+    # 1D scalar function, example 2 (used to create Figure 1):
+    # Set e.g. architecture = [5], PHI_IN_RANGE = (-0.1, 4.1), PHI_OUT_RANGE = (-0.8, 1.1), TRAIN_PHI_RANGE = False
+    # return torch.sin((torch.exp(x[:, [0]]) - 1.0) / (2.0 * (torch.exp(torch.tensor(1.0, device=x.device)) - 1.0))) + torch.sin(1.0 - (4.0 * (torch.exp(x[:, [0]] + 0.1) - 1.0)) / (5.0 * (torch.exp(torch.tensor(1.0, device=x.device)) - 1.0))) + torch.sin(2.0 + (torch.exp(x[:, [0]] + 0.2) - 1.0) / (torch.exp(torch.tensor(1.0, device=x.device)) - 1.0)) + torch.sin(3.0 + (torch.exp(x[:, [0]] + 0.3) - 1.0) / (5.0 * (torch.exp(torch.tensor(1.0, device=x.device)) - 1.0))) + torch.sin(4.0 - (6.0 * (torch.exp(x[:, [0]] + 0.4) - 1.0)) / (5.0 * (torch.exp(torch.tensor(1.0, device=x.device)) - 1.0)))
     
     # 2D scalar function example:
     # return torch.exp(torch.sin(11 * x[:, [0]])) + 3 * x[:, [1]] + 4 * torch.sin(8 * x[:, [1]])
@@ -414,6 +419,25 @@ def train_network(target_function, architecture, total_epochs=100000, print_ever
     model = SprecherMultiLayerNetwork(input_dim=input_dim,
                                       architecture=architecture,
                                       final_dim=final_dim).to(device)
+    # Compute core params (all except the 4 global‑range ones) and phi_range params
+    core_params = sum(
+        p.numel()
+        for n, p in model.named_parameters()
+        if p.requires_grad and "phi_range_params" not in n
+    )
+    phi_params = sum(p.numel() for p in model.phi_range_params.parameters())
+    if TRAIN_PHI_RANGE:
+        total_params = core_params + phi_params
+    else:
+        total_params = core_params
+    print(
+        f"Total number of trainable parameters: {total_params}"
+    )
+
+    
+    
+    
+    
     # Use two parameter groups: one for global 𝛷 range parameters (with a higher LR)
     # and one for the rest of the parameters.
     params = [
@@ -421,6 +445,9 @@ def train_network(target_function, architecture, total_epochs=100000, print_ever
         {"params": [p for n, p in model.named_parameters() if "phi_range_params" not in n], "lr": 0.0003}
     ]
     optimizer = torch.optim.Adam(params, weight_decay=1e-7)
+    # Note about global range parameters
+    if TRAIN_PHI_RANGE:
+        print("Including 4 global range parameters (dc, dr, cc, cr) in the total count.")
     
     losses = []
     best_loss = float("inf")
@@ -485,6 +512,15 @@ def train_network(target_function, architecture, total_epochs=100000, print_ever
     
     if best_state is not None:
         model.load_state_dict(best_state)
+    
+    # Print final eta and lambda parameters for each block
+    for idx, layer in enumerate(model.layers, start=1):
+        print(f"Block {idx}: eta = {layer.eta.item():.6f}")
+        print(f"Block {idx}: lambdas shape = {tuple(layer.lambdas.shape)}")
+        print(f"Block {idx}: lambdas =")
+        print(layer.lambdas.detach().cpu().numpy())
+        print()
+    
     return model, losses, model.layers
 
 ##############################################################################
