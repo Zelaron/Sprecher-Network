@@ -463,14 +463,17 @@ While extensive benchmarking is future work, we provide illustrations of SN trai
 \subsection{Basic function approximation}
 We train SNs on datasets sampled from known target functions $f$. The network learns the parameters ($\eta^{(\ell)}$, $\lambda^{(\ell)}$) and spline coefficients ($\phi^{(\ell)}$, $\Phi^{(\ell)}$) via gradient descent (Adam optimizer, typically $O(10^5)$ updates) using MSE loss plus regularization.
 \begin{itemize}
-    \item \textbf{1D case:} For $f(x)$ on $[0,1]$, an SN like $1 \to [W] \to 1$ (one block) learns $\phi^{(1)}$ and $\Phi^{(1)}$ that accurately interpolate $f$, effectively acting as a learnable spline interpolant structured according to Sprecher's formula.
-    \item \textbf{2D case (scalar):} E.g., $f(x,y) = \frac{1}{7}(\exp(\sin(\pi x)+y^2)-1)$. A network like $2\to[5,8,5]\to1$ (3 blocks) can achieve high accuracy. Figure \ref{fig:twovarsprecher_revised} shows the interpretable layerwise spline plots and the final fit quality.
+    \item \textbf{1D case:} For $f(x)$ on $[0,1]$, an SN like $1 \to [W] \to 1$ (one block) learns $\phi^{(1)}$ and $\Phi^{(1)}$ that accurately interpolate $f$, effectively acting as a learnable spline interpolant structured according to Sprecher's formula. Figure~\ref{fig:onevar_example} provides an example where an SN is trained on data generated from a known Sprecher structure ($f(x) = \sum_q \Phi(\lambda_q \phi(x+\eta q)+q)$ with known $\phi, \Phi, \lambda, \eta$). While the network achieves a very accurate approximation of the overall function $f(x)$, the learned components (splines $\hat{\phi}, \hat{\Phi}$, weights $\hat{\lambda}$, shift $\hat{\eta}$) only partially resemble the ground truth functions and parameters used to generate the data. Perfect recovery of internal components is generally not guaranteed, as multiple parameter combinations might yield similar final outputs, especially given the flexibility of splines and the complex interplay between parameters during optimization. This highlights a potential challenge in uniquely identifying underlying generating functions solely from learned SN parameters, although the learned structure often provides valuable insights.
+    \item \textbf{2D case (scalar):} Moving to multivariate functions, consider $f(x,y) = (\exp(\sin(\pi x)+y^2)-1)/7$. A network like $2\to[5,8,5]\to1$ (3 blocks) can achieve high accuracy. Figure \ref{fig:twovarsprecher_revised} shows the interpretable layerwise spline plots and the final fit quality.
     \item \textbf{2D case (vector):} E.g., $f(x,y)=(f_1(x,y), f_2(x,y))$. A deeper network like $2\to[20, \dots, 20]\to2$ (e.g., 5 hidden layers, requiring 6 blocks) is used. Figure \ref{fig:twovarsprechervector_revised} illustrates the learned splines and the approximation of both output surfaces.
 \end{itemize}
-These examples demonstrate the feasibility of training SNs and the potential interpretability offered by visualizing the learned shared splines $\phi^{(\ell)}$ and $\Phi^{(\ell)}$ for each block.
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\textwidth]{Figures/OneVarOneBlock.png}
+\caption{Visualization of a trained Sprecher Network with architecture \texorpdfstring{$1\to[5]\to1$}{1 -> [5] -> 1} (one block) trained on data sampled from $f(x) = \sum_{q=0}^{4} \Phi(\lambda_{q+1} \phi(x+\eta q)+q)$, where the ground truth functions were $\phi(x) = (e^x-1)/(e-1)$ and $\Phi(x)=\sin{x}$, with shift $\eta=1/10$ and mixing weights $\lambda = \{1/2, -4/5, 1, 1/5, -6/5\}$. Top row: Network structure, learned monotonic spline $\phi^{(1)}$ (cyan), learned general spline $\Phi^{(1)}$ (magenta). Bottom row: Comparison between the target function $f(x)$ (dashed black) and the network output (solid red).}
+\label{fig:onevar_example}
+\end{figure}
 
-% Add revised figure environments here if captions or figure files change.
-% Using placeholder names _revised for now. Keep original names if files are same.
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\textwidth]{Figures/TwoVarsThreeBlocks.png}
@@ -484,6 +487,8 @@ These examples demonstrate the feasibility of training SNs and the potential int
 \caption{Visualization of a trained Sprecher Network with architecture \texorpdfstring{$2\to[20,20,20,20,20]\to2$}{2 -> [20,...] -> 2} (5 hidden layers, 6 blocks total), approximating a vector-valued function $f(x,y)=((\exp(\sin(\pi x)+y^2)-1)/7,\; \frac{1}{4}y+\frac{1}{5}y^2-x^3+\frac{1}{5}\sin(7x))$. Top row: Learned spline functions for each block ($\phi^{(\ell)}$ in cyan, $\Phi^{(\ell)}$ in magenta). Bottom row: Comparison between the target surfaces and the network outputs for both output dimensions (dim 0 left, dim 1 right; target=viridis/blue-green, prediction=autumn/red-yellow overlay).}
 \label{fig:twovarsprechervector_revised}
 \end{figure}
+
+These examples demonstrate the feasibility of training SNs and the potential interpretability offered by visualizing the learned shared splines $\phi^{(\ell)}$ and $\Phi^{(\ell)}$ for each block.
 
 \begin{remark}[Spline artifacts]
 Learned outer splines $\Phi^{(\ell)}$ occasionally develop pronounced peaks with adjacent undershoots, resembling biphasic waveforms, see $\Phi^{(1)}$ in Block 1 of Figure~\ref{fig:twovarsprecher_revised}. While such shapes can arise from approximating sharp features with finite-resolution splines, the precise reason for this specific pattern appearing in $\Phi^{(1)}$, especially when contrasted with $\Phi^{(2)}$ that features the same number of knots and handles high-curvature features very well, is not determined and likely relates to the complex interplay during optimization for this particular network.
