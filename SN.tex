@@ -62,7 +62,7 @@ For scalar outputs, the outputs of the final Sprecher block are aggregated (via 
 
 In Sprecher's original work, one layer (block) with $d_{\mathrm{out}} = 2n+1$ outputs (where $n=d_{\mathrm{in}}$) was sufficient for universality. Our approach stacks $L$ Sprecher blocks to create a deep network progression:
 $$ d_0 \to d_1 \to \cdots \to d_{L-1} \to d_L, $$
-where $d_0=d_{\mathrm{in}}$ is the input dimension, and $d_L$ is the dimension of the final hidden representation before potential aggregation or final mapping. This provides a deeper analog of the KAS construction, aiming for potentially enhanced expressive power or efficiency for complex compositional functions, while maintaining a clear theoretical connection to the classical result.
+where $d_0=d_{\mathrm{in}}$ is the input dimension, and $d_L$ is the dimension of the final hidden representation before potential aggregation or final mapping. This multi-block composition provides a deeper analog of the KAS construction, aiming for potentially enhanced expressive power or efficiency for complex compositional functions. However, it's important to note that rigorous universality is established only for a single block with scalar output (directly from Sprecher's theorem); the universality of networks with \(L>1\) blocks or vector-valued outputs remains conjectural (see Section~\ref{sec:universality}).
 
 \begin{definition}[Network notation]
 Throughout this paper, we denote Sprecher Network architectures using arrow notation of the form $d_{\mathrm{in}}\to[d_1,d_2,\ldots,d_L]\to d_{\mathrm{out}}$, where $d_{\mathrm{in}}$ is the input dimension, $[d_1,d_2,\ldots,d_L]$ represents the hidden layer dimensions (widths), and $d_{\mathrm{out}}$ is the final output dimension of the network (after potential summation). For example, $2\to[5,3,8]\to1$ describes a network with 2-dimensional input, three hidden layers of widths 5, 3, and 8 respectively, and a scalar output (implying the final block's outputs of dimension 8 are summed). $2\to[5,3]\to4$ describes a network with 2-dimensional input, two hidden layers of widths 5 and 3, and a 4-dimensional vector output (implying an additional output block maps from dimension 3 to 4 without summation). When input or output dimensions are clear from context, we may use the abbreviated notation $[d_1,d_2,\ldots,d_L]$ to focus on the hidden layer structure.
@@ -209,7 +209,8 @@ Feature                   & MLP                 & LAN / Adaptive-MLP & KAN      
 \bottomrule
 \end{tabular}
 \vspace{2mm}
-\parbox{\textwidth}{\footnotesize \textit{Notes:} $L$=depth, $N$=average width, $G$=spline grid size/complexity. UAT=Universal Approx. Theorem, KAT=Kolmogorov-Arnold Theorem, KAS=Kolmogorov-Arnold-Sprecher. LAN details often follow KAN Appendix B \cite{liu2024kan}.}
+\parbox{\textwidth}{\footnotesize \textit{Notes:} $L$=depth, $N$=average width, $G$=spline grid size/complexity. UAT=Universal Approx. Theorem, KAT=Kolmogorov-Arnold Theorem, KAS=Kolmogorov-Arnold-Sprecher. LAN details often follow KAN Appendix B \cite{liu2024kan}.
+\textit{The parameter scaling notation uses $N$ to denote a typical or average layer width for simplicity, following \cite{liu2024kan}. For architectures with varying widths $d_\ell$, the $LN^2$ terms (involving $L$ or $L+1$ weight matrices depending on scalar/vector output) should be understood as $\sum_{\ell} d_{\ell-1}d_{\ell}$ (MLP, LAN, SN) and the $LN^2G$ term for KAN as $(\sum_{\ell} d_{\ell-1}d_{\ell})G$, where the sum is over the relevant blocks/matrices, for precise counts.}}
 \end{table}
 
 Table \ref{tab:arch_comparison} summarizes the key distinctions:
@@ -222,7 +223,7 @@ Table \ref{tab:arch_comparison} summarizes the key distinctions:
 \end{itemize}
 This comparison clarifies that SNs represent a distinct architecture, related to but not a direct subset of KANs, primarily due to the presence of mixing weights ($\lambda$), the specific shift structure ($\eta q, q$), and the block-level sharing of splines.
 
-\section{Theoretical aspects and universality}
+\section{Theoretical aspects and universality}\label{sec:universality}
 
 \subsection{Relation to Sprecher (1965) and universality}
 As shown in Section 3.3.1, a single-layer ($L=1$) Sprecher Network with input dimension $d_0=n$ and output dimension $d_1 = 2n+1$, when configured with appropriate (potentially fixed) weights $\lambda^{(1)}_{i,q} = \lambda_p$ and shift $\eta^{(1)} = \eta$, directly reproduces Sprecher's 1965 formula:
@@ -356,6 +357,10 @@ Multiplying by $d_L$ produces the stated constant $C$, completing the
 proof.
 \end{proof}
 
+\begin{remark}[Dependence on depth]
+Note that the constant $C$ in the error bound depends on the layer dimensions $d_\ell$ and the Lipschitz constants $L_\phi^{(\ell)}, L_\Phi^{(\ell)}$ through the factors $M_\ell$. As shown in the proof, the error accumulates multiplicatively through the layers via these factors. Consequently, if the $M_\ell$ values (representing error amplification per layer) are consistently greater than 1, the constant $C$ can grow exponentially with the network depth $L$. This highlights a potential challenge for approximation with very deep networks, similar to error bounds seen in other deep learning contexts.
+\end{remark}
+
 \subsection{Vector-valued functions and deeper extensions}
 For vector-valued functions $f: [0,1]^n \to \mathbb{R}^m$ with $m>1$, our construction appends an $(L+1)$-th block without final summation. While intuitively extending the representation, the universality of this specific construction is not directly covered by Sprecher's original theorem. We conjecture its validity:
 
@@ -394,7 +399,7 @@ Our reference implementation utilizes piecewise-linear splines for both $\phi^{(
 
 \subsection{Shifts, weights, and optimization}
 \begin{itemize}
-    \item \textbf{Parameters:} Each block includes the learnable scalar shift $\eta^{(\ell)} > 0$ (positivity enforced via e.g., softplus or exponentiation of an underlying parameter) and the learnable mixing weight matrix $\lambda^{(\ell)} \in \mathbb{R}^{d_{\ell-1} \times d_\ell}$.
+    \item \textbf{Parameters:} Each block includes the learnable scalar shift $\eta^{(\ell)} > 0$ and the learnable mixing weight matrix $\lambda^{(\ell)} \in \mathbb{R}^{d_{\ell-1} \times d_\ell}$. The shift parameter $\eta^{(\ell)}$ is theoretically assumed positive ($\eta > 0$) based on Sprecher's construction. In our reference implementation, it is initialized positively and trained without an explicit positivity constraint (e.g., using `softplus` or `abs`), relying on optimization dynamics. However, such constraints can be added if found necessary.
     \item \textbf{Optimization:} All learnable parameters (spline coefficients, $\eta^{(\ell)}$, $\lambda^{(\ell)}$, and potentially range parameters for $\Phi^{(\ell)}$) are trained jointly using gradient-based optimization methods like Adam \cite{kingma2014adam} or LBFGS.
     \item \textbf{Loss function:} Typically Mean Squared Error (MSE) for regression tasks, combined with regularization terms:
         $$ \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{MSE}} + w_{\text{flat}} \sum_{\ell} \text{Penalty}(\Phi^{(\ell)}) + w_{\text{sparse}} \sum_{\ell} \text{Sparsity}(\lambda^{(\ell)}) + w_{\text{var}} \mathcal{L}_{\text{variance}} $$
@@ -425,7 +430,7 @@ Let's assume a network of depth $L$ (meaning $L$ hidden layers, thus $L$ blocks 
             \item Shift parameter $\eta^{(\ell)}$: $O(1)$ parameter per block.
         \end{itemize}
         Summing over $L$ (or $L+1$) blocks, the total parameter count scales approximately as:
-        $$ O(LN^2 + LG). $$
+        $$ O(LN^2 + LG).$$
 \end{itemize}
 
 \textbf{Comparison insight:} The crucial difference lies in how the spline complexity $G$ contributes. In KANs, it multiplies the $N^2$ term associated with layer connectivity ($O(L N^2 G)$). In SNs, due to spline sharing within blocks, it appears as an additive term ($O(L G)$) alongside the mixing weight term ($O(L N^2)$).
