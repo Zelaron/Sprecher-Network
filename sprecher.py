@@ -56,7 +56,7 @@ PHI_CAPITAL_KNOTS = 200
 def target_function(x):
     # 1D scalar function, example 1:
     # TOTAL_EPOCHS = 50000 is enough for a rough approximation
-    return (x[:, [0]] - 0.5)**5 - (x[:, [0]] - (1/3))**3 + (1/5)*(x[:, [0]] - 0.1)**2
+    return (x[:, [0]] - 3/10)**5 - (x[:, [0]] - 1/3)**3 + (1/5)*(x[:, [0]] - 1/10)**2
     
     # 1D scalar function, example 2 (used to create Figure 1):
     # Set e.g. architecture = [5], PHI_IN_RANGE = (-0.1, 4.1), PHI_OUT_RANGE = (-0.8, 1.1), TRAIN_PHI_RANGE = False
