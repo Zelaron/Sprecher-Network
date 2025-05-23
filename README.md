@@ -29,7 +29,7 @@ Required packages:
 ## Usage
 Run the main script:
 ```
-python sprecher.py
+python sprecher2.py
 ```
 
 ## Customization
