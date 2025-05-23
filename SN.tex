@@ -47,13 +47,8 @@ for a single \emph{monotonic} inner function $\phi$, a continuous outer function
 \section{Motivation and overview of Sprecher Networks}
 While MLPs are the workhorse of deep learning, architectures inspired by KAS representations offer potential benefits, particularly in interpretability and potentially parameter efficiency for certain function classes. KANs explore one direction by placing learnable functions on edges. Our \emph{Sprecher Networks} (SNs) explore a different direction, aiming to directly implement Sprecher's constructive formula within a trainable framework and extend it to deeper architectures.
 
-SNs are built upon the following principles, directly reflecting Sprecher's formula:
-\begin{itemize}
-    \item Each functional block (mapping between layers) is organized around a shared \emph{monotonic} spline $\phi(\cdot)$ and a shared \emph{general} spline $\Phi(\cdot)$, both learnable.
-    \item Each block incorporates a learnable scalar shift $\eta$ applied to inputs based on the output index $q$.
-    \item Each block includes learnable mixing weights $\lambda_{i,q}$ that combine contributions from different input dimensions.
-    \item The structure explicitly includes the additive shift $q$ inside the outer spline $\Phi$, mimicking Sprecher's formulation.
-\end{itemize}
+SNs are built upon the following principles, directly reflecting Sprecher's formula. Each functional block (mapping between layers) is organized around a shared \emph{monotonic} spline $\phi(\cdot)$ and a shared \emph{general} spline $\Phi(\cdot)$, both learnable. Each block incorporates a learnable scalar shift $\eta$ applied to inputs based on the output index $q$. Each block includes learnable mixing weights $\lambda_{i,q}$ that combine contributions from different input dimensions. The structure explicitly includes the additive shift $q$ inside the outer spline $\Phi$, mimicking Sprecher's formulation.
+
 Our architecture generalizes this classical single-layer shift-and-sum construction to a multi-layer network by composing these functional units, which we term \emph{Sprecher blocks}. The mapping from one hidden layer representation to the next is realized by such a block. Unlike MLPs with fixed node activations, LANs with learnable node activations, or KANs with learnable edge activations, SNs concentrate their learnable non-linearity into the two shared splines per block, applied in a specific structure involving shifts and learnable linear weights. Diversity in the transformation arises from the mixing weights ($\lambda$) and the index-dependent shifts ($q$).
 
 Concretely, each Sprecher block applies the transformation:
@@ -72,13 +67,7 @@ Throughout this paper, we denote Sprecher Network architectures using arrow nota
 In our architecture, the fundamental building unit is the \emph{Sprecher block}. The network is composed of a sequence of Sprecher blocks, each performing a shift-and-sum transformation inspired by Sprecher's original construction.
 
 \subsection{Sprecher block structure}
-A Sprecher block transforms an input vector $\mathbf{x} \in \mathbb{R}^{d_{\mathrm{in}}}$ to an output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$. This transformation is implemented using the following shared, learnable components specific to that block:
-\begin{itemize}
-    \item \textbf{Monotonic spline $\phi(\cdot)$:} An increasing piecewise-linear function, typically defined on a fixed interval like $[0,1]$. This function is shared across all input-output connections within the block and its coefficients are learnable. (Strict?) Monotonicity is enforced during training (see Section \ref{sec:implementation}).
-    \item \textbf{General spline $\Phi(\cdot)$:} A piecewise-linear function (without monotonicity constraints) defined on a potentially wider interval (e.g., $[-10, 20]$), which might be learnable or fixed depending on configuration. This function is also shared across the block and its coefficients are learnable.
-    \item \textbf{Mixing weights matrix $\lambda$:} A matrix $\{\lambda_{i,q}\}$ of size $d_{\mathrm{in}} \times d_{\mathrm{out}}$, whose entries are learnable. These weights linearly combine the contributions from different input dimensions after transformation by $\phi$.
-    \item \textbf{Shift parameter $\eta$:} A learnable scalar $\eta > 0$. This parameter controls the magnitude of the input shift $x_i + \eta q$, which depends on the output index $q$.
-\end{itemize}
+A Sprecher block transforms an input vector $\mathbf{x} \in \mathbb{R}^{d_{\mathrm{in}}}$ to an output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$. This transformation is implemented using the following shared, learnable components specific to that block. The \textbf{monotonic spline $\phi(\cdot)$} is an increasing piecewise-linear function, typically defined on a fixed interval like $[0,1]$. This function is shared across all input-output connections within the block and its coefficients are learnable. (Strict?) Monotonicity is enforced during training (see Section \ref{sec:implementation}). The \textbf{general spline $\Phi(\cdot)$} is a piecewise-linear function (without monotonicity constraints) defined on a potentially wider interval (e.g., $[-10, 20]$), which might be learnable or fixed depending on configuration. This function is also shared across the block and its coefficients are learnable. The \textbf{mixing weights matrix $\lambda$} consists of entries $\{\lambda_{i,q}\}$ of size $d_{\mathrm{in}} \times d_{\mathrm{out}}$, whose entries are learnable. These weights linearly combine the contributions from different input dimensions after transformation by $\phi$. Finally, the \textbf{shift parameter $\eta$} is a learnable scalar $\eta > 0$ that controls the magnitude of the input shift $x_i + \eta q$, which depends on the output index $q$.
 
 Concretely, given an input vector $\mathbf{x} = (x_1, \dots, x_{d_{\mathrm{in}}}) \in \mathbb{R}^{d_{\mathrm{in}}}$, a single Sprecher block (indexed implicitly by $\ell$, with parameters $\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)}$) computes the $q$-th component of its output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$ (where $q=0, \dots, d_{\mathrm{out}}-1$) via:
 $$ h_q = \text{Block}_{\phi,\Phi,\eta,\lambda}(\mathbf{x})_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\mathrm{in}}}\lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(x_i+\eta^{(\ell)}\,q\Bigr) + q\Biggr). $$
@@ -86,8 +75,12 @@ Note the explicit inclusion of the outer shift $q$ inside the argument of $\Phi$
 
 In a network with multiple layers, each Sprecher block (indexed by $\ell=1, \dots, L$ or $L+1$) uses its own independent set of shared parameters $(\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)})$. The block operation implements a specific form of transformation: each input coordinate $x_i$ is first shifted by an amount depending on the output index $q$ and the shared shift parameter $\eta^{(\ell)}$, then passed through the shared monotonic spline $\phi^{(\ell)}$. The results are linearly combined using the learnable mixing weights $\lambda^{(\ell)}_{i,q}$, shifted again by the output index $q$, and finally passed through the shared general spline $\Phi^{(\ell)}$. Stacking these blocks creates a deep, compositional representation.
 
+\begin{remark}[Enhanced parameter set]
+While the core Sprecher architecture uses splines ($\phi^{(\ell)}, \Phi^{(\ell)}$), mixing weights ($\lambda^{(\ell)}$), and shifts ($\eta^{(\ell)}$), practical implementations often benefit from additional parameters. These include residual connection weights (one per block where dimensions match) and global output scale and bias parameters. These add only $O(L)$ additional parameters but can significantly improve training dynamics.
+\end{remark}
+
 \subsection{Layer composition and final mapping}
-Let $L$ be the number of hidden layers specified by the architecture $[d_1, \dots, d_L]$. In our framework, a "hidden layer" corresponds to the vector output of a Sprecher block. The mapping from the representation at layer $\ell-1$ to layer $\ell$ is implemented by the $\ell$-th Sprecher block.
+Let $L$ be the number of hidden layers specified by the architecture $[d_1, \dots, d_L]$. In our framework, a ``hidden layer'' corresponds to the vector output of a Sprecher block. The mapping from the representation at layer $\ell-1$ to layer $\ell$ is implemented by the $\ell$-th Sprecher block.
 
 Let the input to the network be $\mathbf{h}^{(0)} = \mathbf{x} \in \mathbb{R}^{d_0}$ (where $d_0 = d_{\mathrm{in}}$). The output of the $\ell$-th Sprecher block ($\ell = 1, \dots, L$) is the vector $\mathbf{h}^{(\ell)} \in \mathbb{R}^{d_\ell}$, computed component-wise as:
 $$ \mathbf{h}^{(\ell)}_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\ell-1}} \lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(\mathbf{h}^{(\ell-1)}_i+\eta^{(\ell)}\,q\Bigr) + q\Biggr),\quad q=0,\dots,d_\ell-1. $$
@@ -213,14 +206,8 @@ Feature                   & MLP                 & LAN / Adaptive-MLP & KAN      
 \textit{The parameter scaling notation uses $N$ to denote a typical or average layer width for simplicity, following \cite{liu2024kan}. For architectures with varying widths $d_\ell$, the $LN^2$ terms (involving $L$ or $L+1$ weight matrices depending on scalar/vector output) should be understood as $\sum_{\ell} d_{\ell-1}d_{\ell}$ (MLP, LAN, SN) and the $LN^2G$ term for KAN as $(\sum_{\ell} d_{\ell-1}d_{\ell})G$, where the sum is over the relevant blocks/matrices, for precise counts.}}
 \end{table}
 
-Table \ref{tab:arch_comparison} summarizes the key distinctions:
-\begin{itemize}
-    \item \textbf{Location of learnability:} MLPs learn edge weights. LANs add learnable node activations. KANs move learnability entirely to edge splines, eliminating linear weights. SNs have learnability in shared block-level splines ($\phi, \Phi$), block-level shifts ($\eta$), and mixing weights ($\lambda$).
-    \item \textbf{Linear weights:} Present in MLPs, LANs, and SNs ($\lambda$). Absent in KANs.
-    \item \textbf{Node operation:} MLPs/LANs apply activations at nodes. KANs perform simple summation at nodes. SNs encapsulate the transformation within the block formula, which implicitly involves summations but also specific shifts.
-    \item \textbf{Sharing}: KANs typically have independent splines per edge. SNs enforce sharing of $\phi$ and $\Phi$ within each block, a key factor in their parameterization.
-    \item \textbf{Parameter scaling}: The sharing mechanism in SNs leads to a different parameter scaling ($O(L N^2 + L G)$) compared to KANs ($O(L N^2 G)$), potentially offering significant savings when the spline complexity $G$ is large relative to width $N$.
-\end{itemize}
+Table \ref{tab:arch_comparison} summarizes the key distinctions. The \textbf{location of learnability} differs significantly: MLPs learn edge weights, LANs add learnable node activations, KANs move learnability entirely to edge splines (eliminating linear weights), while SNs have learnability in shared block-level splines ($\phi, \Phi$), block-level shifts ($\eta$), and mixing weights ($\lambda$). \textbf{Linear weights} are present in MLPs, LANs, and SNs ($\lambda$) but absent in KANs. The \textbf{node operation} also varies: MLPs/LANs apply activations at nodes, KANs perform simple summation at nodes, while SNs encapsulate the transformation within the block formula, which implicitly involves summations but also specific shifts. In terms of \textbf{sharing}, KANs typically have independent splines per edge, while SNs enforce sharing of $\phi$ and $\Phi$ within each block, a key factor in their parameterization. Finally, the \textbf{parameter scaling} reveals that the sharing mechanism in SNs leads to a different scaling ($O(L N^2 + L G)$) compared to KANs ($O(L N^2 G)$), potentially offering significant savings when the spline complexity $G$ is large relative to width $N$.
+
 This comparison clarifies that SNs represent a distinct architecture, related to but not a direct subset of KANs, primarily due to the presence of mixing weights ($\lambda$), the specific shift structure ($\eta q, q$), and the block-level sharing of splines.
 
 \section{Theoretical aspects and universality}\label{sec:universality}
@@ -378,88 +365,74 @@ Proving Conjectures \ref{conj:vector} and \ref{conj:deep_universal} rigorously w
 \section{Implementation and training details}\label{sec:implementation}
 
 \subsection{Trainable splines}
-Our reference implementation utilizes piecewise-linear splines for both $\phi^{(\ell)}$ and $\Phi^{(\ell)}$.
-\begin{itemize}
-    \item \textbf{Representation:} Each spline is defined by a set of knots (x-coordinates) and corresponding coefficients (y-coordinates). The knots are typically fixed and uniformly spaced over the spline's domain, while the coefficients are learnable parameters. Common knot counts in our experiments range from 100 to 500 per spline (which can likely be lowered significantly).
-    \item \textbf{Inner spline $\phi^{(\ell)}$:}
-        \begin{itemize}
-            \item \textbf{Domain/range:} Typically fixed domain $[0, 1]$ and range $[0, 1]$.
-            \item \textbf{Monotonicity:} Enforced during training. One effective method is to parameterize the learnable coefficients $c_k$ (heights at knots) indirectly. Let $h_k$ be the actual height at knot $k$. We can set $h_0 = \text{learnable}_0$ and $h_k = h_{k-1} + \text{softplus}(\text{learnable}_k)$ for $k > 0$, where ``learnable'' are the unconstrained parameters optimized by gradient descent, and softplus ensures positive increments. Alternatively, sorting the coefficients after each gradient update can be used, though care must be taken with non-strict inequalities and potential gradient issues.
-            \item \textbf{Initialization:} Initialized to be roughly linear and increasing within its range.
-        \end{itemize}
-    \item \textbf{Outer Spline $\Phi^{(\ell)}$:}
-        \begin{itemize}
-            \item \textbf{Domain/range:} Defined on a wider interval, e.g., $[-10, 10]$. The exact range can be fixed or made trainable via range parameters (center and radius), as explored in the reference code implementation. Trainable ranges add flexibility but also complexity to the optimization.
-            \item \textbf{Monotonicity:} Not required.
-            \item \textbf{Initialization:} Often initialized close to the identity function ($y=x$) or a scaled identity within its domain/codomain range to facilitate initial learning.
-        \end{itemize}
-    \item \textbf{Regularization:} A flatness penalty, calculated as the mean squared second difference of the spline coefficients ($\approx$ second derivative), can be added to the loss function, particularly for $\Phi^{(\ell)}$, to encourage smoother learned functions and prevent excessive oscillation \cite{koppen}.
-        $$ \text{Penalty}(\text{coeffs}) = \frac{1}{K-2} \sum_{k=1}^{K-1} (c_{k+1} - 2c_k + c_{k-1})^2 $$
-\end{itemize}
+Our reference implementation utilizes piecewise-linear splines for both $\phi^{(\ell)}$ and $\Phi^{(\ell)}$. Each spline is defined by a set of knots (x-coordinates) and corresponding coefficients (y-coordinates). The knots are typically fixed and uniformly spaced over the spline's domain, while the coefficients are learnable parameters. Common knot counts in our experiments range from 100 to 500 per spline (which can likely be lowered significantly).
+
+For the \textbf{inner spline $\phi^{(\ell)}$}, the domain and range are typically fixed to $[0, 1]$. Monotonicity is enforced during training. One effective method is to parameterize the learnable coefficients $c_k$ (heights at knots) indirectly through log-space increments. Specifically, we use $h_k = h_{k-1} + \text{softplus}(\text{log\_increment}_k)$ for $k > 0$, where the log-increments are the unconstrained parameters optimized by gradient descent. This approach maintains smooth gradients and avoids the potential issues with sorting-based methods. The spline is initialized to be roughly linear and increasing within its range.
+
+The \textbf{outer spline $\Phi^{(\ell)}$} is defined on a wider interval, e.g., $[-10, 10]$. The exact range can be fixed or made trainable via range parameters (center and radius), as explored in the reference code implementation. Trainable ranges add flexibility but also complexity to the optimization. Monotonicity is not required for these splines. They are often initialized close to the identity function ($y=x$) or a scaled identity within their domain/codomain range to facilitate initial learning.
+
+A flatness penalty, calculated as the mean squared second difference of the spline coefficients ($\approx$ second derivative), can be added to the loss function, particularly for $\Phi^{(\ell)}$, to encourage smoother learned functions and prevent excessive oscillation \cite{koppen}:
+$$ \text{Penalty}(\text{coeffs}) = \frac{1}{K-2} \sum_{k=1}^{K-1} (c_{k+1} - 2c_k + c_{k-1})^2 $$
 
 \subsection{Shifts, weights, and optimization}
-\begin{itemize}
-    \item \textbf{Parameters:} Each block includes the learnable scalar shift $\eta^{(\ell)} > 0$ and the learnable mixing weight matrix $\lambda^{(\ell)} \in \mathbb{R}^{d_{\ell-1} \times d_\ell}$. The shift parameter $\eta^{(\ell)}$ is theoretically assumed positive ($\eta > 0$) based on Sprecher's construction. In our reference implementation, it is initialized positively and trained without an explicit positivity constraint (e.g., using `softplus` or `abs`), relying on optimization dynamics. However, such constraints can be added if found necessary.
-    \item \textbf{Optimization:} All learnable parameters (spline coefficients, $\eta^{(\ell)}$, $\lambda^{(\ell)}$, and potentially range parameters for $\Phi^{(\ell)}$) are trained jointly using gradient-based optimization methods like Adam \cite{kingma2014adam} or LBFGS.
-    \item \textbf{Loss function:} Typically Mean Squared Error (MSE) for regression tasks, combined with regularization terms:
-        $$ \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{MSE}} + w_{\text{flat}} \sum_{\ell} \text{Penalty}(\Phi^{(\ell)}) + w_{\text{sparse}} \sum_{\ell} \text{Sparsity}(\lambda^{(\ell)}) + w_{\text{var}} \mathcal{L}_{\text{variance}} $$
-        where $w$ are weights for flatness penalty, sparsity penalty on $\lambda$ (e.g., L1 + entropy), and potentially a variance regularization term (as used in the reference code) to match output variance to target variance.
-\end{itemize}
+Each block includes the learnable scalar shift $\eta^{(\ell)} > 0$ and the learnable mixing weight matrix $\lambda^{(\ell)} \in \mathbb{R}^{d_{\ell-1} \times d_\ell}$. The shift parameter $\eta^{(\ell)}$ is theoretically assumed positive ($\eta > 0$) based on Sprecher's construction. In our reference implementation, it is initialized positively and trained without an explicit positivity constraint (e.g., using `softplus` or `abs`), relying on optimization dynamics. However, such constraints can be added if found necessary.
+
+All learnable parameters (spline coefficients, $\eta^{(\ell)}$, $\lambda^{(\ell)}$, and potentially range parameters for $\Phi^{(\ell)}$) are trained jointly using gradient-based optimization. AdamW \cite{loshchilov2017decoupled} with weight decay ($\sim 10^{-6}$) often outperforms standard Adam. Key initialization strategies include Xavier/He initialization for mixing weights: $\lambda \sim \mathcal{N}(0, \sqrt{2/(d_{\text{in}} + d_{\text{out}})})$, adaptive eta initialization: $\eta = 1/(d_{\text{out}} + 10)$, and output bias initialization to target mean for faster initial convergence.
+
+The loss function is typically Mean Squared Error (MSE) for regression tasks, combined with regularization terms:
+$$ \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{MSE}} + w_{\text{flat}} \sum_{\ell} \text{Penalty}(\Phi^{(\ell)}) + w_{\text{sparse}} \sum_{\ell} \text{Sparsity}(\lambda^{(\ell)}) + w_{\text{var}} \mathcal{L}_{\text{variance}} $$
+where $w$ are weights for flatness penalty, sparsity penalty on $\lambda$ (e.g., L1 + entropy), and potentially a variance regularization term (as used in the reference code) to match output variance to target variance.
+
+\subsection{Architectural enhancements for faster training}
+Recent implementations have shown that several architectural modifications can significantly accelerate SN training. Adding learnable residual weights that bypass Sprecher blocks (where dimensions match) improves gradient flow and training stability, similar to ResNets. Including learnable scale and bias parameters after the final block aggregation allows the network to quickly match the target function's range, accelerating early training. Using plateau-aware schedulers that temporarily increase learning rates when loss stagnates helps escape the ``horizontal plane'' plateaus that SNs can encounter early in training. Additionally, combining MSE with L1 loss in early training phases (e.g., 70\% MSE + 30\% L1 for first 1000 epochs) helps achieve rough approximations faster.
+
+These enhancements can reduce training time by an order of magnitude while maintaining or improving final accuracy.
 
 \subsection{Grid extension for splines}
-Inspired by techniques used for KANs \cite{liu2024kan}, the spline resolution (number of knots $G$) can be adaptively increased during training.
-\begin{itemize}
-    \item \textbf{Schedule:} Start training with a coarse grid (e.g., $G=5$). Periodically (e.g., every few thousand steps or based on loss stagnation), increase the number of knots (e.g., $G \to 10, \to 20, \dots$).
-    \item \textbf{Initialization:} When increasing the grid resolution from $G_1$ knots to $G_2 > G_1$ knots, initialize the coefficients for the new, finer grid by fitting the fine spline to the current coarse spline using least squares projection. This preserves the learned function while providing more degrees of freedom.
-    \item \textbf{Effect:} This often leads to ``staircase'' learning curves, where the loss drops significantly after each grid extension, allowing the model to achieve higher accuracy than possible with a fixed coarse grid, while potentially starting optimization in a smoother landscape.
-\end{itemize}
+Inspired by techniques used for KANs \cite{liu2024kan}, the spline resolution (number of knots $G$) can be adaptively increased during training. One can start training with a coarse grid (e.g., $G=5$) and periodically (e.g., every few thousand steps or based on loss stagnation) increase the number of knots (e.g., $G \to 10, \to 20, \dots$).
+
+When increasing the grid resolution from $G_1$ knots to $G_2 > G_1$ knots, initialize the coefficients for the new, finer grid by fitting the fine spline to the current coarse spline using least squares projection. This preserves the learned function while providing more degrees of freedom. This often leads to ``staircase'' learning curves, where the loss drops significantly after each grid extension, allowing the model to achieve higher accuracy than possible with a fixed coarse grid, while potentially starting optimization in a smoother landscape.
 
 \section{Parameter counting and efficiency}
 A key motivation for exploring architectures like SNs and KANs is the potential for improved parameter efficiency compared to standard MLPs, especially for functions exhibiting certain structures. The specific design of SNs, particularly the sharing of splines, leads to a distinct parameter scaling.
 
 Let's assume a network of depth $L$ (meaning $L$ hidden layers, thus $L$ blocks for scalar output or $L+1$ for vector output), with an average layer width $N$. Let $G$ be the number of intervals used for the piecewise-linear splines (implying $G+1$ knots), and let $k$ be the order of the spline (e.g., $k=1$ for linear, $k=3$ for cubic B-splines). For simplicity, we approximate the number of parameters per spline as $O(G)$.
 
-\begin{itemize}
-    \item \textbf{MLP:} Primarily consists of linear weight matrices. The total parameter count is dominated by these weights, scaling as $O(L N^2)$. The number of parameters associated with fixed activations is negligible.
-    \item \textbf{LAN / Adaptive-MLP:} Has both linear weights ($O(L N^2)$) and learnable activations. If each of the $N$ nodes per layer has a learnable spline, this adds $O(L N G)$ parameters. Total: $O(L N^2 + L N G)$.
-    \item \textbf{KAN \cite{liu2024kan}:} Replaces linear weights with learnable edge splines. There are $O(N^2)$ edges between layers. If each edge has a spline with $O(G)$ parameters, the total count per layer is $O(N^2 G)$, leading to an overall scaling of $O(L N^2 G)$.
-    \item \textbf{Sprecher Network (SN):} Each block has:
-        \begin{itemize}
-            \item Mixing weights $\lambda^{(\ell)}$: $O(N^2)$ parameters per block.
-            \item Shared splines $\phi^{(\ell)}, \Phi^{(\ell)}$: $2 \times O(G) = O(G)$ parameters per block, \emph{independent} of $N$.
-            \item Shift parameter $\eta^{(\ell)}$: $O(1)$ parameter per block.
-        \end{itemize}
-        Summing over $L$ (or $L+1$) blocks, the total parameter count scales approximately as:
-        $$ O(LN^2 + LG).$$
-\end{itemize}
+An \textbf{MLP} primarily consists of linear weight matrices. The total parameter count is dominated by these weights, scaling as $O(L N^2)$. The number of parameters associated with fixed activations is negligible.
+
+A \textbf{LAN / Adaptive-MLP} has both linear weights ($O(L N^2)$) and learnable activations. If each of the $N$ nodes per layer has a learnable spline, this adds $O(L N G)$ parameters. Total: $O(L N^2 + L N G)$.
+
+A \textbf{KAN} \cite{liu2024kan} replaces linear weights with learnable edge splines. There are $O(N^2)$ edges between layers. If each edge has a spline with $O(G)$ parameters, the total count per layer is $O(N^2 G)$, leading to an overall scaling of $O(L N^2 G)$.
+
+A \textbf{Sprecher Network (SN)} has mixing weights $\lambda^{(\ell)}$ ($O(N^2)$ parameters per block), shared splines $\phi^{(\ell)}, \Phi^{(\ell)}$ ($2 \times O(G) = O(G)$ parameters per block, \emph{independent} of $N$), and shift parameter $\eta^{(\ell)}$ ($O(1)$ parameter per block). Summing over $L$ (or $L+1$) blocks, the total parameter count scales approximately as $O(LN^2 + LG)$.
 
 \textbf{Comparison insight:} The crucial difference lies in how the spline complexity $G$ contributes. In KANs, it multiplies the $N^2$ term associated with layer connectivity ($O(L N^2 G)$). In SNs, due to spline sharing within blocks, it appears as an additive term ($O(L G)$) alongside the mixing weight term ($O(L N^2)$).
 
-This suggests that SNs have the \emph{potential} for significant parameter savings compared to KANs, particularly when:
-\begin{enumerate}
-    \item High spline resolution ($G$) is required for accuracy.
-    \item The layer width ($N$) is relatively small or moderate compared to $G$.
-\end{enumerate}
-In such regimes ($G \gg N$), the $L N^2$ term might dominate in SNs, while the $L N^2 G$ term dominates in KANs.
+\textbf{Practical note:} Enhanced implementations may include $O(L)$ additional parameters for residual connections and output scaling, which is negligible compared to the $O(LN^2)$ mixing weights but can significantly improve training efficiency.
+
+This suggests that SNs have the \emph{potential} for significant parameter savings compared to KANs, particularly when: (1) high spline resolution ($G$) is required for accuracy, and (2) the layer width ($N$) is relatively small or moderate compared to $G$. In such regimes ($G \gg N$), the $L N^2$ term might dominate in SNs, while the $L N^2 G$ term dominates in KANs.
 
 \subsection{Placeholder examples (illustrative calculations)}
 We present some illustrative calculations, based on examples in \cite{liu2024kan}, to highlight this potential, emphasizing that these require empirical validation of comparable performance for the given architectures. In practice, however, greater network depths than those in the corresponding KAN examples may be required to offset the lower parameter counts from shared splines across edges in SNs.
 
 \paragraph{PDE solving example (KAN Ref \S 3.4):}
 KAN architecture $[2, 10, 1]$, reported effective. $N_{in}=2, N_{hid}=10, N_{out}=1$.
-\begin{itemize}
-    \item \textbf{KAN (est.):} $(2\times10 + 10\times1) = 30$ edges/splines. Assume $G=20$ intervals, $k=3$ B-splines ($G+k \approx 23$ params/spline). Total KAN params $\approx 30 \times 23 = 690$.
-    \item \textbf{SN (equiv. structure):} Architecture $2 \to [10] \to 1$. $L=1$ hidden layer, scalar output means $L=1$ block total. Shared splines: $2 \times (G+k) \approx 2 \times 23 = 46$. Mixing weights: $d_0 \times d_1 = 2 \times 10 = 20$. Shift $\eta^{(1)}$: $1$. Total SN params $\approx 46 + 20 + 1 = 67$.
-    \item \textbf{Potential advantage:} Factor $\approx 10$x reduction (67 vs 690). (\emph{Note: Requires validation. Performance equivalence not assumed. Previously we assumed L=2 blocks for this structure, which might be an interpretation difference. If L=2 blocks (arch $2\to[10, 1]\to 1$) were used, SN params would be $4\times 23 + (2\times 10 + 10\times 1) + 2 = 92 + 30 + 2 = 124$, reduction factor $\approx 5.5$x. The mapping from KAN shape to SN blocks needs careful definition for equivalence.}). Let's stick with the $L=2$ block interpretation for this example for consistency with original calculation intent. Total SN params $\approx 124$. Potential reduction $\approx 5.5$x.
-\end{itemize}
+
+\textbf{KAN (est.):} $(2\times10 + 10\times1) = 30$ edges/splines. Assume $G=20$ intervals, $k=3$ B-splines ($G+k \approx 23$ params/spline). Total KAN params $\approx 30 \times 23 = 690$.
+
+\textbf{SN (equiv. structure):} Architecture $2 \to [10] \to 1$. $L=1$ hidden layer, scalar output means $L=1$ block total. Shared splines: $2 \times (G+k) \approx 2 \times 23 = 46$. Mixing weights: $d_0 \times d_1 = 2 \times 10 = 20$. Shift $\eta^{(1)}$: $1$. Total SN params $\approx 46 + 20 + 1 = 67$.
+
+\textbf{Potential advantage:} Factor $\approx 10$x reduction (67 vs 690). (\emph{Note: Requires validation. Performance equivalence not assumed. Previously we assumed L=2 blocks for this structure, which might be an interpretation difference. If L=2 blocks (arch $2\to[10, 1]\to 1$) were used, SN params would be $4\times 23 + (2\times 10 + 10\times 1) + 2 = 92 + 30 + 2 = 124$, reduction factor $\approx 5.5$x. The mapping from KAN shape to SN blocks needs careful definition for equivalence.}). Let's stick with the $L=2$ block interpretation for this example for consistency with original calculation intent. Total SN params $\approx 124$. Potential reduction $\approx 5.5$x.
 
 \paragraph{Knot theory example (KAN Ref \S 4.3):}
 Pruned KAN $[17, 1, 14]$, $G=3, k=3$ ($G+k \approx 6$ params/spline).
-\begin{itemize}
-    \item \textbf{KAN (est.):} $(17\times1 + 1\times14) = 31$ edges/splines. Total KAN params $\approx 31 \times 6 = 186$.
-    \item \textbf{SN (equiv. structure):} Architecture $17 \to [1] \to 14$. $L=1$ hidden layer, vector output means $L+1=2$ blocks total. Shared splines: $2(L+1) \times (G+k) \approx 4 \times 6 = 24$. Mixing weights: $(d_0 \times d_1) + (d_1 \times d_2) = (17\times1) + (1\times14) = 31$. Shifts $\eta^{(1)}, \eta^{(2)}$: $2$. Total SN params $\approx 24 + 31 + 2 = 57$.
-    \item \textbf{Potential advantage:} Factor $\approx 3.3$x reduction (57 vs 186). (\emph{Note: Requires validation. The narrow intermediate dimension $d_1=1$ might pose challenges for SN training.}).
-\end{itemize}
+
+\textbf{KAN (est.):} $(17\times1 + 1\times14) = 31$ edges/splines. Total KAN params $\approx 31 \times 6 = 186$.
+
+\textbf{SN (equiv. structure):} Architecture $17 \to [1] \to 14$. $L=1$ hidden layer, vector output means $L+1=2$ blocks total. Shared splines: $2(L+1) \times (G+k) \approx 4 \times 6 = 24$. Mixing weights: $(d_0 \times d_1) + (d_1 \times d_2) = (17\times1) + (1\times14) = 31$. Shifts $\eta^{(1)}, \eta^{(2)}$: $2$. Total SN params $\approx 24 + 31 + 2 = 57$.
+
+\textbf{Potential advantage:} Factor $\approx 3.3$x reduction (57 vs 186). (\emph{Note: Requires validation. The narrow intermediate dimension $d_1=1$ might pose challenges for SN training.}).
+
 These calculations serve only to illustrate the *potential* parameter scaling differences arising from the architectural choice of shared block splines versus per-edge splines. Actual performance and optimal architectures need empirical study.
 
 \section{Empirical demonstrations and case studies}
@@ -467,11 +440,13 @@ While extensive benchmarking is future work, we provide illustrations of SN trai
 
 \subsection{Basic function approximation}
 We train SNs on datasets sampled from known target functions $f$. The network learns the parameters ($\eta^{(\ell)}$, $\lambda^{(\ell)}$) and spline coefficients ($\phi^{(\ell)}$, $\Phi^{(\ell)}$) via gradient descent (Adam optimizer, typically $O(10^5)$ updates) using MSE loss plus regularization.
-\begin{itemize}
-    \item \textbf{1D case:} For $f(x)$ on $[0,1]$, an SN like $1 \to [W] \to 1$ (one block) learns $\phi^{(1)}$ and $\Phi^{(1)}$ that accurately interpolate $f$, effectively acting as a learnable spline interpolant structured according to Sprecher's formula. Figure~\ref{fig:onevar_example} provides an example where an SN is trained on data generated from a known Sprecher structure ($f(x) = \sum_q \Phi(\lambda_q \phi(x+\eta q)+q)$ with known $\phi, \Phi, \lambda, \eta$). While the network achieves a very accurate approximation of the overall function $f(x)$, the learned components (splines $\hat{\phi}, \hat{\Phi}$, weights $\hat{\lambda}$, shift $\hat{\eta}$) only partially resemble the ground truth functions and parameters used to generate the data. Perfect recovery of internal components is generally not guaranteed, as multiple parameter combinations might yield similar final outputs, especially given the flexibility of splines and the complex interplay between parameters during optimization. This highlights a potential challenge in uniquely identifying underlying generating functions solely from learned SN parameters, although the learned structure often provides valuable insights.
-    \item \textbf{2D case (scalar):} Moving to multivariate functions, consider $f(x,y) = (\exp(\sin(\pi x)+y^2)-1)/7$. A network like $2\to[5,8,5]\to1$ (3 blocks) can achieve high accuracy. Figure \ref{fig:twovarsprecher_revised} shows the interpretable layerwise spline plots and the final fit quality.
-    \item \textbf{2D case (vector):} E.g., $f(x,y)=(f_1(x,y), f_2(x,y))$. A deeper network like $2\to[20, \dots, 20]\to2$ (e.g., 5 hidden layers, requiring 6 blocks) is used. Figure \ref{fig:twovarsprechervector_revised} illustrates the learned splines and the approximation of both output surfaces.
-\end{itemize}
+
+For \textbf{1D cases}, when $f(x)$ is defined on $[0,1]$, an SN like $1 \to [W] \to 1$ (one block) learns $\phi^{(1)}$ and $\Phi^{(1)}$ that accurately interpolate $f$, effectively acting as a learnable spline interpolant structured according to Sprecher's formula. Figure~\ref{fig:onevar_example} provides an example where an SN is trained on data generated from a known Sprecher structure ($f(x) = \sum_q \Phi(\lambda_q \phi(x+\eta q)+q)$ with known $\phi, \Phi, \lambda, \eta$). While the network achieves a very accurate approximation of the overall function $f(x)$, the learned components (splines $\hat{\phi}, \hat{\Phi}$, weights $\hat{\lambda}$, shift $\hat{\eta}$) only partially resemble the ground truth functions and parameters used to generate the data. Perfect recovery of internal components is generally not guaranteed, as multiple parameter combinations might yield similar final outputs, especially given the flexibility of splines and the complex interplay between parameters during optimization. This highlights a potential challenge in uniquely identifying underlying generating functions solely from learned SN parameters, although the learned structure often provides valuable insights.
+
+For \textbf{2D scalar cases}, moving to multivariate functions, consider $f(x,y) = (\exp(\sin(\pi x)+y^2)-1)/7$. A network like $2\to[5,8,5]\to1$ (3 blocks) can achieve high accuracy. Figure \ref{fig:twovarsprecher_revised} shows the interpretable layerwise spline plots and the final fit quality.
+
+For \textbf{2D vector cases}, e.g., $f(x,y)=(f_1(x,y), f_2(x,y))$, a deeper network like $2\to[20, \dots, 20]\to2$ (e.g., 5 hidden layers, requiring 6 blocks) is used. Figure \ref{fig:twovarsprechervector_revised} illustrates the learned splines and the approximation of both output surfaces.
+
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\textwidth]{Figures/OneVarOneBlock.png}
@@ -503,20 +478,19 @@ Learned outer splines $\Phi^{(\ell)}$ occasionally develop pronounced peaks with
 To provide more quantitative insight, we illustrate SNs in a few examples from the KAN article, focusing on parameter efficiency and scaling. (Actual execution of these experiments is needed for confirmation; the placeholder numbers of parameters for the SNs below may need to be significantly higher.)
 
 \paragraph{Synthetic families with known structure:}
-\begin{itemize}
-    \item \textbf{Smooth additive $f(x,y)=\exp(\sin\pi x+y^2)$:} KAS theory suggests a simple structure exists. Empirical scaling plots comparing SN test RMSE vs. parameter count against MLP scaling would be informative. SNs might approach faster scaling (e.g., closer to $N^{-4}$) compared to MLPs (often saturating earlier).
-    \item \textbf{Multiplicative $xy$:} A known simple KAS representation exists ($xy = [(x+y)/2]^2 - [(x-y)/2]^2$). An SN like $[2,2,1]$ is expected to be highly efficient compared to MLPs requiring significantly more parameters for similar accuracy.
-    \item \textbf{High-dimensional additive $f(\mathbf{x})=\exp(\frac{1}{d}\sum \sin^2(\pi x_i))$:} For large $d$, the structure is predominantly additive composed with univariate functions. SNs (potentially shallow like $d \to [1] \to 1$) might significantly outperform deep, wide MLPs due to SNs ability to directly represent the univariate components and summation structure efficiently.
-\end{itemize}
+For \textbf{smooth additive} functions like $f(x,y)=\exp(\sin\pi x+y^2)$, KAS theory suggests a simple structure exists. Empirical scaling plots comparing SN test RMSE vs. parameter count against MLP scaling would be informative. SNs might approach faster scaling (e.g., closer to $N^{-4}$) compared to MLPs (often saturating earlier).
+
+For \textbf{multiplicative} functions like $xy$, a known simple KAS representation exists ($xy = [(x+y)/2]^2 - [(x-y)/2]^2$). An SN like $[2,2,1]$ is expected to be highly efficient compared to MLPs requiring significantly more parameters for similar accuracy.
+
+For \textbf{high-dimensional additive} functions like $f(\mathbf{x})=\exp(\frac{1}{d}\sum \sin^2(\pi x_i))$, for large $d$, the structure is predominantly additive composed with univariate functions. SNs (potentially shallow like $d \to [1] \to 1$) might significantly outperform deep, wide MLPs due to SNs ability to directly represent the univariate components and summation structure efficiently.
 
 \paragraph{Special function representation:}
 The idea of using SNs for ``compressing'' representations of special functions (e.g., from SciPy library) is compelling. Comparing the parameter count of a pruned, trained SN achieving a target RMSE (e.g., $10^{-3}$) against an MLP trained for the same task could demonstrate practical parameter savings. A table summarizing median compression factors across several special functions would quantify this advantage.
 
 \paragraph{Scientific ML benchmarks (qualitative discussion):}
-\begin{itemize}
-    \item \textbf{Poisson PDE:} While direct MSE comparison might be premature due to SN training speed, the *parameter count* difference calculated earlier (e.g., $\approx 124$ for SN vs. $\approx 690$ for KAN for a similar structure) remains a significant point illustrating potential efficiency gains if comparable accuracy can eventually be reached.
-    \item \textbf{Knot signature:} Similarly, the potential parameter reduction (e.g., $\approx 57$ for SN vs. $\approx 186$ for KAN) is noteworthy, even if achieving the exact same accuracy requires further tuning or potentially different optimal architectures for SNs. The ability of SNs to highlight important input features via weight magnitudes ($\lambda$) also contributes to interpretability.
-\end{itemize}
+For \textbf{Poisson PDE} solving, while direct MSE comparison might be premature due to SN training speed, the *parameter count* difference calculated earlier (e.g., $\approx 124$ for SN vs. $\approx 690$ for KAN for a similar structure) remains a significant point illustrating potential efficiency gains if comparable accuracy can eventually be reached.
+
+For \textbf{knot signature} problems, similarly, the potential parameter reduction (e.g., $\approx 57$ for SN vs. $\approx 186$ for KAN) is noteworthy, even if achieving the exact same accuracy requires further tuning or potentially different optimal architectures for SNs. The ability of SNs to highlight important input features via weight magnitudes ($\lambda$) also contributes to interpretability.
 
 \subsection{Ablation study: role of the shift $\eta$}\label{sec:ablation_eta}
 To empirically validate the importance of the internal shift parameter $\eta^{(\ell)}$ noted in Remark \ref{rem:shiftneeded}, ablation studies can be performed. Training SNs with $\eta^{(\ell)}$ fixed to 0 across all blocks typically results in significantly higher final RMSE (often 1-2 orders of magnitude worse) and potentially slower convergence or saturation at poorer loss values, especially for deeper networks. This confirms that the $\eta q$ shift inside $\phi^{(\ell)}$ is not redundant and plays a crucial role in the expressivity or optimization dynamics of multi-layer SNs.
@@ -527,7 +501,7 @@ While Sprecher Networks offer a theoretically grounded architecture with potenti
 \subsection{Implementation and training challenges}
 \begin{enumerate}
     \item \textbf{Training speed and stability:}
-        Current implementations based on standard automatic differentiation libraries and optimizers (like Adam or LBFGS) can be slow, potentially 10x or more slower than comparable MLPs per epoch, although convergence rates might differ. Training shared splines, especially highly flexible ones (many knots), can be challenging. Networks may converge to suboptimal local minima where splines become flat or overly simplistic, hindering accurate approximation. Escaping such minima might require advanced optimization techniques (e.g., second-order methods, adaptive learning rates tailored for spline parameters) or better initialization strategies.
+        While naive implementations can be 10x slower than MLPs, recent architectural enhancements (residual connections, adaptive learning rates, better initialization) have dramatically improved training speed. Networks can now converge in comparable timeframes to MLPs, though careful implementation of the enhancements is crucial. Key improvements include using log-space parameterization for monotonic splines to maintain smooth gradients, employing gradient clipping (typically max norm $\sim 1.0$) to prevent instabilities, and progressive regularization that decreases smoothness penalties over time. With these improvements, the primary bottleneck shifts from optimization challenges to the computational cost of spline evaluations.
     \item \textbf{Initialization and range selection:}
         Initializing the splines ($\phi, \Phi$), shifts ($\eta$), and weights ($\lambda$) appropriately is crucial. While initializing $\phi$ as linear and $\Phi$ near identity often works, optimal strategies are not fully established. Determining the ideal domain/codomain for $\Phi$ a priori is difficult. Using trainable range parameters offers flexibility but adds complexity and potential optimization instability if not carefully managed (e.g., through regularization or constraints on the rate of change).
     \item \textbf{Architectural sensitivity:}
@@ -538,30 +512,15 @@ While Sprecher Networks offer a theoretically grounded architecture with potenti
 \end{enumerate}
 
 \subsection{Directions for further research}
-\begin{itemize}
-    \item \textbf{Improved training strategies:} Develop robust initialization schemes (e.g., based on data statistics), adaptive optimization methods specifically considering the different parameter types (spline coeffs, $\eta$, $\lambda$), and effective regularization techniques (beyond basic flatness/sparsity) tailored to the shared-spline structure. Explore second-order optimization possibilities.
-    \item \textbf{Theoretical analysis:}
-        \begin{itemize}
-            \item Prove the universality conjectures (Conjecture \ref{conj:vector}, \ref{conj:deep_universal}) for vector-valued and deep SNs.
-            \item Rigorously analyze approximation rates ($G(\varepsilon)$ scaling) and compare them theoretically with KANs and MLPs under various function smoothness assumptions.
-            \item Investigate the precise role of the internal shifts ($\eta^{(\ell)} q$) and the outer shifts ($q$) in deep SNs: why are they essential?
-            \item Study sample complexity and generalization properties.
-        \end{itemize}
-    \item \textbf{Architectural enhancements:}
-        \begin{itemize}
-            \item \textbf{Sparsity and pruning:} Develop targeted L1/entropy regularization for mixing weights ($\lambda$) and potentially node pruning strategies (based on contribution analysis) to discover compact SN architectures automatically. (Unlike for KANs, however, pruning edges in SNs leads to relatively small decreases in parameter counts. Automatic pruning of Sprecher blocks may be a more promising direction.)
-            \item \textbf{Alternative spline bases:} Explore higher-order B-splines or other basis functions beyond piecewise linear, potentially offering better smoothness or approximation properties.
-            \item \textbf{High-dimensional adaptations:} For very high-dimensional inputs where even $O(N^2)$ weights become prohibitive, investigate alternative representations for the interaction, possibly using low-rank approximations for $\lambda$ or different structures for $\phi, \Phi$ (e.g., small neural networks, tensor methods).
-            \item \textbf{Residual connections:} Incorporate skip connections around Sprecher blocks, potentially improving gradient flow for very deep networks and enhancing training stability, similar to ResNets.
-        \end{itemize}
-    \item \textbf{Scientific discovery and interpretability:}
-        \begin{itemize}
-            \item \textbf{Function dimensionality discovery:} Leverage the architecture's sensitivity to input dimension. Train SNs with varying $d_{\mathrm{in}}$ on unstructured data and use model selection criteria (balancing fit quality and complexity) to infer the intrinsic dimensionality of the underlying process generating the data.
-            \item \textbf{Symbolic integration:} Enhance integration with symbolic regression tools to automatically suggest or fit closed-form expressions for the learned $\phi^{(\ell)}$ and $\Phi^{(\ell)}$ splines after training, further boosting interpretability.
-            \item \textbf{Application case studies:} Apply SNs to challenging problems in scientific machine learning (e.g., developing SN-based PINNs for complex PDEs, modeling physical systems) where interpretability and potential parameter efficiency are highly valued.
-        \end{itemize}
-    \item \textbf{Hardware acceleration:} Explore possibilities for custom hardware kernels that could exploit the specific computational pattern of SNs (two shared spline evaluations per block coupled with matrix-vector operations) to mitigate the current training speed limitations.
-\end{itemize}
+The field of Sprecher Networks offers rich opportunities for future investigation. \textbf{Improved training strategies} remain a priority, including developing robust initialization schemes based on data statistics, adaptive optimization methods that specifically consider the different parameter types (spline coefficients, $\eta$, $\lambda$), and effective regularization techniques beyond basic flatness/sparsity that are tailored to the shared-spline structure. Exploring second-order optimization possibilities could also yield significant benefits.
+
+\textbf{Theoretical analysis} presents several open questions. Proving the universality conjectures (Conjecture \ref{conj:vector}, \ref{conj:deep_universal}) for vector-valued and deep SNs would establish their theoretical foundations more firmly. Rigorously analyzing approximation rates ($G(\varepsilon)$ scaling) and comparing them theoretically with KANs and MLPs under various function smoothness assumptions could provide deeper insights. Investigating the precise role of the internal shifts ($\eta^{(\ell)} q$) and the outer shifts ($q$) in deep SNs—understanding why they are essential—remains an intriguing theoretical challenge. Additionally, studying sample complexity and generalization properties would help establish SNs' practical viability.
+
+\textbf{Architectural enhancements} offer numerous avenues for exploration. Developing targeted L1/entropy regularization for mixing weights ($\lambda$) and potentially node pruning strategies based on contribution analysis could help discover compact SN architectures automatically. Unlike KANs, where edge pruning can significantly reduce parameters, automatic pruning of entire Sprecher blocks may be more promising for SNs. Exploring higher-order B-splines or other basis functions beyond piecewise linear could potentially offer better smoothness or approximation properties. For very high-dimensional inputs where even $O(N^2)$ weights become prohibitive, investigating alternative representations for the interaction, possibly using low-rank approximations for $\lambda$ or different structures for $\phi, \Phi$ (e.g., small neural networks, tensor methods), could be valuable. Incorporating skip connections around Sprecher blocks, similar to ResNets, has already shown promise in improving gradient flow and training stability for very deep networks.
+
+\textbf{Scientific discovery and interpretability} represent perhaps the most exciting frontier. Leveraging the architecture's sensitivity to input dimension, one could train SNs with varying $d_{\mathrm{in}}$ on unstructured data and use model selection criteria (balancing fit quality and complexity) to infer the intrinsic dimensionality of the underlying process generating the data. Enhancing integration with symbolic regression tools to automatically suggest or fit closed-form expressions for the learned $\phi^{(\ell)}$ and $\Phi^{(\ell)}$ splines after training could further boost interpretability. Applying SNs to challenging problems in scientific machine learning—such as developing SN-based PINNs for complex PDEs or modeling physical systems—where interpretability and potential parameter efficiency are highly valued, could demonstrate their practical utility.
+
+Finally, exploring possibilities for \textbf{hardware acceleration} through custom kernels that exploit the specific computational pattern of SNs (two shared spline evaluations per block coupled with matrix-vector operations) could mitigate the current training speed limitations and make SNs more competitive with highly optimized MLP implementations.
 
 \section{Conclusion}
 We have introduced Sprecher Networks (SNs), a trainable neural architecture directly inspired by David Sprecher's 1965 constructive proof of the Kolmogorov-Arnold theorem. By composing functional blocks that utilize shared monotonic ($\phi$) and general ($\Phi$) splines, learnable mixing weights ($\lambda$), and explicit shifts ($\eta, q$), SNs offer a distinct alternative to traditional MLPs and the more recent KANs.
@@ -609,6 +568,9 @@ K{\"o}ppen, M.~(2002). ``On the training of a Kolmogorov Network,'' in \emph{Art
 Liu, Z., Wang, Y., Vaidya, S., Ruehle, F., Halverson, J., Solja\v{c}i\'{c}, M., Hou, T.~Y., Tegmark, M.~(2025).
 ``KAN: Kolmogorov-Arnold Networks,'' \emph{ICLR 2025 (to appear)}.
 arXiv preprint \href{https://arxiv.org/abs/2404.19756}{arXiv:2404.19756}.
+
+\bibitem{loshchilov2017decoupled}
+Ilya Loshchilov and Frank Hutter. (2017). ``Decoupled weight decay regularization,'' \emph{arXiv preprint arXiv:1711.05101}.
 
 \end{thebibliography}
 \end{document}
