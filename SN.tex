@@ -4,8 +4,7 @@
 \usepackage{graphicx}
 \usepackage[pdfencoding=auto, psdextra]{hyperref}
 \usepackage[figurename=Figure]{caption}
-% Consider adding natbib if you prefer author-year citations or need more control
-% \usepackage[numbers]{natbib} % Use numbers for citations like the original
+% \usepackage[numbers]{natbib} % Use numbers for citations
 \usepackage{booktabs} % For better tables in the comparison section
 \usepackage{enumitem} % For custom list labels if needed
 \usepackage{tikz}
@@ -36,7 +35,9 @@ Approximation of continuous functions by sums of univariate functions has been a
 
 \vspace{1mm}
 \textbf{David Sprecher's 1965 construction.} In his 1965 landmark paper \cite{sprecher1965}, David Sprecher provided a constructive proof and a specific formula realizing the Kolmogorov--Arnold representation. He showed that any continuous function $f:[0,1]^n \to \mathbb{R}$ could be represented as:
-$$f(\mathbf{x})=\sum_{q=0}^{2n}\Phi\Bigl(\,\sum_{p=1}^{n}\lambda_p\,\phi\bigl(x_p+\eta\,q\bigr)+q\Bigr)$$
+\begin{equation}\label{eq:sprecher_original}
+f(\mathbf{x})=\sum_{q=0}^{2n}\Phi\Bigl(\,\sum_{p=1}^{n}\lambda_p\,\phi\bigl(x_p+\eta\,q\bigr)+q\Bigr)
+\end{equation}
 for a single \emph{monotonic} inner function $\phi$, a continuous outer function $\Phi$, a constant shift parameter $\eta > 0$, and constants $\lambda_p$. This construction simplified the representation by using only one inner function $\phi$, relying on shifts of the input coordinates ($x_p + \eta q$) and an outer summation index shift ($+q$) to achieve universality. The key insight of \emph{shifting input coordinates} and summing evaluations under inner and outer univariate maps is central to Sprecher's specific result.
 
 \vspace{1mm}
@@ -48,12 +49,14 @@ for a single \emph{monotonic} inner function $\phi$, a continuous outer function
 \section{Motivation and overview of Sprecher Networks}
 While MLPs are the workhorse of deep learning, architectures inspired by KAS representations offer potential benefits, particularly in interpretability and potentially parameter efficiency for certain function classes. KANs explore one direction by placing learnable functions on edges. Our \emph{Sprecher Networks} (SNs) explore a different direction, aiming to directly implement Sprecher's constructive formula within a trainable framework and extend it to deeper architectures.
 
-SNs are built upon the following principles, directly reflecting Sprecher's formula. Each functional block (mapping between layers) is organized around a shared \emph{monotonic} spline $\phi(\cdot)$ and a shared \emph{general} spline $\Phi(\cdot)$, both learnable. Each block incorporates a learnable scalar shift $\eta$ applied to inputs based on the output index $q$. Each block includes learnable mixing weights $\lambda_{i,q}$ that combine contributions from different input dimensions. The structure explicitly includes the additive shift $q$ inside the outer spline $\Phi$, mimicking Sprecher's formulation.
+SNs are built upon the following principles, directly reflecting Sprecher's formula \eqref{eq:sprecher_original}. Each functional block (mapping between layers) is organized around a shared \emph{monotonic} spline $\phi(\cdot)$ and a shared \emph{general} spline $\Phi(\cdot)$, both learnable. Each block incorporates a learnable scalar shift $\eta$ applied to inputs based on the output index $q$. Each block includes learnable mixing weights $\lambda_{i,q}$ that combine contributions from different input dimensions. The structure explicitly includes the additive shift $q$ inside the outer spline $\Phi$, mimicking Sprecher's formulation.
 
 Our architecture generalizes this classical single-layer shift-and-sum construction to a multi-layer network by composing these functional units, which we term \emph{Sprecher blocks}. The mapping from one hidden layer representation to the next is realized by such a block. Unlike MLPs with fixed node activations, LANs with learnable node activations, or KANs with learnable edge activations, SNs concentrate their learnable non-linearity into the two shared splines per block, applied in a specific structure involving shifts and learnable linear weights. Diversity in the transformation arises from the mixing weights ($\lambda$) and the index-dependent shifts ($q$).
 
 Concretely, each Sprecher block applies the transformation:
-$$ (x_i)_{i=1}^{d_{\mathrm{in}}} \;\mapsto\; \Bigl[\Phi\Bigl(\sum_{i=1}^{d_{\mathrm{in}}}\lambda_{i,q}\,\phi(x_i+\eta\,q)+q\Bigr)\Bigr]_{q=0}^{d_{\mathrm{out}}-1}.$$
+\begin{equation}\label{eq:sprecher_block_transform}
+(x_i)_{i=1}^{d_{\mathrm{in}}} \;\mapsto\; \Bigl[\Phi\Bigl(\sum_{i=1}^{d_{\mathrm{in}}}\lambda_{i,q}\,\phi(x_i+\eta\,q)+q\Bigr)\Bigr]_{q=0}^{d_{\mathrm{out}}-1}.
+\end{equation}
 For scalar outputs, the outputs of the final Sprecher block are aggregated (via summation over $q$). For vector outputs, an additional block is typically used without final summation.
 
 In Sprecher's original work, one layer (block) with $d_{\mathrm{out}} = 2n+1$ outputs (where $n=d_{\mathrm{in}}$) was sufficient for universality. Our approach stacks $L$ Sprecher blocks to create a deep network progression:
@@ -71,8 +74,10 @@ In our architecture, the fundamental building unit is the \emph{Sprecher block}.
 A Sprecher block transforms an input vector $\mathbf{x} \in \mathbb{R}^{d_{\mathrm{in}}}$ to an output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$. This transformation is implemented using the following shared, learnable components specific to that block. The \textbf{monotonic spline $\phi(\cdot)$} is an increasing piecewise-linear function, typically defined on a fixed interval like $[0,1]$. This function is shared across all input-output connections within the block and its coefficients are learnable. Monotonicity is enforced during training (see Section \ref{sec:implementation}). The \textbf{general spline $\Phi(\cdot)$} is a piecewise-linear function (without monotonicity constraints) defined on a potentially wider interval (e.g., $[-10, 20]$), which might be learnable or fixed depending on configuration. This function is also shared across the block and its coefficients are learnable. The \textbf{mixing weights matrix $\lambda$} consists of entries $\{\lambda_{i,q}\}$ of size $d_{\mathrm{in}} \times d_{\mathrm{out}}$, whose entries are learnable. These weights linearly combine the contributions from different input dimensions after transformation by $\phi$. Finally, the \textbf{shift parameter $\eta$} is a learnable scalar $\eta > 0$ that controls the magnitude of the input shift $x_i + \eta q$, which depends on the output index $q$.
 
 Concretely, given an input vector $\mathbf{x} = (x_1, \dots, x_{d_{\mathrm{in}}}) \in \mathbb{R}^{d_{\mathrm{in}}}$, a single Sprecher block (indexed implicitly by $\ell$, with parameters $\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)}$) computes the $q$-th component of its output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$ (where $q=0, \dots, d_{\mathrm{out}}-1$) via:
-$$ h_q = \text{Block}_{\phi,\Phi,\eta,\lambda}(\mathbf{x})_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\mathrm{in}}}\lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(x_i+\eta^{(\ell)}\,q\Bigr) + q\Biggr). $$
-Note the explicit inclusion of the outer shift $q$ inside the argument of $\Phi$, directly mirroring Sprecher's formula.
+\begin{equation}\label{eq:sprecher_block_component}
+ h_q = \text{Block}_{\phi,\Phi,\eta,\lambda}(\mathbf{x})_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\mathrm{in}}}\lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(x_i+\eta^{(\ell)}\,q\Bigr) + q\Biggr).
+\end{equation}
+Note the explicit inclusion of the outer shift $q$ inside the argument of $\Phi$, directly mirroring Sprecher's formula \eqref{eq:sprecher_original}.
 
 \begin{remark}[Outer Shift Scaling]\label{rem:outershift}
 In Sprecher's original formula, the outer shift is simply `$q$`. Practical implementations might use a scaled version, `$C \cdot q$`, where `$C$` is a small constant (e.g., $0.1$) or even a learnable parameter per block. Such scaling can be absorbed by the learnable spline $\Phi^{(\ell)}$ but might influence initialization or learning dynamics. For theoretical exposition, we generally use `$q$`.
@@ -132,7 +137,7 @@ We illustrate the vector-output case ($m>1$) for a network architecture $d_0\to[
     \node (X2) [right=of X1]                        {$X^{(2)}$};
     \node (L2) [below=0.07cm of X2, dim]             {$(\in \mathbb{R}^{d_2})$};
     \node (X3) [right=of X2]                        {$X^{(3)}$};
-    \node (L3) [right=0.07cm of X3, dim]             {$(\in \mathbb{R}^{d_3})$};
+    \node (L3) [below=0.07cm of X3, dim]             {$(\in \mathbb{R}^{d_3})$};
     \node (OB) [below=of X3]                        {Output block 4 $(T^{(4)})$};
     \node (Y)  [below=of OB]                        {$\mathbf{y} \in \mathbb{R}^m$ (Network output)};
 
@@ -152,7 +157,7 @@ To further clarify the compositional structure for the scalar output case ($m=1$
 \subsubsection{Single hidden layer ($L=1$)}
 For a network with architecture $d_{\mathrm{in}}\to[d_1]\to1$ (i.e., $d_0=d_{\mathrm{in}}$), the network computes:
 $$f(\mathbf{x}) = \sum_{q=0}^{d_1-1} \mathbf{h}^{(1)}_q = \sum_{q=0}^{d_1-1} \Phi^{(1)}\Biggl(\sum_{i=1}^{d_0} \lambda^{(1)}_{i,q}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,q\Bigr)+q\Biggr).$$
-This precisely reproduces Sprecher's 1965 construction if we choose $d_1=2d_0+1$ and identify $\phi^{(1)}=\phi$, $\Phi^{(1)}=\Phi$, and $\lambda^{(1)}_{i,q} = \lambda_i$ (independent of $q$).
+This precisely reproduces Sprecher's 1965 construction \eqref{eq:sprecher_original} if we choose $d_1=2d_0+1$ and identify $\phi^{(1)}=\phi$, $\Phi^{(1)}=\Phi$, and $\lambda^{(1)}_{i,q} = \lambda_i$ (independent of $q$).
 
 \subsubsection{Two hidden layers ($L=2$)}
 Let the architecture be $d_0\to[d_1, d_2]\to1$. The intermediate output $\mathbf{h}^{(1)} \in \mathbb{R}^{d_1}$ is computed as:
@@ -166,11 +171,11 @@ f(\mathbf{x})=\sum_{q=0}^{d_2-1}\Phi^{(2)}\Biggl(\sum_{r=0}^{d_1-1}\lambda^{(2)}
 
 \subsubsection{Three hidden layers ($L=3$)}
 Let the architecture be $d_0\to [d_1, d_2, d_3]\to1$. The recursive definition involves:
-$$\begin{aligned}
-\mathbf{h}^{(1)}_r &= \Phi^{(1)}\Bigl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr),\quad r=0,\dots,d_1-1,\\[1mm]
-\mathbf{h}^{(2)}_s &= \Phi^{(2)}\Bigl(\sum_{r=0}^{d_1-1}\lambda^{(2)}_{r,s}\,\phi^{(2)}\Bigl(\mathbf{h}^{(1)}_r+\eta^{(2)}\,s\Bigr)+s\Bigr),\quad s=0,\dots,d_2-1,\\[1mm]
+\begin{align*}
+\mathbf{h}^{(1)}_r &= \Phi^{(1)}\Bigl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Bigr),\quad r=0,\dots,d_1-1,\\
+\mathbf{h}^{(2)}_s &= \Phi^{(2)}\Bigl(\sum_{r=0}^{d_1-1}\lambda^{(2)}_{r,s}\,\phi^{(2)}\Bigl(\mathbf{h}^{(1)}_r+\eta^{(2)}\,s\Bigr)+s\Bigr),\quad s=0,\dots,d_2-1,\\
 \mathbf{h}^{(3)}_q &= \Phi^{(3)}\Bigl(\sum_{s=0}^{d_2-1}\lambda^{(3)}_{s,q}\,\phi^{(3)}\Bigl(\mathbf{h}^{(2)}_s+\eta^{(3)}\,q\Bigr)+q\Bigr),\quad q=0,\dots,d_3-1.
-\end{aligned}$$
+\end{align*}
 The network output is $f(\mathbf{x})=\sum_{q=0}^{d_3-1}\mathbf{h}^{(3)}_q$. The equivalent nested formulation is:
 \begin{multline}\label{eq:three-layer-restored}
 f(\mathbf{x})=\sum_{q=0}^{d_3-1}\Phi^{(3)}\Biggl(\sum_{s=0}^{d_2-1}\lambda^{(3)}_{s,q}\,\phi^{(3)}\Biggl(\Phi^{(2)}\Biggl(\sum_{r=0}^{d_1-1}\lambda^{(2)}_{r,s}\,\phi^{(2)}\Biggl(\Phi^{(1)}\Biggl(\sum_{i=1}^{d_0}\lambda^{(1)}_{i,r}\,\phi^{(1)}\Bigl(x_i+\eta^{(1)}\,r\Bigr)+r\Biggr)\\
@@ -222,8 +227,7 @@ This comparison clarifies that SNs represent a distinct architecture, related to
 \section{Theoretical aspects and universality}\label{sec:universality}
 
 \subsection{Relation to Sprecher (1965) and universality}
-As shown in Section 3.3.1, a single-layer ($L=1$) Sprecher Network with input dimension $d_0=n$ and output dimension $d_1 = 2n+1$, when configured with appropriate (potentially fixed) weights $\lambda^{(1)}_{i,q} = \lambda_p$ and shift $\eta^{(1)} = \eta$, directly reproduces Sprecher's 1965 formula:
-$$ f(\mathbf{x})=\sum_{q=0}^{2n}\Phi\Biggl(\sum_{p=1}^{n}\lambda_p\,\phi\bigl(x_p+\eta\,q\bigr)+q\Biggr). $$
+As shown in Section 3.3.1, a single-layer ($L=1$) Sprecher Network with input dimension $d_0=n$ and output dimension $d_1 = 2n+1$, when configured with appropriate (potentially fixed) weights $\lambda^{(1)}_{i,q} = \lambda_p$ and shift $\eta^{(1)} = \eta$, directly reproduces Sprecher's 1965 formula \eqref{eq:sprecher_original}.
 Sprecher proved that for any continuous function $f:[0,1]^n \to \mathbb{R}$, there exist a suitable monotonic $\phi$, a continuous $\Phi$, and constants $\lambda_p, \eta$ such that this representation holds \cite{sprecher1965}. This immediately implies:
 
 \begin{theorem}[Universality of single-layer SNs]
@@ -260,21 +264,21 @@ Fix $\mathbf{z} \in \mathcal{B}_{in}$ and $q \in \{0, \ldots, d_{out}-1\}$. Defi
 $$s_q := \sum_{i=1}^{d_{in}} \lambda_{i,q} \phi(z_i + \eta q) + q, \quad \hat{s}_q := \sum_{i=1}^{d_{in}} \lambda_{i,q} \hat{\phi}(z_i + \eta q) + q$$
 
 Since $z_i \in [-B_{in}, B_{in}]$ and $\eta q \leq \eta d_{out}$, we have $z_i + \eta q \in I_\phi$. Thus:
-\begin{align}
+\begin{align*}
 |s_q - \hat{s}_q| &= \left|\sum_{i=1}^{d_{in}} \lambda_{i,q} [\phi(z_i + \eta q) - \hat{\phi}(z_i + \eta q)]\right|\\
 &\leq \sum_{i=1}^{d_{in}} |\lambda_{i,q}| \cdot \|\phi - \hat{\phi}\|_{L^\infty(I_\phi)}\\
 &\leq \Lambda d_{in} \cdot \frac{\|\phi^{(k+1)}\|_{L^\infty(I_\phi)}}{(k+1)!} \left(\frac{|I_\phi|}{G_\phi}\right)^{k+1}
-\end{align}
+\end{align*}
 
 Moreover, $|s_q| \leq \Lambda d_{in} \|\phi\|_{L^\infty(I_\phi)} + d_{out} =: R_{out}$, so $s_q \in I_\Phi$. Similarly, since $\hat{\phi}$ is bounded on $I_\phi$ (as a continuous function on a compact set), $\hat{s}_q \in I_\Phi$ for sufficiently large $G_\phi$.
 
 Now:
-\begin{align}
+\begin{align*}
 |T(\mathbf{z})_q - \hat{T}(\mathbf{z})_q| &= |\Phi(s_q) - \hat{\Phi}(\hat{s}_q)|\\
 &\leq |\Phi(s_q) - \Phi(\hat{s}_q)| + |\Phi(\hat{s}_q) - \hat{\Phi}(\hat{s}_q)|\\
 &\leq L_\Phi |s_q - \hat{s}_q| + \|\Phi - \hat{\Phi}\|_{L^\infty(I_\Phi)}\\
 &\leq L_\Phi \Lambda d_{in} \frac{\|\phi^{(k+1)}\|_{L^\infty(I_\phi)}}{(k+1)!} \left(\frac{|I_\phi|}{G_\phi}\right)^{k+1} + \frac{\|\Phi^{(k+1)}\|_{L^\infty(I_\Phi)}}{(k+1)!} \left(\frac{|I_\Phi|}{G_\Phi}\right)^{k+1}
-\end{align}
+\end{align*}
 
 Taking the maximum over $q$ and $\mathbf{z}$ gives the result.
 \end{proof}
@@ -284,7 +288,9 @@ Consider an $L$-block Sprecher network where block $\ell$ has approximation cons
 $$E_\ell := \sup_{\mathbf{x} \in [0,1]^n} \|\mathbf{h}^{(\ell)}(\mathbf{x}) - \hat{\mathbf{h}}^{(\ell)}(\mathbf{x})\|_\infty$$
 
 Then:
-$$E_\ell \leq \sum_{j=1}^{\ell} \left(\prod_{m=j+1}^{\ell} L_{T^{(m)}}\right) K_{T^{(j)}} \varepsilon_j$$
+\begin{equation}\label{eq:error_composition_result}
+E_\ell \leq \sum_{j=1}^{\ell} \left(\prod_{m=j+1}^{\ell} L_{T^{(m)}}\right) K_{T^{(j)}} \varepsilon_j
+\end{equation}
 where $\varepsilon_j$ is the approximation error bound for block $j$ from Lemma \ref{lem:single_block}, and the empty product equals 1.
 \end{lemma}
 
@@ -292,23 +298,22 @@ where $\varepsilon_j$ is the approximation error bound for block $j$ from Lemma 
 We proceed by induction. For $\ell = 1$, we have $E_1 \leq K_{T^{(1)}} \varepsilon_1$ directly from Lemma \ref{lem:single_block}.
 
 Assume the result holds for $\ell-1$. For any $\mathbf{x} \in [0,1]^n$:
-\begin{align}
+\begin{align*}
 \|\mathbf{h}^{(\ell)}(\mathbf{x}) - \hat{\mathbf{h}}^{(\ell)}(\mathbf{x})\|_\infty &= \|T^{(\ell)}(\mathbf{h}^{(\ell-1)}(\mathbf{x})) - \hat{T}^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x}))\|_\infty\\
 &\leq \|T^{(\ell)}(\mathbf{h}^{(\ell-1)}(\mathbf{x})) - T^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x}))\|_\infty \\
 &\quad + \|T^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x})) - \hat{T}^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x}))\|_\infty\\
 &\leq L_{T^{(\ell)}} \|\mathbf{h}^{(\ell-1)}(\mathbf{x}) - \hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x})\|_\infty + K_{T^{(\ell)}} \varepsilon_\ell\\
 &\leq L_{T^{(\ell)}} E_{\ell-1} + K_{T^{(\ell)}} \varepsilon_\ell
-\end{align}
-
-Substituting the induction hypothesis and simplifying gives the result.
+\end{align*}
+Substituting the induction hypothesis into this recurrence $E_\ell \leq L_{T^{(\ell)}} E_{\ell-1} + K_{T^{(\ell)}} \varepsilon_\ell$ and unrolling gives the result \eqref{eq:error_composition_result}.
 \end{proof}
 
 \begin{theorem}[Spline approximation rate for Sprecher Networks]\label{thm:sprecher_rate_corrected}
 Let $f:[0,1]^n \to \mathbb{R}$ be realized by an ideal $L$-block Sprecher network with scalar output. Assume:
-\begin{enumerate}
-\item Each $\phi^{(\ell)}, \Phi^{(\ell)} \in C^{k+1}$ on their respective domains
-\item Each block satisfies $|\lambda_{i,q}^{(\ell)}| \leq \Lambda$ and has shift parameter $\eta^{(\ell)} > 0$
-\item The network propagates through bounded sets: $\mathbf{h}^{(\ell)}(\mathbf{x}) \in [-B_\ell, B_\ell]^{d_\ell}$ for all $\mathbf{x} \in [0,1]^n$
+\begin{enumerate}[label=\textup{(\roman*)}]
+\item Each $\phi^{(\ell)}, \Phi^{(\ell)} \in C^{k+1}$ on their respective domains.
+\item Each block satisfies $|\lambda_{i,q}^{(\ell)}| \leq \Lambda$ and has shift parameter $\eta^{(\ell)} > 0$.
+\item The network propagates through bounded sets: $\mathbf{h}^{(\ell)}(\mathbf{x}) \in [-B_\ell, B_\ell]^{d_\ell}$ for all $\mathbf{x} \in [0,1]^n$.
 \end{enumerate}
 
 For each block $\ell$, approximate $\phi^{(\ell)}$ and $\Phi^{(\ell)}$ with degree-$k$ splines using $G_\phi^{(\ell)}$ and $G_\Phi^{(\ell)}$ knots respectively. Then:
@@ -321,36 +326,34 @@ where:
 \item $\tilde{L}_m = L_{\Phi^{(m)}} \Lambda d_{m-1} L_{\phi^{(m)}}$ (Lipschitz constant of block $m$)
 \end{itemize}
 
-If all blocks use the same number of knots $G$, the error scales as $O(G^{-(k+1)})$ with a constant that may grow exponentially in $L$.
+If all blocks use the same number of knots $G$ (i.e., $G_\phi^{(\ell)}=G_\Phi^{(\ell)}=G$ for all $\ell$), the error scales as $O(G^{-(k+1)})$ with a constant that may grow exponentially in $L$.
 \end{theorem}
 
 \begin{proof}
-By Lemma \ref{lem:single_block}, each block $\ell$ can be approximated with error bounded by $K_{T^{(\ell)}} \varepsilon_\ell$. By Lemma \ref{lem:error_composition}, the error after $L$ blocks is bounded by
-$$E_L \leq \sum_{j=1}^{L} \left(\prod_{m=j+1}^{L} \tilde{L}_m\right) K_{T^{(j)}} \varepsilon_j$$
+By Lemma \ref{lem:single_block}, each block $\ell$ can be approximated with error bounded by $K_{T^{(\ell)}} \varepsilon_\ell$. By Lemma \ref{lem:error_composition}, the error after $L$ blocks, $E_L := \sup_{\mathbf{x} \in [0,1]^n} \|\mathbf{h}^{(L)}(\mathbf{x}) - \hat{\mathbf{h}}^{(L)}(\mathbf{x})\|_\infty$, is bounded by the sum given in \eqref{eq:error_composition_result}.
 
 For the scalar output case, we have:
-\begin{align}
+\begin{align*}
 |f(\mathbf{x}) - \hat{f}(\mathbf{x})| &= \left|\sum_{q=0}^{d_L-1} h_q^{(L)}(\mathbf{x}) - \sum_{q=0}^{d_L-1} \hat{h}_q^{(L)}(\mathbf{x})\right|\\
 &\leq \sum_{q=0}^{d_L-1} |h_q^{(L)}(\mathbf{x}) - \hat{h}_q^{(L)}(\mathbf{x})|\\
 &\leq d_L \|\mathbf{h}^{(L)}(\mathbf{x}) - \hat{\mathbf{h}}^{(L)}(\mathbf{x})\|_\infty\\
 &\leq d_L E_L
-\end{align}
-
+\end{align*}
 Substituting the bound for $E_L$ gives the result.
 \end{proof}
 
 \begin{remark}[Monotonic spline approximation]
 The approximation rates in Lemma \ref{lem:single_block} assume we can achieve standard spline approximation rates while maintaining monotonicity for $\phi^{(\ell)}$. This can be achieved using:
 \begin{itemize}
-\item Positive B-splines of degree $k$ with appropriate knot sequences
-\item Bernstein polynomial approximation followed by degree elevation
-\item The specific log-space parameterization used in implementation, which maintains monotonicity by construction
+\item Positive B-splines of degree $k$ with appropriate knot sequences.
+\item Bernstein polynomial approximation followed by degree elevation.
+\item The specific log-space parameterization used in implementation, which maintains monotonicity by construction.
 \end{itemize}
 Each approach may have slightly different constants but achieves the same $O(G^{-(k+1)})$ rate for smooth monotonic functions.
 \end{remark}
 
 \begin{remark}[Dependence on depth]
-Note that the constant in the error bound depends on the layer dimensions $d_\ell$ and the Lipschitz constants $L_\phi^{(\ell)}, L_\Phi^{(\ell)}$ through the factors $\tilde{L}_m$. As shown in the proof, the error accumulates multiplicatively through the layers via these factors. Consequently, if the $\tilde{L}_m$ values (representing error amplification per layer) are consistently greater than 1, the constant can grow exponentially with the network depth $L$. This highlights a potential challenge for approximation with very deep networks, similar to error bounds seen in other deep learning contexts.
+Note that the constant in the error bound of Theorem \ref{thm:sprecher_rate_corrected} depends on the layer dimensions $d_\ell$ and the Lipschitz constants $L_\phi^{(\ell)}, L_\Phi^{(\ell)}$ through the factors $\tilde{L}_m$. As shown in the proof, the error accumulates multiplicatively through the layers via these factors. Consequently, if the $\tilde{L}_m$ values (representing error amplification per layer) are consistently greater than 1, the constant can grow exponentially with the network depth $L$. This highlights a potential challenge for approximation with very deep networks, similar to error bounds seen in other deep learning contexts.
 \end{remark}
 
 \subsection{Vector-valued functions and deeper extensions}
@@ -504,7 +507,7 @@ To empirically validate the importance of the internal shift parameter $\eta^{(\
 While Sprecher Networks offer a theoretically grounded architecture with potential advantages, several challenges remain, alongside exciting opportunities for future research.
 
 \subsection{Implementation and training challenges}
-\begin{enumerate}
+\begin{enumerate}[label=\textup{(\arabic*)}]
     \item \textbf{Training speed and stability:}
         Initial or straightforward implementations might exhibit slower training compared to highly optimized MLPs. However, incorporating architectural enhancements (as discussed in Section 6.3) can dramatically improve training speed, potentially allowing convergence in timeframes more comparable to MLPs, though careful implementation of the enhancements is crucial. Key improvements include using log-space parameterization for monotonic splines to maintain smooth gradients, employing gradient clipping (typically max norm $\sim 1.0$) to prevent instabilities, and progressive regularization that decreases smoothness penalties over time. With these improvements, the primary bottleneck shifts from optimization challenges to the computational cost of spline evaluations.
     \item \textbf{Initialization and range selection:}
@@ -564,7 +567,7 @@ Arnold, V.~I.~(1963). ``On functions of three variables,'' \emph{Doklady Akademi
 Sprecher, D.~A.~(1965). ``On the Structure of Continuous Functions of Several Variables,'' \emph{Transactions of the American Mathematical Society}, \textbf{115}, 340--355.
 
 \bibitem{kolmogorov}
-Kolmogorov, A.~N.~(1957). ``On the representation of continuous functions of many variables by superposition of continuous functions of one variable and addition,'' \emph{Doklady Akademii Nauk SSSR}, \textbf{114}(5), 953--956.
+Kolmogorov, A.~N.~(1957). ``On the representation of continuous functions of many variables by superposition of continuous functions of one variable and addition,'' \emph{Doklady Akademii Nauk SSSR}, \textbf{114}(5), 953--956. % Added pages
 
 \bibitem{koppen}
 K{\"o}ppen, M.~(2002). ``On the training of a Kolmogorov Network,'' in \emph{Artificial Neural Networks---ICANN 2002: International Conference, Madrid, Spain, August 28--30, 2002 Proceedings 12}, pp. 474--479. Springer.
