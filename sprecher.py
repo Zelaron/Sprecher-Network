@@ -44,6 +44,15 @@ PHI_KNOTS = 300
 # Number of knots for the outer general splines (𝛷)
 PHI_CAPITAL_KNOTS = 200
 
+# Q-values scaling factor (set to 1.0 for original Sprecher theory, 0.1 for optimization)
+Q_VALUES_FACTOR = 0.1  # Set to 1.0 to get a regular Sprecher network
+
+# Whether to use residual connections (ResNet-style skip connections)
+USE_RESIDUAL_WEIGHTS = True  # Set to False for a regular Sprecher network
+
+# Whether to use advanced scheduler and optimizer settings
+USE_ADVANCED_SCHEDULER = True  # Set to False for original training strategy
+
 ##############################################################################
 #                          TARGET FUNCTION DEFINITION                        #
 ##############################################################################
@@ -306,8 +315,11 @@ class SprecherLayerBlock(nn.Module):
         # Q-values for indexing.
         self.register_buffer('q_values', torch.arange(d_out, dtype=torch.float32))
         
-        # Residual connection weight (learnable)
-        self.residual_weight = nn.Parameter(torch.tensor(0.1))
+        # Residual connection weight (learnable) - only create if USE_RESIDUAL_WEIGHTS is True
+        if USE_RESIDUAL_WEIGHTS:
+            self.residual_weight = nn.Parameter(torch.tensor(0.1))
+        else:
+            self.residual_weight = None
     
     def forward(self, x, x_original=None):
         # x: (batch_size, d_in)
@@ -323,13 +335,13 @@ class SprecherLayerBlock(nn.Module):
         
         # Weight by λ and sum over input dimension (weighted superposition)
         weighted = phi_out * self.lambdas.unsqueeze(0)
-        s = weighted.sum(dim=1) + 0.1 * self.q_values  # shape: (batch_size, d_out)
+        s = weighted.sum(dim=1) + Q_VALUES_FACTOR * self.q_values  # shape: (batch_size, d_out)
         
         # Pass through the general outer spline 𝛷
         activated = self.Phi(s)
         
-        # Add residual connection if dimensions match
-        if x_original is not None and x_original.shape[1] == activated.shape[1]:
+        # Add residual connection if dimensions match and USE_RESIDUAL_WEIGHTS is True
+        if USE_RESIDUAL_WEIGHTS and x_original is not None and x_original.shape[1] == activated.shape[1]:
             activated = activated + self.residual_weight * x_original
         
         if self.is_final:
@@ -395,10 +407,12 @@ class SprecherMultiLayerNetwork(nn.Module):
         x_original = x
         for i, layer in enumerate(self.layers):
             # Pass original input for residual connections where dimensions match
-            if i == 0 or x_original.shape[1] != x.shape[1]:
+            if USE_RESIDUAL_WEIGHTS and (i == 0 or x_original.shape[1] != x.shape[1]):
                 x = layer(x, None)
-            else:
+            elif USE_RESIDUAL_WEIGHTS:
                 x = layer(x, x_original)
+            else:
+                x = layer(x, None)
         # Apply output scaling and bias
         x = self.output_scale * x + self.output_bias
         return x
@@ -499,7 +513,9 @@ def train_network(target_function, architecture, total_epochs=100000, print_ever
     phi_params = sum(p.numel() for p in model.phi_range_params.parameters())
     
     # Count additional architectural parameters
-    residual_params = len(model.layers)  # One residual_weight per layer
+    residual_params = 0
+    if USE_RESIDUAL_WEIGHTS:
+        residual_params = sum(1 for layer in model.layers if hasattr(layer, 'residual_weight') and layer.residual_weight is not None)
     output_params = 2  # output_scale and output_bias
     
     if TRAIN_PHI_RANGE:
@@ -509,30 +525,40 @@ def train_network(target_function, architecture, total_epochs=100000, print_ever
     
     print(f"Total number of trainable parameters: {total_params}")
     print(f"  - Spline, weight, and shift parameters: {core_params - residual_params - output_params}")
-    print(f"  - Residual connection weights: {residual_params}")
+    if USE_RESIDUAL_WEIGHTS:
+        print(f"  - Residual connection weights: {residual_params}")
     print(f"  - Output scale and bias: {output_params}")
     if TRAIN_PHI_RANGE:
         print(f"  - Global range parameters (dc, dr, cc, cr): {phi_params}")
     
-    # Use AdamW optimizer with weight decay
-    params = [
-        {"params": [p for n, p in model.named_parameters() if "phi_range_params" in n], 
-         "lr": 0.01, "lr_scale": 1.0},  # Higher base LR for range params
-        {"params": [p for n, p in model.named_parameters() if "output" in n], 
-         "lr": 0.001, "lr_scale": 0.5},  # Medium LR for output params
-        {"params": [p for n, p in model.named_parameters() if "phi_range_params" not in n and "output" not in n], 
-         "lr": 0.001, "lr_scale": 0.3}  # Lower LR for spline params
-    ]
-    optimizer = torch.optim.AdamW(params, weight_decay=1e-6, betas=(0.9, 0.999))
-    
-    # Create custom scheduler
-    scheduler = PlateauAwareCosineAnnealingLR(
-        optimizer, 
-        base_lr=0.0001, 
-        max_lr=0.01,
-        patience=500,
-        threshold=1e-5
-    )
+    if USE_ADVANCED_SCHEDULER:
+        # Use AdamW optimizer with weight decay and advanced scheduler
+        params = [
+            {"params": [p for n, p in model.named_parameters() if "phi_range_params" in n], 
+             "lr": 0.01, "lr_scale": 1.0},  # Higher base LR for range params
+            {"params": [p for n, p in model.named_parameters() if "output" in n], 
+             "lr": 0.001, "lr_scale": 0.5},  # Medium LR for output params
+            {"params": [p for n, p in model.named_parameters() if "phi_range_params" not in n and "output" not in n], 
+             "lr": 0.001, "lr_scale": 0.3}  # Lower LR for spline params
+        ]
+        optimizer = torch.optim.AdamW(params, weight_decay=1e-6, betas=(0.9, 0.999))
+        
+        # Create custom scheduler
+        scheduler = PlateauAwareCosineAnnealingLR(
+            optimizer, 
+            base_lr=0.0001, 
+            max_lr=0.01,
+            patience=500,
+            threshold=1e-5
+        )
+    else:
+        # Use original simple Adam optimizer setup
+        params = [
+            {"params": [p for n, p in model.named_parameters() if "phi_range_params" in n], "lr": 0.001},
+            {"params": [p for n, p in model.named_parameters() if "phi_range_params" not in n], "lr": 0.0003}
+        ]
+        optimizer = torch.optim.Adam(params, weight_decay=1e-7)
+        scheduler = None
     
     losses = []
     best_loss = float("inf")
@@ -546,31 +572,48 @@ def train_network(target_function, architecture, total_epochs=100000, print_ever
         optimizer.zero_grad()
         output = model(x_train)
         
-        # Multi-scale loss computation
-        mse_loss = torch.mean((output - y_train) ** 2)
-        
-        # Add L1 loss component to help escape plateaus
-        l1_loss = torch.mean(torch.abs(output - y_train))
-        
-        # Calculate adaptive smoothness penalty
-        smoothness_weight = 0.001 * max(0.1, 1.0 - epoch / 10000)  # Decrease over time
-        flatness_penalty = 0.0
-        for layer in model.layers:
-            flatness_penalty += smoothness_weight * layer.phi.get_flatness_penalty() + 0.01 * layer.Phi.get_flatness_penalty()
-        
-        # Variance penalty with annealing
-        var_weight = LAMBDA_VAR * min(1.0, epoch / 5000)  # Gradually increase
-        std_target = torch.std(y_train)
-        std_output = torch.std(output)
-        var_loss = var_weight * (std_output - std_target) ** 2
-        
-        # Combined loss with adaptive weighting
-        if epoch < 1000:
-            # Early training: focus on rough approximation
-            loss = 0.7 * mse_loss + 0.3 * l1_loss + flatness_penalty
+        if USE_ADVANCED_SCHEDULER:
+            # Multi-scale loss computation
+            mse_loss = torch.mean((output - y_train) ** 2)
+            
+            # Add L1 loss component to help escape plateaus
+            l1_loss = torch.mean(torch.abs(output - y_train))
+            
+            # Calculate adaptive smoothness penalty
+            smoothness_weight = 0.001 * max(0.1, 1.0 - epoch / 10000)  # Decrease over time
+            flatness_penalty = 0.0
+            for layer in model.layers:
+                flatness_penalty += smoothness_weight * layer.phi.get_flatness_penalty() + 0.01 * layer.Phi.get_flatness_penalty()
+            
+            # Variance penalty with annealing
+            var_weight = LAMBDA_VAR * min(1.0, epoch / 5000)  # Gradually increase
+            std_target = torch.std(y_train)
+            std_output = torch.std(output)
+            var_loss = var_weight * (std_output - std_target) ** 2
+            
+            # Combined loss with adaptive weighting
+            if epoch < 1000:
+                # Early training: focus on rough approximation
+                loss = 0.7 * mse_loss + 0.3 * l1_loss + flatness_penalty
+            else:
+                # Later training: refine with all components
+                loss = mse_loss + 0.1 * l1_loss + flatness_penalty + var_loss
         else:
-            # Later training: refine with all components
-            loss = mse_loss + 0.1 * l1_loss + flatness_penalty + var_loss
+            # Original simple loss computation
+            mse_loss = torch.mean((output - y_train) ** 2)
+            
+            # Calculate smoothness penalty (regularization term)
+            flatness_penalty = 0.0
+            for layer in model.layers:
+                flatness_penalty += 0.01 * layer.phi.get_flatness_penalty() + 0.1 * layer.Phi.get_flatness_penalty()
+            
+            # Variance penalty: encourage network output variability to match that of the target
+            std_target = torch.std(y_train)
+            std_output = torch.std(output)
+            var_loss = LAMBDA_VAR * (std_output - std_target) ** 2
+            
+            # Combine all loss components
+            loss = mse_loss + flatness_penalty + var_loss
         
         loss.backward()
         
@@ -590,24 +633,39 @@ def train_network(target_function, architecture, total_epochs=100000, print_ever
         
         optimizer.step()
         
-        # Update learning rate based on plateau detection
-        current_lr = scheduler.step(loss.item())
+        # Update learning rate if using advanced scheduler
+        if scheduler is not None:
+            current_lr = scheduler.step(loss.item())
+        else:
+            current_lr = optimizer.param_groups[0]['lr']
         
         losses.append(loss.item())
         
-        pbar.set_postfix({
+        pbar_dict = {
             'loss': f'{loss.item():.2e}',
-            'lr': f'{current_lr:.2e}',
             'dc': f'{dc_val:.3f}',
             'dr': f'{dr_val:.3f}',
             'cc': f'{cc_val:.3f}',
             'cr': f'{cr_val:.3f}',
             'std_out': f'{std_output.item():.3f}',
             'std_tar': f'{std_target.item():.3f}'
-        })
+        }
+        
+        if USE_ADVANCED_SCHEDULER:
+            pbar_dict['lr'] = f'{current_lr:.2e}'
+            pbar_dict['g_dc'] = f'{dc_grad:.3e}'
+            pbar_dict['g_dr'] = f'{dr_grad:.3e}'
+            pbar_dict['g_cc'] = f'{cc_grad:.3e}'
+            pbar_dict['g_cr'] = f'{cr_grad:.3e}'
+            pbar_dict['var_loss'] = f'{var_loss.item():.2e}'
+        
+        pbar.set_postfix(pbar_dict)
         
         if (epoch + 1) % print_every == 0:
-            print(f"Epoch {epoch+1}: Loss = {loss.item():.4e}, LR = {current_lr:.4e}")
+            if USE_ADVANCED_SCHEDULER:
+                print(f"Epoch {epoch+1}: Loss = {loss.item():.4e}, LR = {current_lr:.4e}")
+            else:
+                print(f"Epoch {epoch+1}: Loss = {loss.item():.4e}")
         
         if loss.item() < best_loss:
             best_loss = loss.item()
@@ -622,6 +680,8 @@ def train_network(target_function, architecture, total_epochs=100000, print_ever
         print(f"Block {idx}: lambdas shape = {tuple(layer.lambdas.shape)}")
         print(f"Block {idx}: lambdas =")
         print(layer.lambdas.detach().cpu().numpy())
+        if USE_RESIDUAL_WEIGHTS and hasattr(layer, 'residual_weight') and layer.residual_weight is not None:
+            print(f"Block {idx}: residual_weight = {layer.residual_weight.item():.6f}")
         print()
     
     return model, losses, model.layers
@@ -842,6 +902,12 @@ def plot_results(model, layers):
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    # Print configuration
+    print(f"Q_VALUES_FACTOR: {Q_VALUES_FACTOR}")
+    print(f"USE_RESIDUAL_WEIGHTS: {USE_RESIDUAL_WEIGHTS}")
+    print(f"USE_ADVANCED_SCHEDULER: {USE_ADVANCED_SCHEDULER}")
+    print("")
     
     # Automatically determine input and output dimensions
     input_dim = get_input_dimension(target_function)
