@@ -21,7 +21,7 @@ import matplotlib.gridspec as gridspec
 architecture = [10] # Good for a function of one variable
 
 # Total training epochs
-TOTAL_EPOCHS = 500000
+TOTAL_EPOCHS = 100000
 
 # Whether to save the final plot
 SAVE_FINAL_PLOT = True
