@@ -44,7 +44,8 @@ PHI_KNOTS = 100
 PHI_CAPITAL_KNOTS = 100
 
 # Q-values scaling factor (set to 1.0 for original Sprecher theory, 0.1 for optimization)
-Q_VALUES_FACTOR = 1.0  # Set to 1.0 to get a regular Sprecher network
+# Values of 1.0 tend to cause initial plateaus, an issue which compounds for deeper networks
+Q_VALUES_FACTOR = 1.0
 
 # Whether to use residual connections (ResNet-style skip connections)
 USE_RESIDUAL_WEIGHTS = True  # Set to False for a regular Sprecher network
