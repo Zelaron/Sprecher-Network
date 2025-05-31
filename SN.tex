@@ -12,6 +12,7 @@
 \usetikzlibrary{positioning, arrows.meta}
 
 \newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
 \newtheorem{prop}{Proposition}
 \newtheorem{remark}{Remark}
 \newtheorem{conjecture}{Conjecture}
@@ -41,7 +42,9 @@ Approximation of continuous functions by sums of univariate functions has been a
 
 \vspace{1mm}
 \textbf{David Sprecher's 1965 construction.} In his 1965 landmark paper \cite{sprecher1965}, David Sprecher provided a constructive proof and a specific formula realizing the Kolmogorov--Arnold representation. He showed that any continuous function $f:[0,1]^n \to \mathbb{R}$ could be represented as:
-$$f(\mathbf{x})=\sum_{q=0}^{2n}\Phi\Bigl(\,\sum_{p=1}^{n}\lambda_p\,\phi\bigl(x_p+\eta\,q\bigr)+q\Bigr)$$
+\begin{equation}\label{eq:sprecher_original}
+f(\mathbf{x})=\sum_{q=0}^{2n}\Phi\Biggl(\,\sum_{p=1}^{n}\lambda_p\,\phi\bigl(x_p+\eta\,q\bigr)+q\Biggr)
+\end{equation}
 for a single \emph{monotonic} inner function $\phi$, a continuous outer function $\Phi$, a constant shift parameter $\eta > 0$, and constants $\lambda_p$. This construction simplified the representation by using only one inner function $\phi$, relying on shifts of the input coordinates ($x_p + \eta q$) and an outer summation index shift ($+q$) to achieve universality. The key insight of \emph{shifting input coordinates} and summing evaluations under inner and outer univariate maps is central to Sprecher's specific result.
 
 \vspace{1mm}
@@ -270,12 +273,10 @@ Moreover, in Sprecher's construction, $\eta$ can be chosen as universal constant
     \label{fig:enter-label}
 \end{figure}
 
-
 \section{Theoretical aspects and universality}\label{sec:universality}
 
 \subsection{Relation to Sprecher (1965) and universality}
-As shown in Section 3.3.1, a single-layer ($L=1$) Sprecher Network with input dimension $d_0=n$ and output dimension $d_1 = 2n+1$, when configured with appropriate (potentially fixed) weights $\lambda^{(1)}_{i,q} = \lambda_p$ and shift $\eta^{(1)} = \eta$, directly reproduces Sprecher's 1965 formula:
-$$ f(\mathbf{x})=\sum_{q=0}^{2n}\Phi\Biggl(\sum_{p=1}^{n}\lambda_p\,\phi\bigl(x_p+\eta\,q\bigr)+q\Biggr). $$
+As shown in Section 3.3.1, a single-layer ($L=1$) Sprecher Network with input dimension $d_0=n$ and output dimension $d_1 = 2n+1$, when configured with appropriate (potentially fixed) weights $\lambda^{(1)}_{i,q} = \lambda_p$ and shift $\eta^{(1)} = \eta$, directly reproduces Sprecher's 1965 formula \eqref{eq:sprecher_original}.
 Sprecher proved that for any continuous function $f:[0,1]^n \to \mathbb{R}$, there exist a suitable monotonic $\phi$, a continuous $\Phi$, and constants $\lambda_p, \eta$ such that this representation holds \cite{sprecher1965}. This immediately implies:
 
 \begin{theorem}[Universality of single-layer SNs]
@@ -283,130 +284,124 @@ For any dimension $n \ge 1$ and any continuous function $f: [0,1]^n \to \mathbb{
 \end{theorem}
 Thus, single-layer SNs inherit the universal approximation property directly from Sprecher's constructive proof for functions defined on the unit hypercube.
 
-While universality guarantees that an approximation exists, it doesn't quantify how the error behaves as the approximating functions (splines) become more refined. The following theorem addresses the approximation rate achievable by replacing the ideal continuous functions in the Sprecher structure with finite-resolution splines.
+While universality guarantees that an approximation exists, it doesn't quantify how the error behaves as the approximating functions (splines) become more refined. The following lemmas and theorem address the approximation rate achievable by replacing the ideal continuous functions in the Sprecher structure with finite-resolution splines.
+
+\begin{lemma}[Single block approximation]\label{lem:single_block}
+Consider a single Sprecher block $T: \mathbb{R}^{d_{in}} \to \mathbb{R}^{d_{out}}$ defined by
+$$T(\mathbf{z})_q = \Phi\left(\sum_{i=1}^{d_{in}} \lambda_{i,q} \phi(z_i + \eta q) + q\right), \quad q = 0, \ldots, d_{out}-1$$
+where $\phi \in C^{k+1}(\mathbb{R})$ is monotonic, $\Phi \in C^{k+1}(\mathbb{R})$, $|\lambda_{i,q}| \leq \Lambda$, and $\eta > 0$.
+
+Suppose the input satisfies $\mathbf{z} \in \mathcal{B}_{in} := [-B_{in}, B_{in}]^{d_{in}}$. Define:
+\begin{itemize}
+\item $I_\phi := [-B_{in} - \eta(d_{out}-1), B_{in} + \eta(d_{out}-1)]$ (domain containing all possible arguments to $\phi$)
+\item $I_\Phi := [-R_{out}, R_{out}]$ where $R_{out} := \Lambda d_{in} \|\phi\|_{L^\infty(I_\phi)} + d_{out}$ (domain containing all possible arguments to $\Phi$)
+\end{itemize}
+
+Let $\hat{\phi}$ be a monotonic spline of degree $k$ with $G_\phi$ uniformly spaced knots on $I_\phi$, and $\hat{\Phi}$ be a spline of degree $k$ with $G_\Phi$ uniformly spaced knots on $I_\Phi$. If
+$$\|\phi - \hat{\phi}\|_{L^\infty(I_\phi)} \leq \frac{\|\phi^{(k+1)}\|_{L^\infty(I_\phi)}}{(k+1)!} \left(\frac{|I_\phi|}{G_\phi}\right)^{k+1}$$
+$$\|\Phi - \hat{\Phi}\|_{L^\infty(I_\Phi)} \leq \frac{\|\Phi^{(k+1)}\|_{L^\infty(I_\Phi)}}{(k+1)!} \left(\frac{|I_\Phi|}{G_\Phi}\right)^{k+1}$$
+then the approximate block $\hat{T}$ using $\hat{\phi}, \hat{\Phi}$ satisfies
+$$\sup_{\mathbf{z} \in \mathcal{B}_{in}} \|T(\mathbf{z}) - \hat{T}(\mathbf{z})\|_\infty \leq K_T \max\left\{\left(\frac{|I_\phi|}{G_\phi}\right)^{k+1}, \left(\frac{|I_\Phi|}{G_\Phi}\right)^{k+1}\right\}$$
+where 
+$$K_T := \frac{L_\Phi \Lambda d_{in} \|\phi^{(k+1)}\|_{L^\infty(I_\phi)} + \|\Phi^{(k+1)}\|_{L^\infty(I_\Phi)}}{(k+1)!}$$
+and $L_\Phi$ is the Lipschitz constant of $\Phi$ on $I_\Phi$.
+\end{lemma}
+
+\begin{proof}
+Fix $\mathbf{z} \in \mathcal{B}_{in}$ and $q \in \{0, \ldots, d_{out}-1\}$. Define:
+$$s_q := \sum_{i=1}^{d_{in}} \lambda_{i,q} \phi(z_i + \eta q) + q, \quad \hat{s}_q := \sum_{i=1}^{d_{in}} \lambda_{i,q} \hat{\phi}(z_i + \eta q) + q$$
+
+Since $z_i \in [-B_{in}, B_{in}]$ and $0 \leq \eta q \leq \eta (d_{out}-1)$, we have $z_i + \eta q \in I_\phi$. Thus:
+\begin{align*}
+|s_q - \hat{s}_q| &= \left|\sum_{i=1}^{d_{in}} \lambda_{i,q} [\phi(z_i + \eta q) - \hat{\phi}(z_i + \eta q)]\right|\\
+&\leq \sum_{i=1}^{d_{in}} |\lambda_{i,q}| \cdot \|\phi - \hat{\phi}\|_{L^\infty(I_\phi)}\\
+&\leq \Lambda d_{in} \cdot \frac{\|\phi^{(k+1)}\|_{L^\infty(I_\phi)}}{(k+1)!} \left(\frac{|I_\phi|}{G_\phi}\right)^{k+1}
+\end{align*}
+
+Moreover, $|s_q| \leq \Lambda d_{in} \|\phi\|_{L^\infty(I_\phi)} + |q| \leq \Lambda d_{in} \|\phi\|_{L^\infty(I_\phi)} + d_{out} = R_{out}$, so $s_q \in I_\Phi$. Similarly, since $\hat{\phi}$ is bounded on $I_\phi$ (as a continuous function on a compact set), $\hat{s}_q \in I_\Phi$ for sufficiently large $G_\phi$.
+
+Now:
+\begin{align*}
+|T(\mathbf{z})_q - \hat{T}(\mathbf{z})_q| &= |\Phi(s_q) - \hat{\Phi}(\hat{s}_q)|\\
+&\leq |\Phi(s_q) - \Phi(\hat{s}_q)| + |\Phi(\hat{s}_q) - \hat{\Phi}(\hat{s}_q)|\\
+&\leq L_\Phi |s_q - \hat{s}_q| + \|\Phi - \hat{\Phi}\|_{L^\infty(I_\Phi)}\\
+&\leq L_\Phi \Lambda d_{in} \frac{\|\phi^{(k+1)}\|_{L^\infty(I_\phi)}}{(k+1)!} \left(\frac{|I_\phi|}{G_\phi}\right)^{k+1} + \frac{\|\Phi^{(k+1)}\|_{L^\infty(I_\Phi)}}{(k+1)!} \left(\frac{|I_\Phi|}{G_\Phi}\right)^{k+1}
+\end{align*}
+
+Taking the maximum over $q$ and $\mathbf{z}$ gives the result.
+\end{proof}
+
+\begin{lemma}[Error composition]\label{lem:error_composition}
+Consider an $L$-block Sprecher network where block $\ell$ has approximation constant $K_{T^{(\ell)}}$ and Lipschitz constant $L_{T^{(\ell)}}$ (viewing the block as a function $T^{(\ell)}: \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell}$). Let $E_\ell$ denote the worst-case error after block $\ell$:
+$$E_\ell := \sup_{\mathbf{x} \in [0,1]^n} \|\mathbf{h}^{(\ell)}(\mathbf{x}) - \hat{\mathbf{h}}^{(\ell)}(\mathbf{x})\|_\infty$$
+
+Then:
+\begin{equation}\label{eq:error_composition_result}
+E_\ell \leq \sum_{j=1}^{\ell} \left(\prod_{m=j+1}^{\ell} L_{T^{(m)}}\right) K_{T^{(j)}} \varepsilon_j
+\end{equation}
+where $\varepsilon_j$ is the approximation error bound for block $j$ from Lemma \ref{lem:single_block}, and the empty product equals 1.
+\end{lemma}
+
+\begin{proof}
+We proceed by induction. For $\ell = 1$, we have $E_1 \leq K_{T^{(1)}} \varepsilon_1$ directly from Lemma \ref{lem:single_block}.
+
+Assume the result holds for $\ell-1$. For any $\mathbf{x} \in [0,1]^n$:
+\begin{align*}
+\|\mathbf{h}^{(\ell)}(\mathbf{x}) - \hat{\mathbf{h}}^{(\ell)}(\mathbf{x})\|_\infty &= \|T^{(\ell)}(\mathbf{h}^{(\ell-1)}(\mathbf{x})) - \hat{T}^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x}))\|_\infty\\
+&\leq \|T^{(\ell)}(\mathbf{h}^{(\ell-1)}(\mathbf{x})) - T^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x}))\|_\infty \\
+&\quad + \|T^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x})) - \hat{T}^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x}))\|_\infty\\
+&\leq L_{T^{(\ell)}} \|\mathbf{h}^{(\ell-1)}(\mathbf{x}) - \hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x})\|_\infty + K_{T^{(\ell)}} \varepsilon_\ell\\
+&\leq L_{T^{(\ell)}} E_{\ell-1} + K_{T^{(\ell)}} \varepsilon_\ell
+\end{align*}
+Substituting the induction hypothesis completes the proof.
+\end{proof}
 
 \begin{theorem}[Spline approximation rate for Sprecher Networks]\label{thm:sprecher_rate}
-Fix an integer $k\ge 1$ and a \emph{shift margin} $\Delta>0$.  
-Let $f:[0,1]^n\to\mathbb{R}$ be realised by an \emph{ideal} $L$‑block Sprecher network with scalar
-output
-$$f(\mathbf{x})=\sum_{q=0}^{d_L-1}h^{(L)}_q(\mathbf{x}),\qquad 
-\mathbf{h}^{(L)}:=T^{(L)}\circ T^{(L-1)}\circ\cdots\circ T^{(1)},$$
-where for every block $\ell=1,\dots ,L$
-$$\bigl(T^{(\ell)}(\mathbf{z})\bigr)_q=
-\Phi^{(\ell)}\!\Bigl(\sum_{i=1}^{d_{\ell-1}}\lambda^{(\ell)}_{i,q}\,
-      \phi^{(\ell)}\bigl(z_i+\eta^{(\ell)}q\bigr)+q\Bigr),\qquad 
-q=0,\dots ,d_\ell-1.$$
-
-Assume
+Let $f:[0,1]^n \to \mathbb{R}$ be realized by an ideal $L$-block Sprecher network with scalar output. Assume:
 \begin{enumerate}[label=\textup{(\roman*)}]
-\item \textbf{Smooth nonlinearities.}  
-      $\phi^{(\ell)},\Phi^{(\ell)}\in C^{\,k+1}$ for all $\ell$.
-\item \textbf{Shift bound.}  
-      $0<\eta^{(\ell)}\le\eta_{\max}$ for some constant $\eta_{\max}$, and consequently $0\le\eta^{(\ell)}q\le\eta^{(\ell)}(d_\ell-1)\le\eta_{\max}(d_{\max}-1)=:\Delta$ for every $q=0,\dots ,d_\ell-1$, where $d_{\max} = \max_{\ell} d_\ell$.
-      Hence each argument fed to $\phi^{(\ell)}$ lies in the fixed interval 
-      $I_\phi:=[-\Delta,\,1+\Delta]$ of length $L_\phi:=1+2\Delta$.
-\item \textbf{Compact propagation.}  
-      For every block there exists a compact box 
-      $\mathcal H^{(\ell)}=[-B_\ell,B_\ell]^{d_\ell}$ such that
-      $\mathbf{h}^{(\ell)}(\mathbf{x})\in\mathcal H^{(\ell)}$ for all
-      $\mathbf{x}\in[0,1]^n$.
-      Consequently each input to $\Phi^{(\ell)}$ lies in a finite interval
-      $I_\Phi^{(\ell)}:=[-R_\ell,R_\ell]$ for some $R_\ell>0$.
-\item \textbf{Lipschitz bounds.}  
-      $\phi^{(\ell)}$ and $\Phi^{(\ell)}$ are $L_{\phi}^{(\ell)}$– and
-      $L_{\Phi}^{(\ell)}$–Lipschitz, respectively, on $I_\phi$ and 
-      $I_\Phi^{(\ell)}$.
-\item \textbf{Weight bound.}  
-      $|\lambda^{(\ell)}_{i,q}|\le\Lambda$ for a constant $\Lambda>0$
-      independent of $i,q,\ell$.
+\item Each $\phi^{(\ell)}, \Phi^{(\ell)} \in C^{k+1}$ on their respective domains.
+\item Each block satisfies $|\lambda_{i,q}^{(\ell)}| \leq \Lambda$ and has shift parameter $\eta^{(\ell)} > 0$.
+\item The network propagates through bounded sets: $\mathbf{h}^{(\ell)}(\mathbf{x}) \in [-B_\ell, B_\ell]^{d_\ell}$ for all $\mathbf{x} \in [0,1]^n$.
 \end{enumerate}
 
-\smallskip
-For $G\in\mathbb N$ define the uniform mesh size
-$$h:=\frac{L_\phi}{G}=\frac{1+2\Delta}{G}.$$
-Construct a \emph{spline Sprecher network} $\hat f$ on the same architecture by
-replacing every $\phi^{(\ell)}$ and $\Phi^{(\ell)}$ with splines
-$\hat\phi^{(\ell)}$ on $I_\phi$ and
-$\hat\Phi^{(\ell)}$ on $I_\Phi^{(\ell)}$, respectively, of \emph{polynomial
-degree~$k$} and mesh size~$h$.
-Choose the splines so that
-$$\|\phi^{(\ell)}-\hat\phi^{(\ell)}\|_{\infty}\le
-   C_{\phi}^{(\ell)}\,h^{\,k+1},
-\qquad
-\|\Phi^{(\ell)}-\hat\Phi^{(\ell)}\|_{\infty}\le
-   C_{\Phi}^{(\ell)}\,h^{\,k+1},
-\qquad \ell=1,\dots ,L,$$
-and (for monotone $\phi^{(\ell)}$) $\hat\phi^{(\ell)}$ is monotone as well.
+For each block $\ell$, approximate $\phi^{(\ell)}$ and $\Phi^{(\ell)}$ with degree-$k$ splines using $G_\phi^{(\ell)}$ and $G_\Phi^{(\ell)}$ knots respectively. Then:
+$$\sup_{\mathbf{x} \in [0,1]^n} |f(\mathbf{x}) - \hat{f}(\mathbf{x})| \leq d_L \sum_{j=1}^{L} \left(\prod_{m=j+1}^{L} L_{T^{(m)}}\right) K_{T^{(j)}} \varepsilon_j$$
+where:
+\begin{itemize}
+\item $\varepsilon_j = \max\left\{\left(\frac{2B_{j-1} + 2\eta^{(j)}(d_j-1)}{G_\phi^{(j)}}\right)^{k+1}, \left(\frac{2R_j}{G_\Phi^{(j)}}\right)^{k+1}\right\}$
+\item $R_j = \Lambda d_{j-1} \|\phi^{(j)}\|_{L^\infty} + d_j$
+\item $K_{T^{(j)}} = \frac{L_{\Phi^{(j)}} \Lambda d_{j-1} \|\phi^{(j)}{}^{(k+1)}\|_{L^\infty} + \|\Phi^{(j)}{}^{(k+1)}\|_{L^\infty}}{(k+1)!}$
+\item $L_{T^{(m)}} = L_{\Phi^{(m)}} \Lambda d_{m-1} L_{\phi^{(m)}}$ (Lipschitz constant of block $m$)
+\end{itemize}
 
-\medskip\noindent
-Define the auxiliary constants
-$$M_\ell:=L_{\Phi}^{(\ell)}\Lambda d_{\ell-1}L_{\phi}^{(\ell)},\qquad
-K_\ell:=L_{\Phi}^{(\ell)}\Lambda d_{\ell-1}C_{\phi}^{(\ell)}+C_{\Phi}^{(\ell)},
-\qquad \ell=1,\dots ,L,$$
-and set
-$$C:=d_L\sum_{j=1}^{L}\Bigl(\prod_{p=j+1}^{L}M_p\Bigr)K_j.$$
-Then the approximation error of $\hat f$ satisfies
-$$\sup_{\mathbf{x}\in[0,1]^n}|f(\mathbf{x})-\hat f(\mathbf{x})|
-\;\le\;
-C\,h^{\,k+1}
-\;=\;
-C\,(1+2\Delta)^{\,k+1}G^{-(k+1)}.$$
-The constant $C$ depends on
-$n,\{d_\ell\},L,\Lambda,k,\Delta$ and the listed Lipschitz and spline
-constants, but is \emph{independent of $G$}.
+If all blocks use the same number of knots $G$ (i.e., $G_\phi^{(\ell)}=G_\Phi^{(\ell)}=G$ for all $\ell$), the error scales as $O(G^{-(k+1)})$ with a constant that may grow exponentially in $L$.
 \end{theorem}
 
 \begin{proof}
-For each layer $\ell=0,\dots ,L$ let
-$\mathbf{h}^{(\ell)}$ and $\hat{\mathbf{h}}^{(\ell)}$ denote the activations of the
-ideal and spline networks, respectively, and define the error vector
-$\mathbf e^{(\ell)}:=\mathbf h^{(\ell)}-\hat{\mathbf h}^{(\ell)}$ with
-$$E_\ell:=\sup_{\mathbf{x}\in[0,1]^n}\|\mathbf e^{(\ell)}(\mathbf{x})\|_\infty.$$
-Clearly $E_0=0$.
+By Lemma \ref{lem:single_block}, each block $\ell$ can be approximated with error bounded by $K_{T^{(\ell)}} \varepsilon_\ell$. By Lemma \ref{lem:error_composition}, the error after $L$ blocks is bounded by the sum given in \eqref{eq:error_composition_result}.
 
-\paragraph{Base layer ($\ell=1$).}
-Write $y_{i,q}=x_i+\eta^{(1)}q\in I_\phi$ and set
-$$z_q   =\sum_{i=1}^{d_0}\lambda^{(1)}_{i,q}\phi^{(1)}(y_{i,q})+q,
-\qquad
-\hat z_q=\sum_{i=1}^{d_0}\lambda^{(1)}_{i,q}\hat\phi^{(1)}(y_{i,q})+q.$$
-Because $\Phi^{(1)}$ is $L_{\Phi}^{(1)}$‑Lipschitz on
-$I_\Phi^{(1)}$, 
-$$|e_q^{(1)}|\le
-L_{\Phi}^{(1)}|z_q-\hat z_q|+
-\|\Phi^{(1)}-\hat\Phi^{(1)}\|_{\infty}.$$
-Using the weight bound (v) and the spline estimate for $\phi^{(1)}$,
-$$|z_q-\hat z_q|
-\le\sum_{i=1}^{d_0}\!|\lambda^{(1)}_{i,q}|\,
-      \|\phi^{(1)}-\hat\phi^{(1)}\|_{\infty}
-\le d_0\Lambda\,C_{\phi}^{(1)}h^{\,k+1},$$
-so that
-$$E_1\le
-\bigl(L_{\Phi}^{(1)}\Lambda d_0C_{\phi}^{(1)}+C_{\Phi}^{(1)}\bigr)\,h^{\,k+1}
-=K_1h^{\,k+1}.$$
-
-\paragraph{Induction step.}
-Assume $E_{\ell-1}\le\tilde C_{\ell-1}h^{\,k+1}$ for some
-$\ell\ge2$.  
-For $q=0,\dots ,d_\ell-1$ put
-$$y_{i,q}=h^{(\ell-1)}_i+\eta^{(\ell)}q,\qquad
-\hat y_{i,q}=\hat h^{(\ell-1)}_i+\eta^{(\ell)}q,$$
-so $y_{i,q},\hat y_{i,q}\in I_\phi$.  As in the base layer,
-$$E_\ell\le M_\ell E_{\ell-1}+K_\ell h^{\,k+1},$$
-with $M_\ell,K_\ell$ as defined above.  Unfolding the recursion from
-$E_0=0$ yields
-$$E_L\le h^{\,k+1}\sum_{j=1}^{L}\Bigl(\prod_{p=j+1}^{L}M_p\Bigr)K_j.$$
-
-\paragraph{Output aggregation.}
-For any $\mathbf{x}\in[0,1]^n$
-$$|f(\mathbf{x})-\hat f(\mathbf{x})|
-   =\Bigl|\sum_{q=0}^{d_L-1}e^{(L)}_q(\mathbf{x})\Bigr|
-   \le d_L E_L.$$
-Multiplying by $d_L$ produces the stated constant $C$, completing the
-proof.
+For the scalar output case, we have:
+\begin{align*}
+|f(\mathbf{x}) - \hat{f}(\mathbf{x})| &= \left|\sum_{q=0}^{d_L-1} h_q^{(L)}(\mathbf{x}) - \sum_{q=0}^{d_L-1} \hat{h}_q^{(L)}(\mathbf{x})\right|\\
+&\leq \sum_{q=0}^{d_L-1} |h_q^{(L)}(\mathbf{x}) - \hat{h}_q^{(L)}(\mathbf{x})|\\
+&\leq d_L \|\mathbf{h}^{(L)}(\mathbf{x}) - \hat{\mathbf{h}}^{(L)}(\mathbf{x})\|_\infty\\
+&\leq d_L E_L
+\end{align*}
+Substituting the bound for $E_L$ gives the result.
 \end{proof}
 
+\begin{remark}[Monotonic spline approximation]
+The approximation rates in Lemma \ref{lem:single_block} assume we can achieve standard spline approximation rates while maintaining monotonicity for $\phi^{(\ell)}$. This can be achieved using:
+\begin{itemize}
+\item Positive B-splines of degree $k$ with appropriate knot sequences.
+\item Bernstein polynomial approximation followed by degree elevation.
+\item The specific log-space parameterization used in implementation, which maintains monotonicity by construction.
+\end{itemize}
+Each approach may have slightly different constants but achieves the same $O(G^{-(k+1)})$ rate for smooth monotonic functions.
+\end{remark}
+
 \begin{remark}[Dependence on depth]
-Note that the constant $C$ in the error bound depends on the layer dimensions $d_\ell$ and the Lipschitz constants $L_\phi^{(\ell)}, L_\Phi^{(\ell)}$ through the factors $M_\ell$. As shown in the proof, the error accumulates multiplicatively through the layers via these factors. Consequently, if the $M_\ell$ values (representing error amplification per layer) are consistently greater than 1, the constant $C$ can grow exponentially with the network depth $L$. This highlights a potential challenge for approximation with very deep networks, similar to error bounds seen in other deep learning contexts.
+The constant in the error bound depends on the layer dimensions $d_\ell$ and the Lipschitz constants $L_\phi^{(\ell)}, L_\Phi^{(\ell)}$ through the factors $L_{T^{(m)}}$. If these factors are consistently greater than 1, the constant can grow exponentially with depth $L$. This highlights a potential challenge for approximation with very deep networks, similar to error bounds seen in other deep learning contexts.
 \end{remark}
 
 \subsection{Vector-valued functions and deeper extensions}
@@ -415,12 +410,13 @@ For vector-valued functions $f: [0,1]^n \to \mathbb{R}^m$ with $m>1$, our constr
 \begin{conjecture}[Vector-valued Sprecher Representation]\label{conj:vector}
 Let $n, m \in \mathbb{N}$ with $m > 1$, and let $f:[0,1]^n \to \mathbb{R}^m$ be any continuous function. Then for any $\epsilon > 0$, there exists a Sprecher Network with architecture $n \to [d_1] \to m$ (using $L=1$ hidden block of width $d_1 \ge 2n+1$ and one output block), with sufficiently flexible continuous splines $\phi^{(1)}, \Phi^{(1)}, \phi^{(2)}, \Phi^{(2)}$ ($\phi^{(1)}, \phi^{(2)}$ monotonic) and appropriate parameters $\lambda^{(1)}, \eta^{(1)}, \lambda^{(2)}, \eta^{(2)}$, such that the network output $\hat{f}(\mathbf{x})$ satisfies $\sup_{\mathbf{x} \in [0,1]^n} \|f(\mathbf{x}) - \hat{f}(\mathbf{x})\|_{\mathbb{R}^m} < \epsilon$.
 \end{conjecture}
-Here, the output block $T^{(2)}$ maps $\mathbb{R}^{d_1} \to \mathbb{R}^m$. A minimal choice might be $d_1 = 2n+1$.
 
 Furthermore, stacking multiple Sprecher blocks ($L > 1$) creates deeper networks. It is natural to hypothesize that these deeper networks also possess universal approximation capabilities, potentially offering advantages in efficiency or learning dynamics for certain function classes, similar to depth advantages observed in MLPs.
+
 \begin{conjecture}[Deep universality]\label{conj:deep_universal}
 For any input dimension $n \ge 1$, any number of hidden blocks $L \ge 1$, and any continuous function $f: [0,1]^n \to \mathbb{R}$ (or $f: [0,1]^n \to \mathbb{R}^m$), and any $\epsilon > 0$, there exists a Sprecher Network with architecture $n \to [d_1, \dots, d_L] \to 1$ (or $\to m$), provided the hidden widths $d_1, \dots, d_L$ are sufficiently large (e.g., perhaps $d_\ell \ge 2 d_{\ell-1} + 1$ is sufficient, although likely not necessary), with sufficiently flexible continuous splines $\phi^{(\ell)}, \Phi^{(\ell)}$ and appropriate parameters $\lambda^{(\ell)}, \eta^{(\ell)}$, such that the network output $\hat{f}(\mathbf{x})$ satisfies $\sup_{\mathbf{x} \in [0,1]^n} |f(\mathbf{x}) - \hat{f}(\mathbf{x})| < \epsilon$ (or the vector norm equivalent).
 \end{conjecture}
+
 Proving Conjectures \ref{conj:vector} and \ref{conj:deep_universal} rigorously would require analyzing the compositional properties and ensuring that the range of intermediate representations covers the domain needed by subsequent blocks, potentially involving careful control over the spline ranges and the effect of the shifts $\eta^{(\ell)}$.
 
 \section{Implementation and training details}\label{sec:implementation}
