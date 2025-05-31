@@ -12,11 +12,10 @@ import matplotlib.gridspec as gridspec
 ##############################################################################
 
 # 'architecture' defines the hidden-layer sizes.
-architecture = [17, 17, 17, 17] # Works decently for a function of two variables
-# architecture = [10] # Good for a function of one variable
+architecture = [10, 10, 10, 10] # Four hidden layers with 10 nodes each
 
 # Total training epochs
-TOTAL_EPOCHS = 3000
+TOTAL_EPOCHS = 4000
 
 # Whether to save the final plot
 SAVE_FINAL_PLOT = True
@@ -39,13 +38,13 @@ PHI_OUT_RANGE = (-10.0, 10.0)
 TRAIN_PHI_RANGE = True
 
 # Number of knots (control points defining spline segments) for the inner monotonic splines (φ)
-PHI_KNOTS = 300
+PHI_KNOTS = 100
 
 # Number of knots for the outer general splines (𝛷)
-PHI_CAPITAL_KNOTS = 200
+PHI_CAPITAL_KNOTS = 100
 
 # Q-values scaling factor (set to 1.0 for original Sprecher theory, 0.1 for optimization)
-Q_VALUES_FACTOR = 0.1  # Set to 1.0 to get a regular Sprecher network
+Q_VALUES_FACTOR = 1.0  # Set to 1.0 to get a regular Sprecher network
 
 # Whether to use residual connections (ResNet-style skip connections)
 USE_RESIDUAL_WEIGHTS = True  # Set to False for a regular Sprecher network
@@ -59,18 +58,15 @@ USE_ADVANCED_SCHEDULER = True  # Set to False for original training strategy
 
 def target_function(x):
     # 1D scalar function, example 1:
-    # TOTAL_EPOCHS = 50000 is enough for a rough approximation
     # return (x[:, [0]] - 3/10)**5 - (x[:, [0]] - 1/3)**3 + (1/5)*(x[:, [0]] - 1/10)**2
     
-    # 1D scalar function, example 2 (used to create Figure 1):
-    # Set e.g. architecture = [5], PHI_IN_RANGE = (-0.1, 4.1), PHI_OUT_RANGE = (-0.8, 1.1), TRAIN_PHI_RANGE = False
+    # 1D scalar function, example 2 (used to create Figure 1 with quite extended training and no residual weights or scheduler):
     # return torch.sin((torch.exp(x[:, [0]]) - 1.0) / (2.0 * (torch.exp(torch.tensor(1.0, device=x.device)) - 1.0))) + torch.sin(1.0 - (4.0 * (torch.exp(x[:, [0]] + 0.1) - 1.0)) / (5.0 * (torch.exp(torch.tensor(1.0, device=x.device)) - 1.0))) + torch.sin(2.0 + (torch.exp(x[:, [0]] + 0.2) - 1.0) / (torch.exp(torch.tensor(1.0, device=x.device)) - 1.0)) + torch.sin(3.0 + (torch.exp(x[:, [0]] + 0.3) - 1.0) / (5.0 * (torch.exp(torch.tensor(1.0, device=x.device)) - 1.0))) + torch.sin(4.0 - (6.0 * (torch.exp(x[:, [0]] + 0.4) - 1.0)) / (5.0 * (torch.exp(torch.tensor(1.0, device=x.device)) - 1.0)))
     
     # 2D scalar function example:
     return torch.exp(torch.sin(11 * x[:, [0]])) + 3 * x[:, [1]] + 4 * torch.sin(8 * x[:, [1]])
 
     # 2D vector function example
-    # Try setting e.g. architecture = [20, 20, 20, 20, 20], TOTAL_EPOCHS = 100000, PHI_KNOTS = PHI_CAPITAL_KNOTS = 500 for this example:
     # return torch.cat([
     #     (torch.exp(torch.sin(torch.pi * x[:, [0]]) + x[:, [1]]**2) - 1) / 7,
     #     (1/4)*x[:, [1]] + (1/5)*x[:, [1]]**2 - x[:, [0]]**3 + (1/5)*torch.sin(7*x[:, [0]])
@@ -317,9 +313,20 @@ class SprecherLayerBlock(nn.Module):
         
         # Residual connection weight (learnable) - only create if USE_RESIDUAL_WEIGHTS is True
         if USE_RESIDUAL_WEIGHTS:
-            self.residual_weight = nn.Parameter(torch.tensor(0.1))
+            if d_in == d_out:
+                # When dimensions match, use a simple scalar weight
+                self.residual_weight = nn.Parameter(torch.tensor(0.1))
+                self.residual_projection = None
+            else:
+                # When dimensions don't match, use a projection matrix
+                self.residual_weight = None
+                self.residual_projection = nn.Linear(d_in, d_out, bias=False)
+                # Initialize projection to small values for stability
+                with torch.no_grad():
+                    self.residual_projection.weight.data *= 0.1
         else:
             self.residual_weight = None
+            self.residual_projection = None
     
     def forward(self, x, x_original=None):
         # x: (batch_size, d_in)
@@ -340,9 +347,14 @@ class SprecherLayerBlock(nn.Module):
         # Pass through the general outer spline 𝛷
         activated = self.Phi(s)
         
-        # Add residual connection if dimensions match and USE_RESIDUAL_WEIGHTS is True
-        if USE_RESIDUAL_WEIGHTS and x_original is not None and x_original.shape[1] == activated.shape[1]:
-            activated = activated + self.residual_weight * x_original
+        # Add residual connection if USE_RESIDUAL_WEIGHTS is True
+        if USE_RESIDUAL_WEIGHTS and x_original is not None:
+            if self.residual_weight is not None:
+                # Dimensions match, use scalar weight
+                activated = activated + self.residual_weight * x_original
+            elif self.residual_projection is not None:
+                # Dimensions don't match, use projection
+                activated = activated + self.residual_projection(x_original)
         
         if self.is_final:
             # Sum outputs if this is the final block (produces scalar output)
@@ -406,11 +418,10 @@ class SprecherMultiLayerNetwork(nn.Module):
     def forward(self, x):
         x_original = x
         for i, layer in enumerate(self.layers):
-            # Pass original input for residual connections where dimensions match
-            if USE_RESIDUAL_WEIGHTS and (i == 0 or x_original.shape[1] != x.shape[1]):
-                x = layer(x, None)
-            elif USE_RESIDUAL_WEIGHTS:
+            # Pass original input for residual connections
+            if USE_RESIDUAL_WEIGHTS:
                 x = layer(x, x_original)
+                x_original = x  # Update x_original for next layer
             else:
                 x = layer(x, None)
         # Apply output scaling and bias
@@ -515,7 +526,11 @@ def train_network(target_function, architecture, total_epochs=100000, print_ever
     # Count additional architectural parameters
     residual_params = 0
     if USE_RESIDUAL_WEIGHTS:
-        residual_params = sum(1 for layer in model.layers if hasattr(layer, 'residual_weight') and layer.residual_weight is not None)
+        for layer in model.layers:
+            if hasattr(layer, 'residual_weight') and layer.residual_weight is not None:
+                residual_params += 1
+            elif hasattr(layer, 'residual_projection') and layer.residual_projection is not None:
+                residual_params += layer.residual_projection.weight.numel()
     output_params = 2  # output_scale and output_bias
     
     if TRAIN_PHI_RANGE:
@@ -680,8 +695,11 @@ def train_network(target_function, architecture, total_epochs=100000, print_ever
         print(f"Block {idx}: lambdas shape = {tuple(layer.lambdas.shape)}")
         print(f"Block {idx}: lambdas =")
         print(layer.lambdas.detach().cpu().numpy())
-        if USE_RESIDUAL_WEIGHTS and hasattr(layer, 'residual_weight') and layer.residual_weight is not None:
-            print(f"Block {idx}: residual_weight = {layer.residual_weight.item():.6f}")
+        if USE_RESIDUAL_WEIGHTS:
+            if hasattr(layer, 'residual_weight') and layer.residual_weight is not None:
+                print(f"Block {idx}: residual_weight = {layer.residual_weight.item():.6f}")
+            elif hasattr(layer, 'residual_projection') and layer.residual_projection is not None:
+                print(f"Block {idx}: residual_projection weight shape = {tuple(layer.residual_projection.weight.shape)}")
         print()
     
     return model, losses, model.layers
