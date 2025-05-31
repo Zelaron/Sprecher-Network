@@ -71,7 +71,7 @@ $$ d_0 \to d_1 \to \cdots \to d_{L-1} \to d_L, $$
 where $d_0=d_{\mathrm{in}}$ is the input dimension, and $d_L$ is the dimension of the final hidden representation before potential aggregation or final mapping. This multi-block composition provides a deeper analog of the KAS construction, aiming for potentially enhanced expressive power or efficiency for complex compositional functions. However, it's important to note that rigorous universality is established only for a single block with scalar output (directly from Sprecher's theorem); the universality of networks with \(L>1\) blocks or vector-valued outputs remains conjectural (see Section~\ref{sec:universality}).
 
 \begin{definition}[Network notation]
-Throughout this paper, we denote Sprecher Network architectures using arrow notation of the form $d_{\mathrm{in}}\to[d_1,d_2,\ldots,d_L]\to d_{\mathrm{out}}$, where $d_{\mathrm{in}}$ is the input dimension, $[d_1,d_2,\ldots,d_L]$ represents the hidden layer dimensions (widths), and $d_{\mathrm{out}}$ is the final output dimension of the network (after potential summation). For example, $2\to[5,3,8]\to1$ describes a network with 2-dimensional input, three hidden layers of widths 5, 3, and 8 respectively, and a scalar output (implying the final block's outputs of dimension 8 are summed). $2\to[5,3]\to4$ describes a network with 2-dimensional input, two hidden layers of widths 5 and 3, and a 4-dimensional vector output (implying an additional output block maps from dimension 3 to 4 without summation). When input or output dimensions are clear from context, we may use the abbreviated notation $[d_1,d_2,\ldots,d_L]$ to focus on the hidden layer structure.
+Throughout this paper, we denote Sprecher Network architectures using arrow notation of the form $d_{\mathrm{in}}\to[d_1,d_2,\ldots,d_L]\to d_{\mathrm{out}}$, where $d_{\mathrm{in}}$ is the input dimension, $[d_1,d_2,\ldots,d_L]$ represents the hidden layer dimensions (widths), and $d_{\mathrm{out}}$ is the final output dimension of the network. For scalar output ($d_{\mathrm{out}}=1$), the final block's outputs are summed. For vector output ($d_{\mathrm{out}}>1$), an additional non-summed block maps from $d_L$ to $d_{\mathrm{out}}$. For example, $2\to[5,3,8]\to1$ describes a network with 2-dimensional input, three hidden layers of widths 5, 3, and 8 respectively, and a scalar output (implying the final block's outputs of dimension 8 are summed). $2\to[5,3]\to4$ describes a network with 2-dimensional input, two hidden layers of widths 5 and 3, and a 4-dimensional vector output (implying an additional output block maps from dimension 3 to 4 without summation). When input or output dimensions are clear from context, we may use the abbreviated notation $[d_1,d_2,\ldots,d_L]$ to focus on the hidden layer structure.
 \end{definition}
 
 \section{Core architectural details}
@@ -81,14 +81,14 @@ In our architecture, the fundamental building unit is the \emph{Sprecher block}.
 A Sprecher block transforms an input vector $\mathbf{x} \in \mathbb{R}^{d_{\mathrm{in}}}$ to an output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$. This transformation is implemented using the following shared, learnable components specific to that block:
 \begin{itemize}
     \item \textbf{Monotonic spline $\phi(\cdot)$:} An increasing piecewise-linear function, typically defined on a fixed interval like $[0,1]$. This function is shared across all input-output connections within the block and its coefficients are learnable. (Strict?) Monotonicity is enforced during training (see Section \ref{sec:implementation}).
-    \item \textbf{General spline $\Phi(\cdot)$:} A piecewise-linear function (without monotonicity constraints) defined on a potentially wider interval (e.g., $[-10, 20]$), which might be learnable or fixed depending on configuration. This function is also shared across the block and its coefficients are learnable.
+    \item \textbf{General spline $\Phi(\cdot)$:} A piecewise-linear function (without monotonicity constraints) defined on a potentially wider interval. The domain and codomain can be either fixed (e.g., $[-10, 10]$) or made trainable through range parameters. When trainable, the range is parameterized by a center and radius for both domain $(d_c, d_r)$ and codomain $(c_c, c_r)$, allowing the spline to adapt its input/output ranges during training. This function is also shared across the block and its coefficients are learnable.
     \item \textbf{Mixing weights matrix $\lambda$:} A matrix $\{\lambda_{i,q}\}$ of size $d_{\mathrm{in}} \times d_{\mathrm{out}}$, whose entries are learnable. These weights linearly combine the contributions from different input dimensions after transformation by $\phi$.
     \item \textbf{Shift parameter $\eta$:} A learnable scalar $\eta > 0$. This parameter controls the magnitude of the input shift $x_i + \eta q$, which depends on the output index $q$.
 \end{itemize}
 
 Concretely, given an input vector $\mathbf{x} = (x_1, \dots, x_{d_{\mathrm{in}}}) \in \mathbb{R}^{d_{\mathrm{in}}}$, a single Sprecher block (indexed implicitly by $\ell$, with parameters $\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)}$) computes the $q$-th component of its output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$ (where $q=0, \dots, d_{\mathrm{out}}-1$) via:
-$$ h_q = \text{Block}_{\phi,\Phi,\eta,\lambda}(\mathbf{x})_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\mathrm{in}}}\lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(x_i+\eta^{(\ell)}\,q\Bigr) + q\Biggr). $$
-Note the explicit inclusion of the outer shift $q$ inside the argument of $\Phi$, directly mirroring Sprecher's formula.
+$$ h_q = \text{Block}_{\phi,\Phi,\eta,\lambda}(\mathbf{x})_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\mathrm{in}}}\lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(x_i+\eta^{(\ell)}\,q\Bigr) + \alpha q\Biggr),$$
+where $\alpha$ is a scaling factor (set to 1 for the original Sprecher construction, as is done in the rest of this paper, but it can be adjusted for optimization purposes). In practice, setting $\alpha = 1$ can lead to initial training plateaus, particularly for deeper networks, so smaller values (e.g., $\alpha = 0.1$) may improve optimization dynamics.
 
 In a network with multiple layers, each Sprecher block (indexed by $\ell=1, \dots, L$ or $L+1$) uses its own independent set of shared parameters $(\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)})$. The block operation implements a specific form of transformation: each input coordinate $x_i$ is first shifted by an amount depending on the output index $q$ and the shared shift parameter $\eta^{(\ell)}$, then passed through the shared monotonic spline $\phi^{(\ell)}$. The results are linearly combined using the learnable mixing weights $\lambda^{(\ell)}_{i,q}$, shifted again by the output index $q$, and finally passed through the shared general spline $\Phi^{(\ell)}$. Stacking these blocks creates a deep, compositional representation.
 
@@ -100,7 +100,7 @@ Let the input to the network be $\mathbf{h}^{(0)} = \mathbf{x} \in \mathbb{R}^{d
     \label{eq:SN}\mathbf{h}^{(\ell)}_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\ell-1}} \lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(\mathbf{h}^{(\ell-1)}_i+\eta^{(\ell)}\,q\Bigr) + q\Biggr),\quad q=0,\dots,d_\ell-1.
 \end{align}
 
-The composition of these blocks and the final output generation depend on the desired final output dimension $m=d_{\mathrm{out}}$:
+The composition of these blocks and the final output generation depend on the desired final output dimension $m=d_{\mathrm{out}}$. Additionally, the network includes learnable output scaling parameters $\gamma$ (scale) and $\beta$ (bias) applied to the final output, such that the actual network output is $\gamma \cdot f(\mathbf{x}) + \beta$, where $f(\mathbf{x})$ is the output from the block composition described below. These parameters are particularly important for optimization: $\beta$ is typically initialized to the mean of the target values for faster convergence, while $\gamma$ is often initialized to a small value (e.g., 0.1) to prevent large initial outputs:
 
 \paragraph{(a) Scalar output ($m=1$):}
 The network consists of exactly $L$ Sprecher blocks. The output of the final block, $\mathbf{h}^{(L)} \in \mathbb{R}^{d_L}$, is aggregated by summation to yield the scalar output:
@@ -121,7 +121,7 @@ f(\mathbf{x}) = \mathbf{y} = \Bigl(T^{(L+1)} \circ T^{(L)} \circ \cdots \circ T^
 In this configuration, the network uses $L+1$ blocks and involves $2(L+1)$ shared spline functions. The extra block serves as a trainable output mapping layer, transforming the final hidden representation $\mathbf{h}^{(L)}$ into the desired $m$-dimensional output vector.
 
 \medskip
-In summary: for $L \ge 1$ hidden layers, a scalar-output SN uses $L$ blocks and $2L$ shared splines. A vector-output SN (with $m>1$) uses $L+1$ blocks and $2(L+1)$ shared splines. This structure provides a natural extension of Sprecher's original scalar formula to the vector-valued setting.
+In summary: for $L \ge 1$ hidden layers, a scalar-output SN uses $L$ blocks and $2L$ shared splines (plus potentially $2$ output scaling parameters). A vector-output SN (with $m>1$) uses $L+1$ blocks and $2(L+1)$ shared splines (plus potentially $2m$ output scaling parameters if applied per dimension). This structure provides a natural extension of Sprecher's original scalar formula to the vector-valued setting.
 
 % Perhaps the illustration below is a bit too repetitive?
 \medskip
@@ -233,7 +233,6 @@ Table \ref{tab:arch_comparison} summarizes the key distinctions:
 \end{itemize}
 This comparison clarifies that SNs represent a distinct architecture, related to but not a direct subset of KANs, primarily due to the presence of mixing weights ($\lambda$), the specific shift structure ($\eta q, q$), and the block-level sharing of splines.
 
-{\color{blue}
 Here, we provide a precise comparison between LANs and SNs. More specifically, we argue that SNs correspond to LANs with (almost) fixed biases that have dependencies between pairs of neighboring layers and with the weights in every other layer constrained to the identity.
 
 A LAN is an MLP with learnable activation. More precisely, the model is defined as: 
@@ -245,15 +244,10 @@ where $A^{(k)} \colon \mathbb{R}^{d_{k-1}} \rightarrow \mathbb{R}^{d_k}$ is an a
     An SN (cf. \eqref{eq:defsn}) is a LAN, where: 
     \begin{itemize}
         \item in odd layers $k = 2\ell - 1$, the weight matrix $W^{(k)} \in \mathbb{R}^{d_\ell d_{\ell-1} \times d_{\ell-1}}$ is fixed to  $[I | \cdots | I]^\top$, where $I$ is the $d_{\ell-1} \times d_{\ell-1}$ identity matrix, the bias vector has only one learnable parameter $\eta^{(\ell)}$ and is structured as $b^{(k)} = \eta^{(\ell)}(0,\ldots,0, 1, \ldots, 1, \ldots, d_{\ell}-1, \ldots, d_{\ell}-1)^\top \in \mathbb{R}^{d_\ell d_{\ell-1}}$, and the activation is $\sigma^{(k)} = \phi^{(\ell)}$, 
-        \item in even layers $k = 2\ell $, the learnable weight matrix $W^{(k)} \in \mathbb{R}^{d_\ell \times d_\ell d_{\ell-1}}$ is structured as
+\item in even layers $k = 2\ell $, the learnable weight matrix $W^{(k)} \in \mathbb{R}^{d_\ell \times d_\ell d_{\ell-1}}$ is block-diagonal with blocks of size $1 \times d_{\ell-1}$:
         \begin{align*}
-            \begin{bmatrix}
-                \lambda_{1,0}^{(\ell)} & \cdots & \lambda_{d_{\ell-1},0}^{(\ell)} & 0 &&& \cdots &&&0 \\
-               0  &\cdots & 0 & \lambda_{1,1}^{(\ell)} & \cdots & \lambda_{d_{\ell-1},1}^{(\ell)} & 0 && \cdots & 0 \\
-               &&&&&& \ddots \\
-               0 &&&\cdots &&&0&\lambda_{1,d_\ell-1}^{(\ell)} & \cdots & \lambda_{d_{\ell-1},d_\ell-1}^{(\ell)}
-            \end{bmatrix},
-        \end{align*} 
+            W^{(k)} = \text{diag}\left([\lambda_{1,0}^{(\ell)}, \ldots, \lambda_{d_{\ell-1},0}^{(\ell)}], [\lambda_{1,1}^{(\ell)}, \ldots, \lambda_{d_{\ell-1},1}^{(\ell)}], \ldots, [\lambda_{1,d_\ell-1}^{(\ell)}, \ldots, \lambda_{d_{\ell-1},d_\ell-1}^{(\ell)}]\right),
+        \end{align*}
         the bias is fixed to $b^{(k)} = (0,\ldots, d_\ell-1)^\top \in \mathbb{R}^{d_\ell}$, and the activation activation is $\sigma^{(k)} = \Phi^{(\ell)}$. 
     \end{itemize}
 \end{prop}
@@ -266,19 +260,15 @@ Moreover, in Sprecher's construction, $\eta$ can be chosen as universal constant
 %    \item open problem: theoretical comparison of the models, e.g., dimension of their neuromanifolds? (hard in general, but possible in concrete example)
 \begin{figure}[h!]
     \centering  
-{\color{blue}
 \begin{tikzcd}
     & \textnormal{LAN} \\
     \textnormal{MLP} && \textnormal{SN}
     \arrow[hook, from=2-1, to=1-2]
     \arrow[hook', from=2-3, to=1-2]
 \end{tikzcd}
-    \caption{{\color{blue}Diagram illustrating the dependencies between the models, in terms of learnable parameters. MLPs are LANs with fixed activation function, while SNs are LANs with a particular parameter structure (Proposition \ref{prop:SNareLAN}).}}
+    \caption{Diagram illustrating the dependencies between the models, in terms of learnable parameters. MLPs are LANs with fixed activation function, while SNs are LANs with a particular parameter structure (Proposition \ref{prop:SNareLAN}).}
     \label{fig:enter-label}
-}
 \end{figure}
-
-}
 
 
 \section{Theoretical aspects and universality}\label{sec:universality}
@@ -312,7 +302,7 @@ Assume
 \item \textbf{Smooth nonlinearities.}  
       $\phi^{(\ell)},\Phi^{(\ell)}\in C^{\,k+1}$ for all $\ell$.
 \item \textbf{Shift bound.}  
-      $0\le\eta^{(\ell)}q\le\Delta$ for every $q=0,\dots ,d_\ell-1$.
+      $0<\eta^{(\ell)}\le\eta_{\max}$ for some constant $\eta_{\max}$, and consequently $0\le\eta^{(\ell)}q\le\eta^{(\ell)}(d_\ell-1)\le\eta_{\max}(d_{\max}-1)=:\Delta$ for every $q=0,\dots ,d_\ell-1$, where $d_{\max} = \max_{\ell} d_\ell$.
       Hence each argument fed to $\phi^{(\ell)}$ lies in the fixed interval 
       $I_\phi:=[-\Delta,\,1+\Delta]$ of length $L_\phi:=1+2\Delta$.
 \item \textbf{Compact propagation.}  
@@ -442,8 +432,8 @@ Our reference implementation utilizes piecewise-linear splines for both $\phi^{(
     \item \textbf{Inner spline $\phi^{(\ell)}$:}
         \begin{itemize}
             \item \textbf{Domain/range:} Typically fixed domain $[0, 1]$ and range $[0, 1]$.
-            \item \textbf{Monotonicity:} Enforced during training. One effective method is to parameterize the learnable coefficients $c_k$ (heights at knots) indirectly. Let $h_k$ be the actual height at knot $k$. We can set $h_0 = \text{learnable}_0$ and $h_k = h_{k-1} + \text{softplus}(\text{learnable}_k)$ for $k > 0$, where ``learnable'' are the unconstrained parameters optimized by gradient descent, and softplus ensures positive increments. Alternatively, sorting the coefficients after each gradient update can be used, though care must be taken with non-strict inequalities and potential gradient issues.
-            \item \textbf{Initialization:} Initialized to be roughly linear and increasing within its range.
+            \item \textbf{Monotonicity:} Enforced during training through a log-space parameterization. The implementation uses log-increments as the learnable parameters: $\text{log\_increments} = [\ell_0, \ell_1, ..., \ell_{G-1}]$. The actual spline coefficients are computed as: increments $= \text{softplus}(\ell_i)$, followed by cumulative sum and normalization to $[0,1]$, then scaling to the output range. This approach ensures strict monotonicity throughout training without requiring explicit constraints or post-processing operations like sorting, and provides better gradient flow than alternative methods.
+            \item \textbf{Initialization:} Initialized to be roughly linear and increasing within its range. In practice, the log-space parameterization (using `log\_increments' with softplus activation) ensures strict monotonicity throughout training without requiring explicit constraints or post-processing.
         \end{itemize}
     \item \textbf{Outer Spline $\Phi^{(\ell)}$:}
         \begin{itemize}
@@ -487,8 +477,9 @@ Let's assume a network of depth $L$ (meaning $L$ hidden layers, thus $L$ blocks 
             \item Shared splines $\phi^{(\ell)}, \Phi^{(\ell)}$: $2 \times O(G) = O(G)$ parameters per block, \emph{independent} of $N$.
             \item Shift parameter $\eta^{(\ell)}$: $O(1)$ parameter per block.
         \end{itemize}
-        Summing over $L$ (or $L+1$) blocks, the total parameter count scales approximately as:
-        $$ O(LN^2 + LG).$$
+Summing over $L$ (or $L+1$) blocks, plus output scaling parameters and potential residual connection weights, the total parameter count scales approximately as:
+        $$ O(LN^2 + LG + L + m).$$
+        where the $L$ term accounts for shift parameters $\eta^{(\ell)}$, the $m$ term accounts for output scaling parameters (2 for scalar output, $2m$ for vector output if applied per dimension), and residual connection parameters are already included in the $LN^2$ term when dimensions differ or in the $L$ term when dimensions match. In practice, these additional terms are negligible compared to the dominant $LN^2$ and $LG$ terms.
 \end{itemize}
 
 \textbf{Comparison insight:} The crucial difference lies in how the spline complexity $G$ contributes. In KANs, it multiplies the $N^2$ term associated with layer connectivity ($O(L N^2 G)$). In SNs, due to spline sharing within blocks, it appears as an additive term ($O(L G)$) alongside the mixing weight term ($O(L N^2)$).
@@ -508,7 +499,7 @@ KAN architecture $[2, 10, 1]$, reported effective. $N_{in}=2, N_{hid}=10, N_{out
 \begin{itemize}
     \item \textbf{KAN (est.):} $(2\times10 + 10\times1) = 30$ edges/splines. Assume $G=20$ intervals, $k=3$ B-splines ($G+k \approx 23$ params/spline). Total KAN params $\approx 30 \times 23 = 690$.
     \item \textbf{SN (equiv. structure):} Architecture $2 \to [10] \to 1$. $L=1$ hidden layer, scalar output means $L=1$ block total. Shared splines: $2 \times (G+k) \approx 2 \times 23 = 46$. Mixing weights: $d_0 \times d_1 = 2 \times 10 = 20$. Shift $\eta^{(1)}$: $1$. Total SN params $\approx 46 + 20 + 1 = 67$.
-    \item \textbf{Potential advantage:} Factor $\approx 10$x reduction (67 vs 690). (\emph{Note: Requires validation. Performance equivalence not assumed. Previously we assumed L=2 blocks for this structure, which might be an interpretation difference. If L=2 blocks (arch $2\to[10, 1]\to 1$) were used, SN params would be $4\times 23 + (2\times 10 + 10\times 1) + 2 = 92 + 30 + 2 = 124$, reduction factor $\approx 5.5$x. The mapping from KAN shape to SN blocks needs careful definition for equivalence.}). Let's stick with the $L=2$ block interpretation for this example for consistency with original calculation intent. Total SN params $\approx 124$. Potential reduction $\approx 5.5$x.
+    \item \textbf{Potential advantage:} For equivalent structure $2 \to [10] \to 1$ (one hidden layer, $L=1$ block for scalar output): Total SN params $\approx 67$, giving a factor $\approx 10$x reduction (67 vs 690). (\emph{Note: Direct architectural equivalence between KAN layers and SN blocks requires careful consideration. The comparison assumes similar expressivity, which needs empirical validation.})
 \end{itemize}
 
 \paragraph{Knot theory example (KAN Ref \S 4.3):}
@@ -562,7 +553,7 @@ To provide more quantitative insight, we illustrate SNs in a few examples from t
 
 \paragraph{Synthetic families with known structure:}
 \begin{itemize}
-    \item \textbf{Smooth additive $f(x,y)=\exp(\sin\pi x+y^2)$:} KAS theory suggests a simple structure exists. Empirical scaling plots comparing SN test RMSE vs. parameter count against MLP scaling would be informative. SNs might approach faster scaling (e.g., closer to $N^{-4}$) compared to MLPs (often saturating earlier).
+    \item \textbf{Smooth additive $f(x,y)=\exp(\sin\pi x+y^2)$:} KAS theory suggests a simple structure exists. Empirical scaling plots comparing SN test RMSE vs. parameter count against MLP scaling would be informative. SNs might achieve better approximation error scaling with respect to the number of parameters (e.g., error scaling closer to $N_{\text{params}}^{-4}$) compared to MLPs (which often exhibit slower rates or saturate earlier).
     \item \textbf{Multiplicative $xy$:} A known simple KAS representation exists ($xy = [(x+y)/2]^2 - [(x-y)/2]^2$). An SN like $[2,2,1]$ is expected to be highly efficient compared to MLPs requiring significantly more parameters for similar accuracy.
     \item \textbf{High-dimensional additive $f(\mathbf{x})=\exp(\frac{1}{d}\sum \sin^2(\pi x_i))$:} For large $d$, the structure is predominantly additive composed with univariate functions. SNs (potentially shallow like $d \to [1] \to 1$) might significantly outperform deep, wide MLPs due to SNs ability to directly represent the univariate components and summation structure efficiently.
 \end{itemize}
@@ -610,7 +601,7 @@ While Sprecher Networks offer a theoretically grounded architecture with potenti
             \item \textbf{Sparsity and pruning:} Develop targeted L1/entropy regularization for mixing weights ($\lambda$) and potentially node pruning strategies (based on contribution analysis) to discover compact SN architectures automatically. (Unlike for KANs, however, pruning edges in SNs leads to relatively small decreases in parameter counts. Automatic pruning of Sprecher blocks may be a more promising direction.)
             \item \textbf{Alternative spline bases:} Explore higher-order B-splines or other basis functions beyond piecewise linear, potentially offering better smoothness or approximation properties.
             \item \textbf{High-dimensional adaptations:} For very high-dimensional inputs where even $O(N^2)$ weights become prohibitive, investigate alternative representations for the interaction, possibly using low-rank approximations for $\lambda$ or different structures for $\phi, \Phi$ (e.g., small neural networks, tensor methods).
-            \item \textbf{Residual connections:} Incorporate skip connections around Sprecher blocks, potentially improving gradient flow for very deep networks and enhancing training stability, similar to ResNets.
+            \item \textbf{Residual connections:} While basic residual connections have been implemented in our reference code, the implementation is more sophisticated than typical skip connections. When the input and output dimensions of a block match ($d_{\ell-1} = d_\ell$), a learnable scalar weight multiplies the input before adding it to the block output. When dimensions differ, a learnable linear projection (without bias) maps the input to the output dimension. These residual connections significantly improve training stability and are controlled by a global flag in the implementation. Further exploration of more sophisticated skip connection patterns, such as dense connections or learnable gating mechanisms, could enhance training stability for very deep networks.
         \end{itemize}
     \item \textbf{Scientific discovery and interpretability:}
         \begin{itemize}
