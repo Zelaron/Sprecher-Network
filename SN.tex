@@ -124,7 +124,7 @@ f(\mathbf{x}) = \mathbf{y} = \Bigl(T^{(L+1)} \circ T^{(L)} \circ \cdots \circ T^
 In this configuration, the network uses $L+1$ blocks and involves $2(L+1)$ shared spline functions. The extra block serves as a trainable output mapping layer, transforming the final hidden representation $\mathbf{h}^{(L)}$ into the desired $m$-dimensional output vector.
 
 \medskip
-In summary: for $L \ge 1$ hidden layers, a scalar-output SN uses $L$ blocks and $2L$ shared splines (plus potentially $2$ output scaling parameters). A vector-output SN (with $m>1$) uses $L+1$ blocks and $2(L+1)$ shared splines (plus potentially $2m$ output scaling parameters if applied per dimension). This structure provides a natural extension of Sprecher's original scalar formula to the vector-valued setting.
+In summary: for an architecture with $L$ hidden layers, a scalar-output SN uses $L$ blocks and $2L$ shared splines (plus 2 output scaling parameters). A vector-output SN (with $m>1$) uses $L+1$ blocks and $2(L+1)$ shared splines (plus $2m$ output scaling parameters when applied per dimension, or 2 when applied globally). This structure provides a natural extension of Sprecher's original scalar formula to the vector-valued setting.
 
 % Perhaps the illustration below is a bit too repetitive?
 \medskip
@@ -275,9 +275,7 @@ This construction shows that while SNs can be expressed within the LAN framework
 represent a highly structured special case with specific weight patterns and an expanded 
 intermediate dimension of $O(d_{\ell-1} d_\ell)$ between each pair of SN layers.
 \end{remark}
-This statement says that SNs are special cases of LANs. Nevertheless, by Sprecher's construction, they have the same expressivity as LANs.
-Moreover, in Sprecher's construction, $\eta$ can be chosen as universal constant \textcolor{red}{(double check by Boris!)} instead of a learnable parameter.
- As a consequence, Proposition \ref{prop:SNareLAN} and Sprecher's construction together imply that  LANs do not loose expressivity when setting all biases to fixed (but sufficiently generic) numbers.
+While this proposition shows that SNs are special cases of LANs with specific structural constraints, Sprecher's construction guarantees that this constrained form retains full expressivity. In Sprecher's original construction, $\eta$ can be chosen as a universal constant rather than a learnable parameter. This, combined with Proposition \ref{prop:SNareLAN}, implies that LANs do not lose expressivity when constraining biases to specific structured forms.
 %    \item open problem: theoretical comparison of the models, e.g., dimension of their neuromanifolds? (hard in general, but possible in concrete example)
 \begin{figure}[h!]
     \centering  
@@ -292,7 +290,7 @@ Moreover, in Sprecher's construction, $\eta$ can be chosen as universal constant
 \end{figure}
 
 \begin{remark}[Domain considerations]
-The above proposition assumes that the spline functions $\phi^{(\ell)}$ can handle inputs outside their original domain $[0,1]$, which may arise due to the shifts $\eta^{(\ell)}q$. In Sprecher's original construction with inputs in $[0,1]^n$, the shifted values $x_i + \eta q$ can indeed fall outside $[0,1]$. While the theoretical construction can extend $\phi$ to a larger domain, practical implementations may choose to either: (i) clamp inputs to ensure they remain in $[0,1]$, (ii) extend the spline domain appropriately, or (iii) rely on the optimization process to learn suitable $\eta$ values that keep most shifted inputs within a reasonable range. The specific choice may affect optimization dynamics. Common approaches include clamping inputs to [0,1] or extending the spline domain to accommodate the maximum possible shift. When the domain is extended, the spline is typically initialized to maintain its monotonic and roughly linear behavior over the extended range.
+The above proposition assumes that the spline functions $\phi^{(\ell)}$ can handle inputs outside their original domain $[0,1]$, which may arise due to the shifts $\eta^{(\ell)}q$. In Sprecher's original construction with inputs in $[0,1]^n$, the shifted values $x_i + \eta q$ can indeed fall outside $[0,1]$. While the theoretical construction can extend $\phi$ to a larger domain, practical implementations may choose to either: (i) clamp inputs to ensure they remain in $[0,1]$, (ii) extend the spline domain appropriately, or (iii) rely on the optimization process to learn suitable $\eta$ values that keep most shifted inputs within a reasonable range. The specific choice may affect optimization dynamics. Common approaches include clamping inputs to [0,1] after shifting, or extending the spline domain to accommodate the maximum possible shift (e.g., to $[0, 1 + \eta(d_{\text{out}}-1)]$). When the domain is extended, the spline is typically initialized to maintain monotonic and roughly linear behavior over the extended range.
 \end{remark}
 
 \section{Theoretical aspects and universality}\label{sec:universality}
@@ -396,7 +394,7 @@ where:
 \item $L_{T^{(m)}} = L_{\Phi^{(m)}} \Lambda d_{m-1} L_{\phi^{(m)}}$ (Lipschitz constant of block $m$)
 \end{itemize}
 
-If all blocks use the same number of knots $G$ (i.e., $G_\phi^{(\ell)}=G_\Phi^{(\ell)}=G$ for all $\ell$), the error scales as $O(G^{-(k+1)})$ with a constant that may grow exponentially in $L$.
+If all blocks use the same number of knots $G$ (i.e., $G_\phi^{(\ell)}=G_\Phi^{(\ell)}=G$ for all $\ell$), the error scales as $O(G^{-(k+1)})$ with constants that may grow exponentially with depth $L$.
 \end{theorem}
 
 \begin{proof}
@@ -465,7 +463,7 @@ Our reference implementation utilizes piecewise-linear splines for both $\phi^{(
 
 \subsection{Shifts, weights, and optimization}
 \begin{itemize}
-    \item \textbf{Parameters:} Each block includes the learnable scalar shift $\eta^{(\ell)} > 0$ and the learnable mixing weight matrix $\lambda^{(\ell)} \in \mathbb{R}^{d_{\ell-1} \times d_\ell}$. The shift parameter $\eta^{(\ell)}$ is theoretically assumed positive ($\eta > 0$) based on Sprecher's construction. In practice, it is typically initialized to a positive value (e.g., $1/(d_{\text{out}} + 10)$). While some implementations may train it without explicit constraints, enforcing positivity through transformations like softplus or absolute value can improve theoretical consistency with Sprecher's original formulation.
+    \item \textbf{Parameters:} Each block includes the learnable scalar shift $\eta^{(\ell)} > 0$ and the learnable mixing weight matrix $\lambda^{(\ell)} \in \mathbb{R}^{d_{\ell-1} \times d_\ell}$. The shift parameter $\eta^{(\ell)}$ is theoretically required to be positive ($\eta > 0$) in Sprecher's original construction. In practice, it is typically initialized to a positive value (e.g., $1/(d_{\text{out}} + 10)$) and often remains positive throughout training due to appropriate initialization and learning rates, though explicit enforcement through transformations like softplus or absolute value could ensure theoretical consistency.
     \item \textbf{Optimization:} All learnable parameters (spline coefficients, $\eta^{(\ell)}$, $\lambda^{(\ell)}$, and potentially range parameters for $\Phi^{(\ell)}$) are trained jointly using gradient-based optimization methods like Adam \cite{kingma2014adam} or LBFGS.
     \item \textbf{Loss function:} Typically Mean Squared Error (MSE) for regression tasks, combined with regularization terms:
         $$ \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{MSE}} + w_{\text{flat}} \sum_{\ell} \text{Penalty}(\Phi^{(\ell)}) + w_{\text{sparse}} \sum_{\ell} \text{Sparsity}(\lambda^{(\ell)}) + w_{\text{var}} \mathcal{L}_{\text{variance}} $$
@@ -497,7 +495,7 @@ Let's assume a network of depth $L$ (meaning $L$ hidden layers, thus $L$ blocks 
         \end{itemize}
 Summing over $L$ (or $L+1$) blocks, plus output scaling parameters and potential residual connection weights, the total parameter count scales approximately as:
         $$ O(LN^2 + LG + L + m).$$
-        where the $L$ term accounts for shift parameters $\eta^{(\ell)}$, the $m$ term accounts for output scaling parameters (2 for scalar output, $2m$ for vector output if applied per dimension), and residual connection parameters are already included in the $LN^2$ term when dimensions differ or in the $L$ term when dimensions match. In practice, these additional terms are negligible compared to the dominant $LN^2$ and $LG$ terms.
+        where the $L$ term accounts for shift parameters $\eta^{(\ell)}$, the $m$ term represents output scaling parameters (2 for scalar output, potentially $2m$ for vector output if applied per dimension), and residual connection parameters (when used) are absorbed into the $LN^2$ term when dimensions differ or add at most $L$ parameters when dimensions match. In practice, these additional terms are negligible compared to the dominant $LN^2$ and $LG$ terms.
 \end{itemize}
 
 \textbf{Comparison insight:} The crucial difference lies in how the spline complexity $G$ contributes. In KANs, it multiplies the $N^2$ term associated with layer connectivity ($O(L N^2 G)$). In SNs, due to spline sharing within blocks, it appears as an additive term ($O(L G)$) alongside the mixing weight term ($O(L N^2)$).
@@ -510,7 +508,7 @@ This suggests that SNs have the \emph{potential} for significant parameter savin
 In such regimes ($G \gg N$), the $L N^2$ term might dominate in SNs, while the $L N^2 G$ term dominates in KANs.
 
 \subsection{Placeholder examples (illustrative calculations)}
-We present some illustrative calculations, based on examples in \cite{liu2024kan}, to highlight this potential, emphasizing that these require empirical validation of comparable performance for the given architectures. In practice, however, greater network depths than those in the corresponding KAN examples may be required to offset the lower parameter counts from shared splines across edges in SNs.
+We present some illustrative calculations, based on examples in \cite{liu2024kan}, to highlight the potential parameter efficiency of SNs. Note that achieving comparable performance may require different architectural choices, as the optimal depth-width tradeoffs for SNs may differ from those of KANs due to the shared spline structure.
 
 \paragraph{PDE solving example (KAN Ref \S 3.4):}
 KAN architecture $[2, 10, 1]$, reported effective. $N_{in}=2, N_{hid}=10, N_{out}=1$.
