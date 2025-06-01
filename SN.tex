@@ -261,6 +261,20 @@ where $A^{(k)} \colon \mathbb{R}^{d_{k-1}} \rightarrow \mathbb{R}^{d_k}$ is an a
 \begin{proof}
     Follows immediately by inspecting \eqref{eq:SN}.
 \end{proof}
+\begin{remark}[Understanding the LAN representation]
+The representation of SNs as LANs in Proposition~\ref{prop:SNareLAN} uses an expanded 
+intermediate state space. Each Sprecher block is decomposed into two LAN layers:
+\begin{itemize}
+\item The first layer expands the input $\mathbf{h}^{(\ell-1)} \in \mathbb{R}^{d_{\ell-1}}$ 
+to $\mathbb{R}^{d_\ell d_{\ell-1}}$ by creating $d_\ell$ shifted copies, where the 
+$(q \cdot d_{\ell-1} + i)$-th component contains $\phi^{(\ell)}(h^{(\ell-1)}_i + \eta^{(\ell)} q)$.
+\item The second layer applies the mixing weights $\lambda^{(\ell)}_{i,q}$ to select and sum 
+the appropriate components for each output $q$, adds the shift $q$, and applies $\Phi^{(\ell)}$.
+\end{itemize}
+This construction shows that while SNs can be expressed within the LAN framework, they 
+represent a highly structured special case with specific weight patterns and an expanded 
+intermediate dimension of $O(d_{\ell-1} d_\ell)$ between each pair of SN layers.
+\end{remark}
 This statement says that SNs are special cases of LANs. Nevertheless, by Sprecher's construction, they have the same expressivity as LANs.
 Moreover, in Sprecher's construction, $\eta$ can be chosen as universal constant \textcolor{red}{(double check by Boris!)} instead of a learnable parameter.
  As a consequence, Proposition \ref{prop:SNareLAN} and Sprecher's construction together imply that  LANs do not loose expressivity when setting all biases to fixed (but sufficiently generic) numbers.
