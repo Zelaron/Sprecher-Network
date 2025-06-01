@@ -83,7 +83,7 @@ In our architecture, the fundamental building unit is the \emph{Sprecher block}.
 \subsection{Sprecher block structure}
 A Sprecher block transforms an input vector $\mathbf{x} \in \mathbb{R}^{d_{\mathrm{in}}}$ to an output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$. This transformation is implemented using the following shared, learnable components specific to that block:
 \begin{itemize}
-    \item \textbf{Monotonic spline $\phi(\cdot)$:} An increasing piecewise-linear function, typically defined on a fixed interval like $[0,1]$. This function is shared across all input-output connections within the block and its coefficients are learnable. (Strict?) Monotonicity is enforced during training (see Section \ref{sec:implementation}).
+    \item \textbf{Monotonic spline $\phi(\cdot)$:} An increasing piecewise-linear function, typically defined on a fixed interval like $[0,1]$. This function is shared across all input-output connections within the block and its coefficients are learnable. Strict monotonicity (strictly increasing) is enforced during training (see Section \ref{sec:implementation}).
     \item \textbf{General spline $\Phi(\cdot)$:} A piecewise-linear function (without monotonicity constraints) defined on a potentially wider interval. The domain and codomain can be either fixed (e.g., $[-10, 10]$) or made trainable through range parameters. When trainable, the range is parameterized by a center and radius for both domain $(d_c, d_r)$ and codomain $(c_c, c_r)$, allowing the spline to adapt its input/output ranges during training. This function is also shared across the block and its coefficients are learnable.
     \item \textbf{Mixing weights matrix $\lambda$:} A matrix $\{\lambda_{i,q}\}$ of size $d_{\mathrm{in}} \times d_{\mathrm{out}}$, whose entries are learnable. These weights linearly combine the contributions from different input dimensions after transformation by $\phi$.
     \item \textbf{Shift parameter $\eta$:} A learnable scalar $\eta > 0$. This parameter controls the magnitude of the input shift $x_i + \eta q$, which depends on the output index $q$.
@@ -91,7 +91,7 @@ A Sprecher block transforms an input vector $\mathbf{x} \in \mathbb{R}^{d_{\math
 
 Concretely, given an input vector $\mathbf{x} = (x_1, \dots, x_{d_{\mathrm{in}}}) \in \mathbb{R}^{d_{\mathrm{in}}}$, a single Sprecher block (indexed implicitly by $\ell$, with parameters $\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)}$) computes the $q$-th component of its output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$ (where $q=0, \dots, d_{\mathrm{out}}-1$) via:
 $$ h_q = \text{Block}_{\phi,\Phi,\eta,\lambda}(\mathbf{x})_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\mathrm{in}}}\lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(x_i+\eta^{(\ell)}\,q\Bigr) + \alpha q\Biggr),$$
-where $\alpha$ is a scaling factor (set to 1 for the original Sprecher construction, as is done in the rest of this paper, but it can be adjusted for optimization purposes). In practice, setting $\alpha = 1$ can lead to initial training plateaus, particularly for deeper networks, so smaller values (e.g., $\alpha = 0.1$) may improve optimization dynamics.
+where $\alpha$ is a scaling factor (set to 1 for the original Sprecher construction, which is the default value used throughout this paper). In practice, setting $\alpha = 1$ can lead to initial training plateaus, particularly for deeper networks, so smaller values (e.g., $\alpha = 0.1$) may improve optimization dynamics.
 
 In a network with multiple layers, each Sprecher block (indexed by $\ell=1, \dots, L$ or $L+1$) uses its own independent set of shared parameters $(\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)})$. The block operation implements a specific form of transformation: each input coordinate $x_i$ is first shifted by an amount depending on the output index $q$ and the shared shift parameter $\eta^{(\ell)}$, then passed through the shared monotonic spline $\phi^{(\ell)}$. The results are linearly combined using the learnable mixing weights $\lambda^{(\ell)}_{i,q}$, shifted again by the output index $q$, and finally passed through the shared general spline $\Phi^{(\ell)}$. Stacking these blocks creates a deep, compositional representation.
 
@@ -193,7 +193,7 @@ These expansions highlight the compositional nature where the output of one Spre
 \end{remark}
 
 \begin{remark}[Necessity of internal shifts]\label{rem:shiftneeded}
-It is tempting to simplify the nested structures, for instance by removing the inner shift terms like $\eta^{(2)}q$ inside $\phi^{(2)}$ in \eqref{eq:two-layer-restored}, or $\eta^{(2)}s$ inside $\phi^{(2)}$ and $\eta^{(3)}q$ inside $\phi^{(3)}$ in \eqref{eq:three-layer-restored}. One might hypothesize that the outer splines $\Phi^{(\ell)}$ could absorb this shifting effect (yielding a single composite spline per Sprecher block). However, experiments (see Section \ref{sec:ablation_eta}) suggest that these internal shifts $\eta^{(\ell)}q$ (or $\eta^{(\ell)}s$) applied to the inputs of the $\phi^{(\ell)}$ splines are crucial for the effective functioning of deeper Sprecher Networks. Removing them significantly degrades performance. (*** Double-check this!!! ***) The precise theoretical reason for their necessity in the multi-layer case, beyond their presence in Sprecher's original single-layer formula, warrants further investigation.
+It is tempting to simplify the nested structures, for instance by removing the inner shift terms like $\eta^{(2)}q$ inside $\phi^{(2)}$ in \eqref{eq:two-layer-restored}, or $\eta^{(2)}s$ inside $\phi^{(2)}$ and $\eta^{(3)}q$ inside $\phi^{(3)}$ in \eqref{eq:three-layer-restored}. One might hypothesize that the outer splines $\Phi^{(\ell)}$ could absorb this shifting effect (yielding a single composite spline per Sprecher block). However, experiments (see Section \ref{sec:ablation_eta}) suggest that these internal shifts $\eta^{(\ell)}q$ (or $\eta^{(\ell)}s$) applied to the inputs of the $\phi^{(\ell)}$ splines are crucial for the effective functioning of deeper Sprecher Networks. Removing them significantly degrades performance. The precise theoretical reason for their necessity in the multi-layer case, beyond their presence in Sprecher's original single-layer formula, warrants further investigation.
 \end{remark}
 
 \section{Comparison with related architectures}
@@ -237,7 +237,6 @@ Table \ref{tab:arch_comparison} summarizes the key distinctions:
 This comparison clarifies that SNs represent a distinct architecture, related to but not a direct subset of KANs, primarily due to the presence of mixing weights ($\lambda$), the specific shift structure ($\eta q, q$), and the block-level sharing of splines.
 
 Here, we provide a precise comparison between LANs and SNs. More specifically, we argue that SNs correspond to LANs with (almost) fixed biases that have dependencies between pairs of neighboring layers and with the weights in every other layer constrained to the identity.
-
 A LAN is an MLP with learnable activation. More precisely, the model is defined as: 
 $$
 f(\mathbf{x}) = A^{(L)} \circ \sigma^{(L-1)} \circ A^{(L-1)} \circ \sigma^{(L-2)} \circ \cdots \circ \sigma^{(1)} \circ A^{(1)} (\mathbf{x}),
@@ -247,11 +246,16 @@ where $A^{(k)} \colon \mathbb{R}^{d_{k-1}} \rightarrow \mathbb{R}^{d_k}$ is an a
     An SN (cf. \eqref{eq:defsn}) is a LAN, where: 
     \begin{itemize}
         \item in odd layers $k = 2\ell - 1$, the weight matrix $W^{(k)} \in \mathbb{R}^{d_\ell d_{\ell-1} \times d_{\ell-1}}$ is fixed to  $[I | \cdots | I]^\top$, where $I$ is the $d_{\ell-1} \times d_{\ell-1}$ identity matrix, the bias vector has only one learnable parameter $\eta^{(\ell)}$ and is structured as $b^{(k)} = \eta^{(\ell)}(0,\ldots,0, 1, \ldots, 1, \ldots, d_{\ell}-1, \ldots, d_{\ell}-1)^\top \in \mathbb{R}^{d_\ell d_{\ell-1}}$, and the activation is $\sigma^{(k)} = \phi^{(\ell)}$, 
-\item in even layers $k = 2\ell $, the learnable weight matrix $W^{(k)} \in \mathbb{R}^{d_\ell \times d_\ell d_{\ell-1}}$ is block-diagonal with blocks of size $1 \times d_{\ell-1}$:
+        \item in even layers $k = 2\ell $, the learnable weight matrix $W^{(k)} \in \mathbb{R}^{d_\ell \times d_\ell d_{\ell-1}}$ is structured as
         \begin{align*}
-            W^{(k)} = \text{diag}\left([\lambda_{1,0}^{(\ell)}, \ldots, \lambda_{d_{\ell-1},0}^{(\ell)}], [\lambda_{1,1}^{(\ell)}, \ldots, \lambda_{d_{\ell-1},1}^{(\ell)}], \ldots, [\lambda_{1,d_\ell-1}^{(\ell)}, \ldots, \lambda_{d_{\ell-1},d_\ell-1}^{(\ell)}]\right),
-        \end{align*}
-        the bias is fixed to $b^{(k)} = (0,\ldots, d_\ell-1)^\top \in \mathbb{R}^{d_\ell}$, and the activation activation is $\sigma^{(k)} = \Phi^{(\ell)}$. 
+            \begin{bmatrix}
+                \lambda_{1,0}^{(\ell)} & \cdots & \lambda_{d_{\ell-1},0}^{(\ell)} & 0 &&& \cdots &&&0 \\
+               0  &\cdots & 0 & \lambda_{1,1}^{(\ell)} & \cdots & \lambda_{d_{\ell-1},1}^{(\ell)} & 0 && \cdots & 0 \\
+               &&&&&& \ddots \\
+               0 &&&\cdots &&&0&\lambda_{1,d_\ell-1}^{(\ell)} & \cdots & \lambda_{d_{\ell-1},d_\ell-1}^{(\ell)}
+            \end{bmatrix},
+        \end{align*} 
+        the bias is fixed to $b^{(k)} = (0,\ldots, d_\ell-1)^\top \in \mathbb{R}^{d_\ell}$, and the activation is $\sigma^{(k)} = \Phi^{(\ell)}$. 
     \end{itemize}
 \end{prop}
 \begin{proof}
@@ -272,6 +276,10 @@ Moreover, in Sprecher's construction, $\eta$ can be chosen as universal constant
     \caption{Diagram illustrating the dependencies between the models, in terms of learnable parameters. MLPs are LANs with fixed activation function, while SNs are LANs with a particular parameter structure (Proposition \ref{prop:SNareLAN}).}
     \label{fig:enter-label}
 \end{figure}
+
+\begin{remark}[Domain considerations]
+The above proposition assumes that the spline functions $\phi^{(\ell)}$ can handle inputs outside their original domain $[0,1]$, which may arise due to the shifts $\eta^{(\ell)}q$. In Sprecher's original construction with inputs in $[0,1]^n$, the shifted values $x_i + \eta q$ can indeed fall outside $[0,1]$. While the theoretical construction can extend $\phi$ to a larger domain, practical implementations may choose to either: (i) clamp inputs to ensure they remain in $[0,1]$, (ii) extend the spline domain appropriately, or (iii) rely on the optimization process to learn suitable $\eta$ values that keep most shifted inputs within a reasonable range. The specific choice may affect optimization dynamics. Common approaches include clamping inputs to [0,1] or extending the spline domain to accommodate the maximum possible shift. When the domain is extended, the spline is typically initialized to maintain its monotonic and roughly linear behavior over the extended range.
+\end{remark}
 
 \section{Theoretical aspects and universality}\label{sec:universality}
 
@@ -428,8 +436,8 @@ Our reference implementation utilizes piecewise-linear splines for both $\phi^{(
     \item \textbf{Inner spline $\phi^{(\ell)}$:}
         \begin{itemize}
             \item \textbf{Domain/range:} Typically fixed domain $[0, 1]$ and range $[0, 1]$.
-            \item \textbf{Monotonicity:} Enforced during training through a log-space parameterization. The implementation uses log-increments as the learnable parameters: $\text{log\_increments} = [\ell_0, \ell_1, ..., \ell_{G-1}]$. The actual spline coefficients are computed as: increments $= \text{softplus}(\ell_i)$, followed by cumulative sum and normalization to $[0,1]$, then scaling to the output range. This approach ensures strict monotonicity throughout training without requiring explicit constraints or post-processing operations like sorting, and provides better gradient flow than alternative methods.
-            \item \textbf{Initialization:} Initialized to be roughly linear and increasing within its range. In practice, the log-space parameterization (using `log\_increments' with softplus activation) ensures strict monotonicity throughout training without requiring explicit constraints or post-processing.
+            \item \textbf{Monotonicity:} Enforced during training through a log-space parameterization. The implementation uses log-increments as the learnable parameters: $\text{log\_increments} = [\ell_0, \ell_1, ..., \ell_{G-1}]$. The actual spline coefficients are computed as: increments $= \text{softplus}(\ell_i)$, followed by cumulative sum and normalization to $[0,1]$, then scaling to the output range. This approach ensures strict monotonicity (strictly increasing) throughout training without requiring explicit constraints or post-processing operations like sorting, and provides better gradient flow than alternative methods. The softplus activation ensures all increments are strictly positive, preventing exactly flat regions in the spline.
+            \item \textbf{Initialization:} Initialized to be roughly linear and increasing within its range. Inp practice, log-space parameterization with softplus activation ensures strict monotonicity throughout training without requiring explicit constraints or post-processing, as the resulting increments are guaranteed to be strictly positive.
         \end{itemize}
     \item \textbf{Outer Spline $\Phi^{(\ell)}$:}
         \begin{itemize}
@@ -443,11 +451,11 @@ Our reference implementation utilizes piecewise-linear splines for both $\phi^{(
 
 \subsection{Shifts, weights, and optimization}
 \begin{itemize}
-    \item \textbf{Parameters:} Each block includes the learnable scalar shift $\eta^{(\ell)} > 0$ and the learnable mixing weight matrix $\lambda^{(\ell)} \in \mathbb{R}^{d_{\ell-1} \times d_\ell}$. The shift parameter $\eta^{(\ell)}$ is theoretically assumed positive ($\eta > 0$) based on Sprecher's construction. In our reference implementation, it is initialized positively and trained without an explicit positivity constraint (e.g., using `softplus` or `abs`), relying on optimization dynamics. However, such constraints can be added if found necessary.
+    \item \textbf{Parameters:} Each block includes the learnable scalar shift $\eta^{(\ell)} > 0$ and the learnable mixing weight matrix $\lambda^{(\ell)} \in \mathbb{R}^{d_{\ell-1} \times d_\ell}$. The shift parameter $\eta^{(\ell)}$ is theoretically assumed positive ($\eta > 0$) based on Sprecher's construction. In practice, it is typically initialized to a positive value (e.g., $1/(d_{\text{out}} + 10)$). While some implementations may train it without explicit constraints, enforcing positivity through transformations like softplus or absolute value can improve theoretical consistency with Sprecher's original formulation.
     \item \textbf{Optimization:} All learnable parameters (spline coefficients, $\eta^{(\ell)}$, $\lambda^{(\ell)}$, and potentially range parameters for $\Phi^{(\ell)}$) are trained jointly using gradient-based optimization methods like Adam \cite{kingma2014adam} or LBFGS.
     \item \textbf{Loss function:} Typically Mean Squared Error (MSE) for regression tasks, combined with regularization terms:
         $$ \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{MSE}} + w_{\text{flat}} \sum_{\ell} \text{Penalty}(\Phi^{(\ell)}) + w_{\text{sparse}} \sum_{\ell} \text{Sparsity}(\lambda^{(\ell)}) + w_{\text{var}} \mathcal{L}_{\text{variance}} $$
-        where $w$ are weights for flatness penalty, sparsity penalty on $\lambda$ (e.g., L1 + entropy), and potentially a variance regularization term (as used in the reference code) to match output variance to target variance.
+        where $w$ are weights for flatness penalty, sparsity penalty on $\lambda$ (e.g., L1 + entropy), and potentially a variance regularization term (as used in the reference code) to match output variance to target variance. The variance term $\mathcal{L}_{\text{variance}} = (\sigma_{\text{output}} - \sigma_{\text{target}})^2$ encourages the network output to have similar variability to the target function.
 \end{itemize}
 
 \subsection{Grid extension for splines}
