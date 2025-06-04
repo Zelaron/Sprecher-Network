@@ -88,8 +88,8 @@ This will run multiple experiments with different datasets and architectures, sa
 
 ### CLI Arguments
 
-- `--dataset`: Dataset name (default: toy_2d)
-- `--arch`: Architecture as comma-separated values (default: 10,10,10,10)
+- `--dataset`: Dataset name (default: toy_1d_poly)
+- `--arch`: Architecture as comma-separated values (default: 15,15)
 - `--phi_knots`: Number of knots for φ splines (default: 100)
 - `--Phi_knots`: Number of knots for Φ splines (default: 100)
 - `--epochs`: Number of training epochs (default: 4000)
