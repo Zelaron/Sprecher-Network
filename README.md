@@ -52,7 +52,7 @@ Run a single experiment using the CLI:
 python sn_experiments.py
 
 # Custom configuration
-python sn_experiments.py --dataset toy_2d --arch 10,10,10,10 --epochs 4000 --seed 42
+python sn_experiments.py --dataset toy_2d --arch 10,10,10,10 --epochs 4000 --seed 42 --save_plots
 
 # Full options
 python sn_experiments.py \
