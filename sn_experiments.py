@@ -11,10 +11,10 @@ def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Train Sprecher Networks")
     
-    parser.add_argument("--dataset", type=str, default="toy_2d",
-                      help="Dataset name (default: toy_2d)")
-    parser.add_argument("--arch", type=str, default="10,10,10,10",
-                      help="Architecture as comma-separated values (default: 10,10,10,10)")
+    parser.add_argument("--dataset", type=str, default="toy_1d_poly",
+                      help="Dataset name (default: toy_1d_poly)")
+    parser.add_argument("--arch", type=str, default="15,15",
+                      help="Architecture as comma-separated values (default: 15,15)")
     parser.add_argument("--phi_knots", type=int, default=100,
                       help="Number of knots for phi splines (default: 100)")
     parser.add_argument("--Phi_knots", type=int, default=100,
