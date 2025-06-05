@@ -75,6 +75,26 @@ python sn_sweeps.py
 
 This will run multiple experiments with different datasets and architectures, saving all plots to the `plots` directory.
 
+### MNIST Classification
+
+The package includes an MNIST digit classification example to demonstrate Sprecher Networks on a real-world task:
+
+```
+# Train a Sprecher Network on MNIST (mode 0)
+python sn_mnist.py
+
+# Test the trained model (mode 1)
+python sn_mnist.py
+
+# Classify a single digit image (mode 2)
+python sn_mnist.py  # requires 'digit.png' in current directory
+```
+
+The script allows you to experiment with different architectures by modifying `SN_CONFIG` at the top of `sn_mnist.py`. For example, to find minimal parameter counts for 99% accuracy, try:
+- `'architecture': [50]` - smaller hidden layer
+- `'phi_knots': 20, 'Phi_knots': 20` - fewer spline knots
+- Disable residual connections in `sn_core/model.py`: `USE_RESIDUAL_WEIGHTS = False`
+
 ### Available Datasets
 
 - `toy_1d_poly`: 1D polynomial function
@@ -110,6 +130,7 @@ sprecher-network/
 │   └── plotting.py      # Visualization functions
 ├── sn_experiments.py    # CLI for single experiments
 ├── sn_sweeps.py         # Batch sweep runner
+├── sn_mnist.py          # MNIST classification example
 ├── requirements.txt     # Package dependencies
 └── README.md            # This file
 ```
