@@ -90,7 +90,7 @@ python sn_mnist.py
 python sn_mnist.py  # requires 'digit.png' in current directory
 ```
 
-The script allows you to experiment with different architectures by modifying `SN_CONFIG` at the top of `sn_mnist.py`. For example, to find minimal parameter counts for 99% accuracy, try:
+The script allows you to experiment with different architectures by modifying `SN_CONFIG` at the top of `sn_mnist.py`. **PLACEHOLDER ARCHITECTURE, not yet validated**: For example, to find minimal parameter counts for 99% accuracy, try:
 - `'architecture': [50]` - smaller hidden layer
 - `'phi_knots': 20, 'Phi_knots': 20` - fewer spline knots
 - Disable residual connections in `sn_core/model.py`: `USE_RESIDUAL_WEIGHTS = False`
