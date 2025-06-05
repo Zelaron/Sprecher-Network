@@ -31,7 +31,7 @@ SN_CONFIG = {
     'learning_rate': 0.001,
     'weight_decay': 1e-6,
     'batch_size': 64,
-    'epochs': 10,
+    'epochs': 3,
 }
 
 
