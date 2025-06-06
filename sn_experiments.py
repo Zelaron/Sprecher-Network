@@ -3,7 +3,7 @@
 import os
 import argparse
 import torch
-import matplotlib.pyplot as plt
+import matplotlib
 from sn_core import train_network, get_dataset, plot_results, plot_loss_curve
 
 
@@ -36,6 +36,15 @@ def parse_args():
 def main():
     """Main training script."""
     args = parse_args()
+
+    # If --no_show is used (e.g., in batch runs), force the 'Agg' backend upfront.
+    if args.no_show:
+        matplotlib.use('Agg')
+        print("Using non-interactive 'Agg' backend for plotting (as requested by --no_show).")
+
+    # Now, import pyplot. We will wrap the first plotting call in a try-except
+    # block to handle systems without a working GUI backend.
+    import matplotlib.pyplot as plt
     
     # Parse architecture
     if args.arch:
@@ -72,28 +81,67 @@ def main():
         seed=args.seed
     )
     
-    # Create plots directory if saving
-    if args.save_plots:
+    # --- Graceful Fallback Plotting Logic ---
+    try:
+        # Create plots directory if saving
+        if args.save_plots:
+            os.makedirs("plots", exist_ok=True)
+        
+        # Plot results
+        prefix = "OneVar" if dataset.input_dim == 1 else f"{dataset.input_dim}Vars"
+        arch_str = "-".join(map(str, architecture)) if len(architecture) > 0 else "None"
+        filename = f"{prefix}-{args.dataset}-{arch_str}-{args.epochs}-epochs-outdim{dataset.output_dim}.png"
+        
+        save_path = os.path.join("plots", filename) if args.save_plots else None
+        fig_results = plot_results(model, layers, dataset, save_path)
+        
+        # Plot loss curve
+        loss_filename = f"loss-{args.dataset}-{arch_str}-{args.epochs}-epochs.png"
+        loss_save_path = os.path.join("plots", loss_filename) if args.save_plots else None
+        plot_loss_curve(losses, loss_save_path)
+        
+        # Show plots if requested and not in Agg mode
+        if not args.no_show:
+            print("Displaying plots. Close the plot windows to exit.")
+            plt.show()
+        else:
+            plt.close('all') # Free up memory in non-interactive mode
+            
+    except Exception as e:
+        # This block will catch the TclError on Windows or other GUI-related errors
+        print("\n" + "="*60)
+        print("WARNING: A plotting error occurred.")
+        print(f"Error type: {type(e).__name__}")
+        print("The default plotting backend on your system has failed.")
+        print("This is common on systems without a configured GUI toolkit.")
+        print("\nSwitching to the reliable 'Agg' backend to proceed.")
+        print("="*60 + "\n")
+
+        # Set the backend and re-run the plotting logic
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        # Ensure we save plots if this fallback is triggered
+        if not args.save_plots:
+            print("Plots could not be shown interactively. Enabling file saving automatically.")
+            args.save_plots = True
+
+        # Re-run plotting logic with the safe backend
         os.makedirs("plots", exist_ok=True)
-    
-    # Plot results
-    prefix = "OneVar" if dataset.input_dim == 1 else f"{dataset.input_dim}Vars"
-    arch_str = "-".join(map(str, architecture)) if len(architecture) > 0 else "None"
-    filename = f"{prefix}-{args.dataset}-{arch_str}-{args.epochs}-epochs-outdim{dataset.output_dim}.png"
-    
-    save_path = os.path.join("plots", filename) if args.save_plots else None
-    fig_results = plot_results(model, layers, dataset, save_path)
-    
-    # Plot loss curve
-    loss_filename = f"loss-{args.dataset}-{arch_str}-{args.epochs}-epochs.png"
-    loss_save_path = os.path.join("plots", loss_filename) if args.save_plots else None
-    plot_loss_curve(losses, loss_save_path)
-    
-    # Show plots if requested
-    if not args.no_show:
-        plt.show()
-    else:
+        
+        prefix = "OneVar" if dataset.input_dim == 1 else f"{dataset.input_dim}Vars"
+        arch_str = "-".join(map(str, architecture)) if len(architecture) > 0 else "None"
+        filename = f"{prefix}-{args.dataset}-{arch_str}-{args.epochs}-epochs-outdim{dataset.output_dim}.png"
+        save_path = os.path.join("plots", filename)
+        
+        plot_results(model, layers, dataset, save_path)
+        
+        loss_filename = f"loss-{args.dataset}-{arch_str}-{args.epochs}-epochs.png"
+        loss_save_path = os.path.join("plots", loss_filename)
+        plot_loss_curve(losses, loss_save_path)
+        
         plt.close('all')
+        print("Plots were successfully saved to the 'plots' directory.")
 
 
 if __name__ == "__main__":
