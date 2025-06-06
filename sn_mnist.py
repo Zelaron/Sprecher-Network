@@ -14,9 +14,11 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from PIL import Image
 import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
 
 # Import Sprecher Network components
-from sn_core import SprecherMultiLayerNetwork
+from sn_core import SprecherMultiLayerNetwork, plot_results
 from sn_core.model import TRAIN_PHI_RANGE, USE_RESIDUAL_WEIGHTS
 
 # Configuration
@@ -208,6 +210,63 @@ def print_architecture_details(architecture, phi_knots, Phi_knots):
     print(f"  Total spline knots: {num_blocks * (phi_knots + Phi_knots)}")
 
 
+def plot_splines_with_fallback(model, save_path=None, show_plots=True):
+    """Plot splines with graceful fallback for GUI errors."""
+    try:
+        # Try to create the plot
+        fig = plot_results(
+            model.sprecher_net, 
+            model.sprecher_net.layers,
+            dataset=None,
+            save_path=save_path,
+            plot_network=False,  # Don't plot network structure for MNIST
+            plot_function=False,  # Don't plot function comparison
+            plot_splines=True,
+            title_suffix="MNIST Sprecher Network - Learned Splines"
+        )
+        
+        if show_plots and fig is not None:
+            print("Displaying plots. Close the plot windows to exit.")
+            plt.show()
+        elif fig is not None:
+            plt.close(fig)
+            
+    except Exception as e:
+        # Handle plotting errors gracefully
+        print("\n" + "="*60)
+        print("WARNING: A plotting error occurred.")
+        print(f"Error type: {type(e).__name__}")
+        print("The default plotting backend on your system has failed.")
+        print("This is common on systems without a configured GUI toolkit.")
+        print("\nSwitching to the reliable 'Agg' backend to proceed.")
+        print("="*60 + "\n")
+
+        # Set the backend and re-run the plotting logic
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        
+        # Ensure we save plots if this fallback is triggered
+        if save_path is None:
+            os.makedirs("plots", exist_ok=True)
+            save_path = "plots/mnist_splines.png"
+        
+        # Re-run plotting with the safe backend
+        fig = plot_results(
+            model.sprecher_net, 
+            model.sprecher_net.layers,
+            dataset=None,
+            save_path=save_path,
+            plot_network=False,
+            plot_function=False,
+            plot_splines=True,
+            title_suffix="MNIST Sprecher Network - Learned Splines"
+        )
+        
+        if fig is not None:
+            plt.close(fig)
+        print(f"Plots were successfully saved to {save_path}")
+
+
 def main():
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -216,11 +275,11 @@ def main():
     # Get program mode
     while True:
         try:
-            mode = int(input("Enter mode (0: train, 1: test, 2: infer): "))
-            if mode in [0, 1, 2]:
+            mode = int(input("Enter mode (0: train, 1: test, 2: infer, 3: plot splines): "))
+            if mode in [0, 1, 2, 3]:
                 break
             else:
-                print("Please enter 0, 1, or 2.")
+                print("Please enter 0, 1, 2, or 3.")
         except ValueError:
             print("Please enter a valid integer.")
     
@@ -389,6 +448,37 @@ def main():
             predicted = torch.argmax(probabilities, dim=1).item()
             confidence = probs_list[predicted] * 100
             print(f"\nPredicted digit: {predicted} (confidence: {confidence:.1f}%)")
+            
+    elif mode == 3:  # Plot splines
+        # Load model
+        model = MNISTSprecherNet(
+            architecture=SN_CONFIG['architecture'],
+            phi_knots=SN_CONFIG['phi_knots'],
+            Phi_knots=SN_CONFIG['Phi_knots']
+        ).to(device)
+        
+        if not os.path.exists(MODEL_FILE):
+            print(f"Error: Model file {MODEL_FILE} not found. Please train first.")
+            return
+        
+        # Load with strict=False to handle missing buffers
+        model.load_state_dict(torch.load(MODEL_FILE, map_location=device), strict=False)
+        model.eval()
+        
+        # Print architecture details
+        print_architecture_details(
+            SN_CONFIG['architecture'], 
+            SN_CONFIG['phi_knots'], 
+            SN_CONFIG['Phi_knots']
+        )
+        
+        # Create plots directory if it doesn't exist
+        os.makedirs("plots", exist_ok=True)
+        save_path = "plots/mnist_splines.png"
+        
+        # Plot splines with fallback handling
+        print("\nPlotting learned splines...")
+        plot_splines_with_fallback(model, save_path=save_path, show_plots=True)
 
 
 if __name__ == "__main__":
