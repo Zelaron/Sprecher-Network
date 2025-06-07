@@ -611,7 +611,7 @@ To empirically validate the importance of the internal shift parameter $\eta^{(\
 To demonstrate SNs' applicability beyond function approximation, we tested them on the MNIST digit classification task. The 28×28 grayscale images were flattened to 784-dimensional vectors and normalized to [0,1]. Notable results include:
 \begin{itemize}
     \item A deeper network with architecture $784 \to [100, 100, 100] \to 10$ achieved over 99.5\% test accuracy after training for several hours on consumer hardware.
-    \item A shallower network with architecture $784 \to [100] \to 10$ (using Sprecher's theoretical minimum of one hidden layer) achieved approximately 92\% test accuracy.
+    \item A shallower network with architecture $784 \to [100] \to 10$ (using Sprecher's theoretical minimum of one hidden layer, but with significantly fewer than the $2n+1 = 1569$ nodes guaranteed for universality) achieved approximately 92\% test accuracy.
 \end{itemize}
 These results demonstrate that while achieving state-of-the-art performance on image tasks would likely require a convolutional design, SNs can attain competitive results on standard benchmarks. More importantly, they confirm that deeper architectures provide significant benefits for complex tasks, consistent with observations in traditional deep learning.
 
