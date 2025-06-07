@@ -95,6 +95,19 @@ where $\alpha$ is a scaling factor (set to 1 for the original Sprecher construct
 
 In a network with multiple layers, each Sprecher block (indexed by $\ell=1, \dots, L$ or $L+1$) uses its own independent set of shared parameters $(\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)})$. The block operation implements a specific form of transformation: each input coordinate $x_i$ is first shifted by an amount depending on the output index $q$ and the shared shift parameter $\eta^{(\ell)}$, then passed through the shared monotonic spline $\phi^{(\ell)}$. The results are linearly combined using the learnable mixing weights $\lambda^{(\ell)}_{i,q}$, shifted again by the output index $q$, and finally passed through the shared general spline $\Phi^{(\ell)}$. Stacking these blocks creates a deep, compositional representation.
 
+\subsection{Optional enhancements}
+Several optional components can enhance the basic Sprecher block:
+
+\begin{itemize}
+    \item \textbf{Residual connections:} When enabled, learnable parameters facilitate skip connections around each block. If input and output dimensions match ($d_{\mathrm{in}} = d_{\mathrm{out}}$), a scalar weight $w_{\text{res}}$ is used. When dimensions differ, a learnable linear projection matrix $W_{\text{res}} \in \mathbb{R}^{d_{\mathrm{out}} \times d_{\mathrm{in}}}$ (without bias) maps the input to the output dimension. The block output with residual connection becomes:
+    $$h_q^{\text{final}} = h_q + \begin{cases}
+    w_{\text{res}} \cdot x_q & \text{if } d_{\mathrm{in}} = d_{\mathrm{out}}\\
+    (W_{\text{res}} \mathbf{x})_q & \text{if } d_{\mathrm{in}} \neq d_{\mathrm{out}}
+    \end{cases}$$
+    
+    \item \textbf{Output scaling:} The network may include learnable output scaling parameters $\gamma$ (scale) and $\beta$ (bias) applied to the final network output. These can be particularly useful for optimization, with appropriate initialization strategies (e.g., initializing $\beta$ to match target statistics and $\gamma$ to control initial output magnitudes).
+\end{itemize}
+
 \subsection{Layer composition and final mapping}
 Let $L$ be the number of hidden layers specified by the architecture $[d_1, \dots, d_L]$. In our framework, a "hidden layer" corresponds to the vector output of a Sprecher block. The mapping from the representation at layer $\ell-1$ to layer $\ell$ is implemented by the $\ell$-th Sprecher block.
 
@@ -103,7 +116,7 @@ Let the input to the network be $\mathbf{h}^{(0)} = \mathbf{x} \in \mathbb{R}^{d
     \label{eq:SN}\mathbf{h}^{(\ell)}_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\ell-1}} \lambda^{(\ell)}_{i,q}\,\phi^{(\ell)}\Bigl(\mathbf{h}^{(\ell-1)}_i+\eta^{(\ell)}\,q\Bigr) + q\Biggr),\quad q=0,\dots,d_\ell-1.
 \end{align}
 
-The composition of these blocks and the final output generation depend on the desired final output dimension $m=d_{\mathrm{out}}$. Additionally, the network may include learnable output scaling parameters $\gamma$ (scale) and $\beta$ (bias) applied to the final output, such that the actual network output is $\gamma \cdot f(\mathbf{x}) + \beta$, where $f(\mathbf{x})$ is the output from the block composition described below. These parameters can be particularly useful for optimization, with appropriate initialization strategies (e.g., initializing $\beta$ to match target statistics and $\gamma$ to control initial output magnitudes):
+The composition of these blocks and the final output generation depend on the desired final output dimension $m=d_{\mathrm{out}}$:
 
 \paragraph{(a) Scalar output ($m=1$):}
 The network consists of exactly $L$ Sprecher blocks. The output of the final block, $\mathbf{h}^{(L)} \in \mathbb{R}^{d_L}$, is aggregated by summation to yield the scalar output:
@@ -124,7 +137,7 @@ f(\mathbf{x}) = \mathbf{y} = \Bigl(T^{(L+1)} \circ T^{(L)} \circ \cdots \circ T^
 In this configuration, the network uses $L+1$ blocks and involves $2(L+1)$ shared spline functions. The extra block serves as a trainable output mapping layer, transforming the final hidden representation $\mathbf{h}^{(L)}$ into the desired $m$-dimensional output vector.
 
 \medskip
-In summary: for an architecture with $L$ hidden layers, a scalar-output SN uses $L$ blocks and $2L$ shared splines (plus 2 output scaling parameters). A vector-output SN (with $m>1$) uses $L+1$ blocks and $2(L+1)$ shared splines (plus $2m$ output scaling parameters when applied per dimension, or 2 when applied globally). This structure provides a natural extension of Sprecher's original scalar formula to the vector-valued setting.
+In summary: for an architecture with $L$ hidden layers, a scalar-output SN uses $L$ blocks and $2L$ shared splines. A vector-output SN (with $m>1$) uses $L+1$ blocks and $2(L+1)$ shared splines. When output scaling is used, this adds 2 parameters for scalar output or $2m$ parameters for vector output (when applied per dimension). This structure provides a natural extension of Sprecher's original scalar formula to the vector-valued setting.
 
 % Perhaps the illustration below is a bit too repetitive?
 \medskip
@@ -290,7 +303,7 @@ While this proposition shows that SNs are special cases of LANs with specific st
 \end{figure}
 
 \begin{remark}[Domain considerations]
-The above proposition assumes that the spline functions $\phi^{(\ell)}$ can handle inputs outside their original domain $[0,1]$, which may arise due to the shifts $\eta^{(\ell)}q$. In Sprecher's original construction with inputs in $[0,1]^n$, the shifted values $x_i + \eta q$ can indeed fall outside $[0,1]$. While the theoretical construction can extend $\phi$ to a larger domain, practical implementations may choose to either: (i) clamp inputs to ensure they remain in $[0,1]$, (ii) extend the spline domain appropriately, or (iii) rely on the optimization process to learn suitable $\eta$ values that keep most shifted inputs within a reasonable range. The specific choice may affect optimization dynamics. Possible approaches include clamping inputs to the original domain after shifting, or extending the spline domain to accommodate the shifted values. When extending the domain, care should be taken to maintain appropriate behavior over the extended range.
+The above proposition assumes that the spline functions $\phi^{(\ell)}$ can handle inputs outside their original domain $[0,1]$, which may arise due to the shifts $\eta^{(\ell)}q$. In Sprecher's original construction with inputs in $[0,1]^n$, the shifted values $x_i + \eta q$ can indeed fall outside $[0,1]$. While the theoretical construction can extend $\phi$ to a larger domain, practical implementations typically clamp inputs to ensure they remain in $[0,1]$ after shifting, which has proven effective in practice. Alternative approaches include extending the spline domain appropriately or relying on the optimization process to learn suitable $\eta$ values that keep most shifted inputs within a reasonable range.
 \end{remark}
 
 \section{Theoretical aspects and universality}\label{sec:universality}
@@ -457,18 +470,26 @@ For practical implementations, piecewise-linear splines are a natural choice for
             \item \textbf{Monotonicity:} Not required.
             \item \textbf{Initialization:} Often initialized close to the identity function ($y=x$) or a scaled identity within its domain/codomain range to facilitate initial learning.
         \end{itemize}
-    \item \textbf{Regularization:} A flatness penalty, calculated as the mean squared second difference of the spline coefficients ($\approx$ second derivative), can be added to the loss function, particularly for $\Phi^{(\ell)}$, to encourage smoother learned functions and prevent excessive oscillation \cite{koppen}.
-        $$ \text{Penalty}(\text{coeffs}) = \frac{1}{K-2} \sum_{k=1}^{K-1} (c_{k+1} - 2c_k + c_{k-1})^2 $$
 \end{itemize}
 
 \subsection{Shifts, weights, and optimization}
 \begin{itemize}
     \item \textbf{Parameters:} Each block includes the learnable scalar shift $\eta^{(\ell)} > 0$ and the learnable mixing weight matrix $\lambda^{(\ell)} \in \mathbb{R}^{d_{\ell-1} \times d_\ell}$. The shift parameter $\eta^{(\ell)}$ is required to be positive ($\eta > 0$) in Sprecher's original construction. This positivity constraint can be handled through appropriate initialization and optimization strategies, or enforced explicitly through parameter transformations.
     \item \textbf{Optimization:} All learnable parameters (spline coefficients, $\eta^{(\ell)}$, $\lambda^{(\ell)}$, and potentially range parameters for $\Phi^{(\ell)}$) are trained jointly using gradient-based optimization methods like Adam \cite{kingma2014adam} or LBFGS.
-    \item \textbf{Loss function:} Typically Mean Squared Error (MSE) for regression tasks, combined with regularization terms:
-        $$ \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{MSE}} + w_{\text{flat}} \sum_{\ell} \text{Penalty}(\Phi^{(\ell)}) + w_{\text{sparse}} \sum_{\ell} \text{Sparsity}(\lambda^{(\ell)}) + w_{\text{var}} \mathcal{L}_{\text{variance}} $$
-        where $w$ are weights for flatness penalty, sparsity penalty on $\lambda$ (e.g., L1 + entropy), and potentially a variance regularization term to match output variance to target variance. The variance term $\mathcal{L}_{\text{variance}} = (\sigma_{\text{output}} - \sigma_{\text{target}})^2$ encourages the network output to have similar variability to the target function.
+    \item \textbf{Loss function:} Typically Mean Squared Error (MSE) for regression tasks. Additional regularization terms may be included to encourage specific properties.
 \end{itemize}
+
+\begin{remark}[Regularization for smoother splines]
+While training with MSE alone is sufficient, the splines learned under pure MSE optimization can exhibit rapid oscillations or jagged behavior. To encourage smoother, more interpretable splines (as shown in Figures \ref{fig:onevar_example} and \ref{fig:twovarsprecher_revised}), additional regularization terms can be incorporated:
+$$ \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{MSE}} + w_{\text{flat}} \sum_{\ell} \text{Penalty}(\Phi^{(\ell)}) + w_{\text{sparse}} \sum_{\ell} \text{Sparsity}(\lambda^{(\ell)}) + w_{\text{var}} \mathcal{L}_{\text{variance}} $$
+where:
+\begin{itemize}
+    \item $\text{Penalty}(\Phi^{(\ell)})$ is a flatness penalty encouraging smoothness, calculated as the mean squared second difference of spline coefficients: $\frac{1}{K-2} \sum_{k=1}^{K-1} (c_{k+1} - 2c_k + c_{k-1})^2$
+    \item $\text{Sparsity}(\lambda^{(\ell)})$ encourages sparse mixing weights (e.g., using L1 norm combined with entropy)
+    \item $\mathcal{L}_{\text{variance}} = (\sigma_{\text{output}} - \sigma_{\text{target}})^2$ encourages the network output to match the target variance
+\end{itemize}
+These regularization terms are not necessary for successful training but can improve interpretability and generalization. The weights $w_{\text{flat}}$, $w_{\text{sparse}}$, and $w_{\text{var}}$ control the strength of each regularization component.
+\end{remark}
 
 \subsection{Grid extension for splines}
 Inspired by techniques used for KANs \cite{liu2024kan}, the spline resolution (number of knots $G$) can be adaptively increased during training.
@@ -493,9 +514,9 @@ Let's assume a network of depth $L$ (meaning $L$ hidden layers, thus $L$ blocks 
             \item Shared splines $\phi^{(\ell)}, \Phi^{(\ell)}$: $2 \times O(G) = O(G)$ parameters per block, \emph{independent} of $N$.
             \item Shift parameter $\eta^{(\ell)}$: $O(1)$ parameter per block.
         \end{itemize}
-Summing over $L$ (or $L+1$) blocks, plus output scaling parameters and potential residual connection weights, the total parameter count scales approximately as:
-        $$ O(LN^2 + LG + L + m).$$
-        where the $L$ term accounts for shift parameters $\eta^{(\ell)}$, the $m$ term represents output scaling parameters (2 for scalar output, potentially $2m$ for vector output if applied per dimension, or 2 when applied globally), and residual connection parameters (when used) are absorbed into the $LN^2$ term when dimensions differ or add at most $L$ parameters when dimensions match. In practice, these additional terms are negligible compared to the dominant $LN^2$ and $LG$ terms.
+Summing over $L$ (or $L+1$) blocks, the total parameter count scales approximately as:
+        $$ O(LN^2 + LG + L).$$
+        Additional optional components include: output scaling parameters (2 for scalar output, $2m$ for vector output when applied per dimension), and residual connection parameters when enabled (at most $L$ scalar weights when dimensions match, or absorbed into the $LN^2$ term through projection matrices when dimensions differ). In practice, these additional terms are negligible compared to the dominant $LN^2$ and $LG$ terms.
 \end{itemize}
 
 \textbf{Comparison insight:} The crucial difference lies in how the spline complexity $G$ contributes. In KANs, it multiplies the $N^2$ term associated with layer connectivity ($O(L N^2 G)$). In SNs, due to spline sharing within blocks, it appears as an additive term ($O(L G)$) alongside the mixing weight term ($O(L N^2)$).
@@ -540,14 +561,14 @@ We train SNs on datasets sampled from known target functions $f$. The network le
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\textwidth]{Figures/OneVarOneBlock.png}
-\caption{Visualization of a trained Sprecher Network with architecture \texorpdfstring{$1\to[5]\to1$}{1 -> [5] -> 1} (one block) trained on data sampled from $f(x) = \sum_{q=0}^{4} \Phi(\lambda_{q+1} \phi(x+\eta q)+q)$, where the ground truth functions were $\phi(x) = (e^x-1)/(e-1)$ and $\Phi(x)=\sin{x}$, with shift $\eta=1/10$ and mixing weights $\lambda = \{1/2, -4/5, 1, 1/5, -6/5\}$. Top row: Network structure, learned monotonic spline $\phi^{(1)}$ (cyan), learned general spline $\Phi^{(1)}$ (magenta). Bottom row: Comparison between the target function $f(x)$ (dashed black) and the network output (solid red).}
+\caption{Visualization of a trained Sprecher Network with architecture \texorpdfstring{$1\to[5]\to1$}{1 -> [5] -> 1} (one block) trained on data sampled from $f(x) = \sum_{q=0}^{4} \Phi(\lambda_{q+1} \phi(x+\eta q)+q)$, where the ground truth functions were $\phi(x) = (e^x-1)/(e-1)$ and $\Phi(x)=\sin{x}$, with shift $\eta=1/10$ and mixing weights $\lambda = \{1/2, -4/5, 1, 1/5, -6/5\}$. Top row: Network structure, learned monotonic spline $\phi^{(1)}$ (cyan), learned general spline $\Phi^{(1)}$ (magenta). Bottom row: Comparison between the target function $f(x)$ (dashed black) and the network output (solid red). This network was trained with regularization terms to encourage smoother splines.}
 \label{fig:onevar_example}
 \end{figure}
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\textwidth]{Figures/TwoVarsThreeBlocks.png}
-\caption{Visualization of a trained \texorpdfstring{$2\to[5,8,5]\to1$}{2 -> [5,8,5] -> 1} Sprecher Network (3 blocks) approximating the scalar 2D target function $z = f(x,y) = (\exp(\sin(\pi x)+y^2)-1)/7$. Top row: Learned spline functions for each block --- monotonic splines $\phi^{(\ell)}$ (cyan) and general splines $\Phi^{(\ell)}$ (magenta). Bottom row: Comparison between the target function surface (left) and the network approximation (right).}
+\caption{Visualization of a trained \texorpdfstring{$2\to[5,8,5]\to1$}{2 -> [5,8,5] -> 1} Sprecher Network (3 blocks) approximating the scalar 2D target function $z = f(x,y) = (\exp(\sin(\pi x)+y^2)-1)/7$. Top row: Learned spline functions for each block --- monotonic splines $\phi^{(\ell)}$ (cyan) and general splines $\Phi^{(\ell)}$ (magenta). Bottom row: Comparison between the target function surface (left) and the network approximation (right). This network was trained with regularization terms to encourage smoother splines.}
 \label{fig:twovarsprecher_revised}
 \end{figure}
 
@@ -585,6 +606,14 @@ The idea of using SNs for ``compressing'' representations of special functions (
 
 \subsection{Ablation study: role of the shift $\eta$}\label{sec:ablation_eta}
 To empirically validate the importance of the internal shift parameter $\eta^{(\ell)}$ noted in Remark \ref{rem:shiftneeded}, ablation studies can be performed. Training SNs with $\eta^{(\ell)}$ fixed to 0 across all blocks typically results in significantly higher final RMSE (often 1-2 orders of magnitude worse) and potentially slower convergence or saturation at poorer loss values, especially for deeper networks. This confirms that the $\eta q$ shift inside $\phi^{(\ell)}$ is not redundant and plays a crucial role in the expressivity or optimization dynamics of multi-layer SNs.
+
+\subsection{MNIST classification}
+To demonstrate SNs' applicability beyond function approximation, we tested them on the MNIST digit classification task. The 28×28 grayscale images were flattened to 784-dimensional vectors and normalized to [0,1]. Notable results include:
+\begin{itemize}
+    \item A deeper network with architecture $784 \to [100, 100, 100] \to 10$ achieved over 99.5\% test accuracy after training for several hours on consumer hardware.
+    \item A shallower network with architecture $784 \to [100] \to 10$ (using Sprecher's theoretical minimum of one hidden layer) achieved approximately 92\% test accuracy.
+\end{itemize}
+These results demonstrate that while achieving state-of-the-art performance on image tasks would likely require a convolutional design, SNs can attain competitive results on standard benchmarks. More importantly, they confirm that deeper architectures provide significant benefits for complex tasks, consistent with observations in traditional deep learning.
 
 \section{Challenges and future directions}
 While Sprecher Networks offer a theoretically grounded architecture with potential advantages, several challenges remain, alongside exciting opportunities for future research.
