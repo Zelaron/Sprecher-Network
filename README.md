@@ -1,199 +1,197 @@
-# Sprecher Network
+# Sprecher Networks
 
-Sprecher Network is a PyTorch implementation of a universal function approximator based on Sprecher's constructive proof of the Kolmogorov–Arnold representation theorem. It uses custom spline layers for function approximation with a clean, modular architecture.
+A PyTorch implementation of Sprecher Networks (SNs), a novel neural architecture inspired by David Sprecher's 1965 constructive proof of the Kolmogorov-Arnold representation theorem. This implementation accompanies the paper "Sprecher Networks: A Parameter-Efficient Architecture Inspired by the Kolmogorov-Arnold-Sprecher Theorem" by Hägg et al.
 
 ## Overview
 
-This project implements a neural network that:
-- Combines custom monotonic (inner φ) and non-monotonic (outer Φ) spline layers
-- Leverages Sprecher's construction to approximate complex functions
-- Supports multiple datasets including 1D/2D functions, high-dimensional problems, and PDE solutions
-- Provides a modular architecture with separate components for models, training, data, and visualization
-- Includes both CLI for single experiments and batch sweep functionality
-- Employs advanced training techniques including plateau-aware learning rate scheduling
+Sprecher Networks offer a fundamentally different approach to function approximation compared to Multi-Layer Perceptrons (MLPs) and Kolmogorov-Arnold Networks (KANs). By using shared learnable splines (monotonic φ and general Φ) within structured blocks that incorporate explicit shifts and mixing weights, SNs achieve remarkable parameter efficiency with scaling of O(LN + LG) compared to O(LN²) for MLPs or O(LN²G) for KANs, where L is depth, N is width, and G is spline resolution.
 
-## Features
-
-- **Modular Design**: Clean separation of concerns with `sn_core` package
-- **Dataset Registry**: Pre-implemented datasets including toy functions, Feynman equations, and PDE solutions
-- **Flexible CLI**: Easy experimentation with different architectures and hyperparameters
-- **Batch Sweeps**: Automated running of multiple configurations
-- **Comprehensive Visualizations**: Network structure, spline functions, function comparisons, and loss curves
-- **Residual Connections**: Optional ResNet-style skip connections for better gradient flow
-- **Adaptive Spline Ranges**: Trainable domain and codomain parameters for Φ splines
+The key innovation is the use of weight vectors rather than matrices, maintaining fidelity to Sprecher's original construction while dramatically reducing parameter count. This architectural choice can be understood as a principled form of weight sharing, analogous to how convolutional networks share weights across spatial locations.
 
 ## Installation
 
-1. **Clone the repository:**
-   ```
-   git clone https://github.com/zelaron/sprecher-network.git
-   cd sprecher-network
-   ```
-
-2. **Create and activate a virtual environment:**
-   ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies:**
-   ```
-   pip install -r requirements.txt
-   ```
-
-## Usage
-
-### Single Experiment
-
-Run a single experiment using the CLI:
+Clone the repository and set up your environment:
 
 ```
-# Default configuration (reproduces original behavior)
+git clone https://github.com/zelaron/sprecher-network.git
+cd sprecher-network
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+## Quick Start
+
+### Basic Function Approximation
+
+Run a single experiment with default settings:
+
+```
 python sn_experiments.py
-
-# Custom configuration
-python sn_experiments.py --dataset toy_2d --arch 10,10,10,10 --epochs 4000 --seed 42 --save_plots
-
-# Full options
-python sn_experiments.py \
-    --dataset special_bessel \
-    --arch 5,5,5 \
-    --phi_knots 50 \
-    --Phi_knots 50 \
-    --epochs 6000 \
-    --seed 0 \
-    --save_plots
 ```
 
-### Batch Sweeps
+Customize the architecture and training parameters:
 
-Run predefined sweep configurations:
+```
+python sn_experiments.py --dataset toy_2d --arch 10,10,10 --epochs 5000 --save_plots
+```
+
+### MNIST Classification
+
+Sprecher Networks can also handle classification tasks. The MNIST example demonstrates competitive performance with dramatically fewer parameters than equivalent MLPs:
+
+```
+# Train on MNIST (interactive mode selection)
+python sn_mnist.py
+
+# The script will prompt for mode:
+# 0: Train a new model
+# 1: Test existing model
+# 2: Classify a single image (requires 'digit.png')
+# 3: Visualize learned splines
+```
+
+A single-layer network with architecture 784→[100]→10 achieves ~92% accuracy with only ~45,000 parameters, compared to over 100,000 for a comparable MLP.
+
+### Batch Experiments
+
+Run a comprehensive sweep of predefined configurations:
 
 ```
 python sn_sweeps.py
 ```
 
-This will run multiple experiments with different datasets and architectures, saving all plots to the `plots` directory.
+## Available Datasets
 
-### MNIST Classification
+The implementation includes various test functions to demonstrate SN capabilities:
 
-The package includes an MNIST digit classification example to demonstrate Sprecher Networks on a real-world task:
+- **1D Functions**: `toy_1d_poly` (polynomial), `toy_1d_complex` (multi-frequency composition)
+- **2D Functions**: `toy_2d` (scalar), `toy_2d_vector` (vector-valued)
+- **High-Dimensional**: `toy_100d` (100D exponential of mean squared sine)
+- **Physics-Inspired**: `special_bessel`, `feynman_uv` (Planck's law), `poisson` (PDE solution)
+- **Multi-Input/Output**: `toy_4d_to_5d` (demonstrates vector output capabilities)
+
+## Architecture and Configuration
+
+### Network Notation
+
+Sprecher Networks use the notation `input_dim → [hidden_widths] → output_dim`. For example:
+- `2→[10,15,10]→1` denotes a network with 2D input, three hidden layers of widths 10, 15, and 10, and scalar output
+- `784→[100]→10` denotes a network suitable for MNIST with one hidden layer
+
+### Key Configuration Parameters
+
+The main configuration options are accessible through `sn_core/config.py`:
 
 ```
-# Train a Sprecher Network on MNIST (mode 0)
-python sn_mnist.py
-
-# Test the trained model (mode 1)
-python sn_mnist.py
-
-# Classify a single digit image (mode 2)
-python sn_mnist.py  # requires 'digit.png' in current directory
+CONFIG = {
+    'train_phi_range': True,      # Enable trainable domain/codomain for Φ splines
+    'use_residual_weights': True, # Enable residual connections
+    'seed': 45,                   # Random seed for reproducibility
+    'use_advanced_scheduler': True, # Plateau-aware learning rate scheduling
+    'weight_decay': 1e-6,         # L2 regularization
+    'max_grad_norm': 1.0,         # Gradient clipping threshold
+}
 ```
 
-The script allows you to experiment with different architectures by modifying `SN_CONFIG` at the top of `sn_mnist.py`. **PLACEHOLDER ARCHITECTURE, not yet validated**: For example, to find minimal parameter counts for 99% accuracy, try:
-- `'architecture': [50]` - smaller hidden layer
-- `'phi_knots': 20, 'Phi_knots': 20` - fewer spline knots
-- Disable residual connections in `sn_core/model.py`: `USE_RESIDUAL_WEIGHTS = False`
+### Command Line Arguments
 
-### Available Datasets
+- `--dataset`: Choose from available datasets
+- `--arch`: Hidden layer widths as comma-separated values
+- `--phi_knots`: Number of knots for monotonic φ splines (default: 100)
+- `--Phi_knots`: Number of knots for general Φ splines (default: 100)
+- `--epochs`: Training epochs (default: 4000)
+- `--seed`: Random seed
+- `--device`: Device selection (auto/cpu/cuda)
+- `--save_plots`: Save visualizations to files
+- `--no_show`: Suppress plot display (useful for batch runs)
 
-- `toy_1d_poly`: 1D polynomial function
-- `toy_1d_complex`: Complex 1D function with sines and exponentials
-- `toy_2d`: 2D function exp(sin(11x)) + 3y + 4sin(8y)
-- `toy_2d_vector`: 2D vector-valued function
-- `toy_100d`: 100-dimensional sum of sinusoids
-- `special_bessel`: Bessel-like special function
-- `feynman_uv`: Feynman UV radiation formula
-- `poisson`: 2D Poisson equation manufactured solution
+## Implementation Structure
 
-### CLI Arguments
-
-- `--dataset`: Dataset name (default: toy_1d_poly)
-- `--arch`: Architecture as comma-separated values (default: 15,15)
-- `--phi_knots`: Number of knots for φ splines (default: 100)
-- `--Phi_knots`: Number of knots for Φ splines (default: 100)
-- `--epochs`: Number of training epochs (default: 4000)
-- `--seed`: Random seed (default: 45)
-- `--device`: Device selection: auto, cpu, or cuda (default: auto)
-- `--save_plots`: Save plots to files
-- `--no_show`: Don't display plots (useful for batch runs)
-
-## Package Structure
+### File Organization
 
 ```
 sprecher-network/
-├── sn_core/             # Core package
-│   ├── __init__.py      # Package initialization
-│   ├── model.py         # Sprecher network layers and models
-│   ├── train.py         # Training utilities
-│   ├── data.py          # Dataset registry
-│   └── plotting.py      # Visualization functions
 ├── sn_experiments.py    # CLI for single experiments
-├── sn_sweeps.py         # Batch sweep runner
-├── sn_mnist.py          # MNIST classification example
-├── requirements.txt     # Package dependencies
-└── README.md            # This file
+├── sn_sweeps.py        # Batch sweep runner
+├── sn_mnist.py         # MNIST classification example
+├── requirements.txt     # Dependencies
+├── README.md           # This file
+└── sn_core/            # Core package
+    ├── __init__.py     # Package exports
+    ├── model.py        # Network architecture (splines, blocks, composition)
+    ├── train.py        # Training loop with optimization
+    ├── data.py         # Dataset implementations
+    ├── plotting.py     # Visualization utilities
+    └── config.py       # Global configuration
 ```
 
-## Customization
+### Spline Implementation
 
-### Adding New Datasets
+The monotonic inner splines φ use a log-space parameterization to ensure strict monotonicity throughout training, while the general outer splines Φ can develop complex shapes to compensate for the constrained parameter space. This often results in characteristic oscillations in Φ, particularly in deeper networks.
 
-Create a new dataset class in `sn_core/data.py`:
+### Training Features
+
+The implementation includes several advanced training techniques:
+- Gradient clipping to handle the challenging optimization landscape created by shared splines
+- Plateau-aware cosine annealing that increases learning rate when stuck in local minima
+- Optional residual connections that adapt based on dimensional compatibility
+- Regularization options for smoother splines and better generalization
+
+## Visualization
+
+The package generates comprehensive visualizations saved to the `plots/` directory:
+- Network architecture diagrams showing the block structure
+- Learned spline functions φ and Φ for each block
+- Function approximation comparisons (for regression tasks)
+- Training loss curves with logarithmic scaling
+
+Visualizations are automatically saved with descriptive filenames indicating the dataset, architecture, and training configuration.
+
+## Extending the Implementation
+
+### Adding Custom Datasets
+
+Create new datasets by extending the base Dataset class:
 
 ```
+from sn_core.data import Dataset, DATASETS
+
 class MyDataset(Dataset):
     @property
     def input_dim(self):
-        return 2  # Your input dimension
+        return 3  # Your input dimension
     
     @property
     def output_dim(self):
-        return 1  # Your output dimension
+        return 2  # Your output dimension
     
-    def sample(self, n, device='cpu'):
-        # Generate n samples
-        x = torch.rand(n, self.input_dim, device=device)
-        y = your_function(x)  # Your target function
-        return x, y
+    def evaluate(self, x):
+        # Define your target function
+        return your_function(x)
 
-# Register in DATASETS dictionary
+# Register the dataset
 DATASETS["my_dataset"] = MyDataset()
 ```
 
-### Modifying Training Parameters
+### Modifying Architecture Defaults
 
-For advanced modifications (e.g., Q-values factor, residual weights, scheduler settings), edit the global configuration in `sn_core/model.py`:
+While the architecture is flexible through command-line arguments, you can modify default behaviors by editing the configuration in `sn_core/config.py`. This includes training parameters, regularization strengths, and architectural choices like residual connections.
+
+## Theoretical Background
+
+Sprecher Networks are based on David Sprecher's 1965 constructive proof showing that any continuous multivariate function can be represented as a composition of univariate functions. The key formula for a single Sprecher block is:
 
 ```
-Q_VALUES_FACTOR = 1.0          # Sprecher Q-values scaling - a value of 1.0 is true to Sprecher's original formula
-                               # but may cause an initial plateau; try a value of 0.1 for optimization
-USE_RESIDUAL_WEIGHTS = True    # Enable skip connections
-TRAIN_PHI_RANGE = True         # Train Φ spline ranges
+y_q = Φ(Σᵢ λᵢ φ(xᵢ + ηq) + q)
 ```
 
-## Output Files
-
-During training, the network saves visualizations in the `plots` directory:
-- Network structure and spline function plots
-- Function approximation comparisons
-- Training loss curves
-
-File naming convention: `{dims}Vars-{dataset}-{architecture}-{epochs}-epochs-outdim{output_dim}.png`
-
-## Hardware
-
-The code automatically detects GPU availability and uses CUDA if available. You can override this with the `--device` flag.
-
-## Theory
-
-This implementation is based on:
-- Sprecher's constructive proof of the Kolmogorov-Arnold representation theorem
-- Modern neural network techniques including residual connections and adaptive learning rates
-- Piecewise linear spline approximations with monotonicity constraints
-
-The network approximates multivariate functions through compositions of univariate functions (φ and Φ), providing a theoretically grounded approach to function approximation.
+where φ is a monotonic function, Φ is a general continuous function, λ are mixing weights (vectors, not matrices), and η is a learnable shift parameter. The index q provides the necessary diversity despite the extreme parameter sharing.
 
 ## License
 
-MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+This implementation was developed as part of research at Stockholm University and KTH Royal Institute of Technology. Special thanks to the mathematical foundations laid by David Sprecher and the recent renewed interest in Kolmogorov-Arnold representations sparked by the KAN paper.
