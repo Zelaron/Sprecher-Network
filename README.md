@@ -112,10 +112,10 @@ CONFIG = {
 
 ```
 sprecher-network/
-├── sn_experiments.py    # CLI for single experiments
+├── sn_experiments.py   # CLI for single experiments
 ├── sn_sweeps.py        # Batch sweep runner
 ├── sn_mnist.py         # MNIST classification example
-├── requirements.txt     # Dependencies
+├── requirements.txt    # Dependencies
 ├── README.md           # This file
 └── sn_core/            # Core package
     ├── __init__.py     # Package exports
