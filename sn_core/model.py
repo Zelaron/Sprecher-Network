@@ -3,14 +3,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-
-# Global configuration parameters
-PHI_IN_RANGE = (-10.0, 10.0)
-PHI_OUT_RANGE = (-10.0, 10.0)
-TRAIN_PHI_RANGE = True
-Q_VALUES_FACTOR = 1.0
-USE_RESIDUAL_WEIGHTS = True  # Set to False to disable residual connections for testing
-SEED = 45
+from .config import CONFIG, PHI_RANGE, Q_VALUES_FACTOR
 
 
 class PhiRangeParams(nn.Module):
@@ -59,7 +52,7 @@ class SimpleSpline(nn.Module):
             self.register_buffer('knots', torch.linspace(self.in_min, self.in_max, num_knots))
         
         # Initialize spline coefficients
-        torch.manual_seed(SEED)
+        torch.manual_seed(CONFIG['seed'])
         if monotonic:
             # For monotonic splines, use log-space parameters to ensure monotonicity
             # This avoids the need for sorting and improves gradient flow
@@ -175,8 +168,8 @@ class SprecherLayerBlock(nn.Module):
         
         # The outer general spline Φ with trainable range parameters
         # This represents the 'outer function' in Sprecher's theorem
-        self.Phi = SimpleSpline(num_knots=Phi_knots, in_range=PHI_IN_RANGE, out_range=PHI_OUT_RANGE,
-                                train_range=TRAIN_PHI_RANGE, range_params=phi_range_params)
+        self.Phi = SimpleSpline(num_knots=Phi_knots, in_range=PHI_RANGE, out_range=PHI_RANGE,
+                                train_range=CONFIG['train_phi_range'], range_params=phi_range_params)
         
         # Weight VECTOR (not matrix!) - TRUE SPRECHER IMPLEMENTATION
         # Only d_in weights, shared across all d_out outputs
@@ -188,8 +181,8 @@ class SprecherLayerBlock(nn.Module):
         # Q-values for indexing.
         self.register_buffer('q_values', torch.arange(d_out, dtype=torch.float32))
         
-        # Residual connection weight (learnable) - only create if USE_RESIDUAL_WEIGHTS is True
-        if USE_RESIDUAL_WEIGHTS:
+        # Residual connection weight (learnable) - only create if enabled in config
+        if CONFIG['use_residual_weights']:
             if d_in == d_out:
                 # When dimensions match, use a simple scalar weight
                 self.residual_weight = nn.Parameter(torch.tensor(0.1))
@@ -225,8 +218,8 @@ class SprecherLayerBlock(nn.Module):
         # Pass through the general outer spline Φ
         activated = self.Phi(s)
         
-        # Add residual connection if USE_RESIDUAL_WEIGHTS is True
-        if USE_RESIDUAL_WEIGHTS and x_original is not None:
+        # Add residual connection if enabled in config
+        if CONFIG['use_residual_weights'] and x_original is not None:
             if self.residual_weight is not None:
                 # Dimensions match, use scalar weight
                 activated = activated + self.residual_weight * x_original
@@ -253,10 +246,10 @@ class SprecherMultiLayerNetwork(nn.Module):
         self.final_dim = final_dim
         
         # Compute domain and codomain centers and radii (for Φ) from the configured outer ranges.
-        dc = (PHI_IN_RANGE[0] + PHI_IN_RANGE[1]) / 2.0
-        dr = (PHI_IN_RANGE[1] - PHI_IN_RANGE[0]) / 2.0
-        cc = (PHI_OUT_RANGE[0] + PHI_OUT_RANGE[1]) / 2.0
-        cr = (PHI_OUT_RANGE[1] - PHI_OUT_RANGE[0]) / 2.0
+        dc = (PHI_RANGE[0] + PHI_RANGE[1]) / 2.0
+        dr = (PHI_RANGE[1] - PHI_RANGE[0]) / 2.0
+        cc = (PHI_RANGE[0] + PHI_RANGE[1]) / 2.0
+        cr = (PHI_RANGE[1] - PHI_RANGE[0]) / 2.0
 
         # Create global trainable parameters for all Φ splines
         self.phi_range_params = PhiRangeParams(dc=dc, dr=dr, cc=cc, cr=cr)
@@ -299,7 +292,7 @@ class SprecherMultiLayerNetwork(nn.Module):
         x_original = x
         for i, layer in enumerate(self.layers):
             # Pass original input for residual connections
-            if USE_RESIDUAL_WEIGHTS:
+            if CONFIG['use_residual_weights']:
                 x = layer(x, x_original)
                 x_original = x  # Update x_original for next layer
             else:

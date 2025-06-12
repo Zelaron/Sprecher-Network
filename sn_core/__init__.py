@@ -9,6 +9,7 @@ from .model import (
 from .train import train_network, PlateauAwareCosineAnnealingLR
 from .data import get_dataset, DATASETS
 from .plotting import plot_results, plot_loss_curve
+from .config import CONFIG, MNIST_CONFIG, PHI_RANGE, Q_VALUES_FACTOR
 
 __all__ = [
     'PhiRangeParams',
@@ -20,5 +21,9 @@ __all__ = [
     'get_dataset',
     'DATASETS',
     'plot_results',
-    'plot_loss_curve'
+    'plot_loss_curve',
+    'CONFIG',
+    'MNIST_CONFIG',
+    'PHI_RANGE',
+    'Q_VALUES_FACTOR'
 ]

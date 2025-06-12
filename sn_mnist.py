@@ -19,22 +19,7 @@ import matplotlib.pyplot as plt
 
 # Import Sprecher Network components
 from sn_core import SprecherMultiLayerNetwork, plot_results
-from sn_core.model import TRAIN_PHI_RANGE, USE_RESIDUAL_WEIGHTS
-
-# Configuration
-MODEL_FILE = 'sn_mnist_model.pth'
-DATA_DIRECTORY = './data'
-
-# Sprecher Network hyperparameters (easy to modify for experimentation)
-SN_CONFIG = {
-    'architecture': [100],  # Hidden layers between 784 inputs and 10 outputs
-    'phi_knots': 50,        # Knots for monotonic splines
-    'Phi_knots': 50,        # Knots for general splines
-    'learning_rate': 0.001,
-    'weight_decay': 1e-6,
-    'batch_size': 64,
-    'epochs': 3,
-}
+from sn_core.config import CONFIG, MNIST_CONFIG
 
 
 def count_parameters_detailed(model):
@@ -74,7 +59,7 @@ def count_parameters_detailed(model):
     core_params = total_spline_knots + lambda_params + eta_params
     
     # Total parameters
-    if TRAIN_PHI_RANGE:
+    if CONFIG['train_phi_range']:
         total_params = core_params + residual_params + output_params + phi_range_params
     else:
         total_params = core_params + residual_params + output_params
@@ -286,16 +271,16 @@ def main():
     if mode == 0:  # Training
         # Initialize model
         model = MNISTSprecherNet(
-            architecture=SN_CONFIG['architecture'],
-            phi_knots=SN_CONFIG['phi_knots'],
-            Phi_knots=SN_CONFIG['Phi_knots']
+            architecture=MNIST_CONFIG['architecture'],
+            phi_knots=MNIST_CONFIG['phi_knots'],
+            Phi_knots=MNIST_CONFIG['Phi_knots']
         ).to(device)
         
         # Print architecture details
         print_architecture_details(
-            SN_CONFIG['architecture'], 
-            SN_CONFIG['phi_knots'], 
-            SN_CONFIG['Phi_knots']
+            MNIST_CONFIG['architecture'], 
+            MNIST_CONFIG['phi_knots'], 
+            MNIST_CONFIG['Phi_knots']
         )
         
         # Count and display parameters
@@ -304,14 +289,14 @@ def main():
         print(f"  - Spline knots: {param_counts['spline_knots']:,}")
         print(f"  - Lambda (λ) weight matrices: {param_counts['lambda']:,}")
         print(f"  - Eta (η) shift parameters: {param_counts['eta']:,}")
-        if USE_RESIDUAL_WEIGHTS and param_counts['residual'] > 0:
+        if CONFIG['use_residual_weights'] and param_counts['residual'] > 0:
             print(f"  - Residual connection weights: {param_counts['residual']:,}")
         print(f"  - Output scale and bias: {param_counts['output']:,}")
-        if TRAIN_PHI_RANGE and param_counts['phi_range'] > 0:
+        if CONFIG['train_phi_range'] and param_counts['phi_range'] > 0:
             print(f"  - Global range parameters (dc, dr, cc, cr): {param_counts['phi_range']:,}")
         
         # Check if model exists
-        model_exists = os.path.exists(MODEL_FILE)
+        model_exists = os.path.exists(MNIST_CONFIG['model_file'])
         retrain_from_scratch = False
         
         if model_exists:
@@ -328,15 +313,15 @@ def main():
                     print("Please enter a valid integer.")
             
             if retrain_from_scratch:
-                os.remove(MODEL_FILE)
-                print(f"Deleted existing model file: {MODEL_FILE}")
-                if os.path.exists(DATA_DIRECTORY):
-                    shutil.rmtree(DATA_DIRECTORY)
-                    print(f"Deleted existing data directory: {DATA_DIRECTORY}")
+                os.remove(MNIST_CONFIG['model_file'])
+                print(f"Deleted existing model file: {MNIST_CONFIG['model_file']}")
+                if os.path.exists(MNIST_CONFIG['data_directory']):
+                    shutil.rmtree(MNIST_CONFIG['data_directory'])
+                    print(f"Deleted existing data directory: {MNIST_CONFIG['data_directory']}")
         
         # Load model if continuing training
         if model_exists and not retrain_from_scratch:
-            model.load_state_dict(torch.load(MODEL_FILE, map_location=device), strict=False)
+            model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
             print("Loaded saved model for further training.")
         
         # Setup data
@@ -344,56 +329,56 @@ def main():
             transforms.ToTensor(),
             transforms.Normalize((0.5,), (0.5,))  # This gives [-1, 1], we'll convert to [0, 1] later
         ])
-        train_dataset = MNIST(root=DATA_DIRECTORY, train=True, download=True, transform=transform)
-        train_loader = DataLoader(train_dataset, batch_size=SN_CONFIG['batch_size'], shuffle=True)
+        train_dataset = MNIST(root=MNIST_CONFIG['data_directory'], train=True, download=True, transform=transform)
+        train_loader = DataLoader(train_dataset, batch_size=MNIST_CONFIG['batch_size'], shuffle=True)
         
         # Setup optimizer (using AdamW like in SN code)
         optimizer = optim.AdamW(
             model.parameters(), 
-            lr=SN_CONFIG['learning_rate'],
-            weight_decay=SN_CONFIG['weight_decay']
+            lr=MNIST_CONFIG['learning_rate'],
+            weight_decay=MNIST_CONFIG['weight_decay']
         )
         loss_function = nn.CrossEntropyLoss()
         
         # Training loop
-        print(f"\nStarting training for {SN_CONFIG['epochs']} epochs...")
+        print(f"\nStarting training for {MNIST_CONFIG['epochs']} epochs...")
         best_accuracy = 0
         
-        for epoch in range(SN_CONFIG['epochs']):
-            print(f"\nEpoch {epoch + 1}/{SN_CONFIG['epochs']}")
+        for epoch in range(MNIST_CONFIG['epochs']):
+            print(f"\nEpoch {epoch + 1}/{MNIST_CONFIG['epochs']}")
             avg_loss, train_acc = train_epoch(model, train_loader, optimizer, loss_function, device)
             print(f"Average loss: {avg_loss:.4f}, Training accuracy: {train_acc:.2f}%")
             
             # Save model after each epoch
-            torch.save(model.state_dict(), MODEL_FILE)
+            torch.save(model.state_dict(), MNIST_CONFIG['model_file'])
             
             if train_acc > best_accuracy:
                 best_accuracy = train_acc
-                torch.save(model.state_dict(), MODEL_FILE.replace('.pth', '_best.pth'))
+                torch.save(model.state_dict(), MNIST_CONFIG['model_file'].replace('.pth', '_best.pth'))
         
         print(f"\nTraining complete! Best accuracy: {best_accuracy:.2f}%")
         
     elif mode == 1:  # Testing
         # Load model
         model = MNISTSprecherNet(
-            architecture=SN_CONFIG['architecture'],
-            phi_knots=SN_CONFIG['phi_knots'],
-            Phi_knots=SN_CONFIG['Phi_knots']
+            architecture=MNIST_CONFIG['architecture'],
+            phi_knots=MNIST_CONFIG['phi_knots'],
+            Phi_knots=MNIST_CONFIG['Phi_knots']
         ).to(device)
         
-        if not os.path.exists(MODEL_FILE):
-            print(f"Error: Model file {MODEL_FILE} not found. Please train first.")
+        if not os.path.exists(MNIST_CONFIG['model_file']):
+            print(f"Error: Model file {MNIST_CONFIG['model_file']} not found. Please train first.")
             return
         
         # Load with strict=False to handle missing buffers
-        model.load_state_dict(torch.load(MODEL_FILE, map_location=device), strict=False)
+        model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
         model.eval()
         
         # Print architecture and parameter count
         print_architecture_details(
-            SN_CONFIG['architecture'], 
-            SN_CONFIG['phi_knots'], 
-            SN_CONFIG['Phi_knots']
+            MNIST_CONFIG['architecture'], 
+            MNIST_CONFIG['phi_knots'], 
+            MNIST_CONFIG['Phi_knots']
         )
         
         param_counts = count_parameters_detailed(model)
@@ -404,8 +389,8 @@ def main():
             transforms.ToTensor(),
             transforms.Normalize((0.5,), (0.5,))
         ])
-        test_dataset = MNIST(root=DATA_DIRECTORY, train=False, download=True, transform=transform)
-        test_loader = DataLoader(test_dataset, batch_size=SN_CONFIG['batch_size'], shuffle=False)
+        test_dataset = MNIST(root=MNIST_CONFIG['data_directory'], train=False, download=True, transform=transform)
+        test_loader = DataLoader(test_dataset, batch_size=MNIST_CONFIG['batch_size'], shuffle=False)
         
         # Test
         accuracy = test_model(model, test_loader, device)
@@ -414,17 +399,17 @@ def main():
     elif mode == 2:  # Inference
         # Load model
         model = MNISTSprecherNet(
-            architecture=SN_CONFIG['architecture'],
-            phi_knots=SN_CONFIG['phi_knots'],
-            Phi_knots=SN_CONFIG['Phi_knots']
+            architecture=MNIST_CONFIG['architecture'],
+            phi_knots=MNIST_CONFIG['phi_knots'],
+            Phi_knots=MNIST_CONFIG['Phi_knots']
         ).to(device)
         
-        if not os.path.exists(MODEL_FILE):
-            print(f"Error: Model file {MODEL_FILE} not found. Please train first.")
+        if not os.path.exists(MNIST_CONFIG['model_file']):
+            print(f"Error: Model file {MNIST_CONFIG['model_file']} not found. Please train first.")
             return
         
         # Load with strict=False to handle missing buffers
-        model.load_state_dict(torch.load(MODEL_FILE, map_location=device), strict=False)
+        model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
         model.eval()
         
         # Process image
@@ -452,24 +437,24 @@ def main():
     elif mode == 3:  # Plot splines
         # Load model
         model = MNISTSprecherNet(
-            architecture=SN_CONFIG['architecture'],
-            phi_knots=SN_CONFIG['phi_knots'],
-            Phi_knots=SN_CONFIG['Phi_knots']
+            architecture=MNIST_CONFIG['architecture'],
+            phi_knots=MNIST_CONFIG['phi_knots'],
+            Phi_knots=MNIST_CONFIG['Phi_knots']
         ).to(device)
         
-        if not os.path.exists(MODEL_FILE):
-            print(f"Error: Model file {MODEL_FILE} not found. Please train first.")
+        if not os.path.exists(MNIST_CONFIG['model_file']):
+            print(f"Error: Model file {MNIST_CONFIG['model_file']} not found. Please train first.")
             return
         
         # Load with strict=False to handle missing buffers
-        model.load_state_dict(torch.load(MODEL_FILE, map_location=device), strict=False)
+        model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
         model.eval()
         
         # Print architecture details
         print_architecture_details(
-            SN_CONFIG['architecture'], 
-            SN_CONFIG['phi_knots'], 
-            SN_CONFIG['Phi_knots']
+            MNIST_CONFIG['architecture'], 
+            MNIST_CONFIG['phi_knots'], 
+            MNIST_CONFIG['Phi_knots']
         )
         
         # Create plots directory if it doesn't exist
