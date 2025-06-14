@@ -4,11 +4,11 @@
 CONFIG = {
     # Model settings
     'train_phi_codomain': True,  # Whether to train Φ codomain parameters
-    'use_residual_weights': False,
+    'use_residual_weights': True,
     'seed': 45,
     
     # Training settings
-    'use_advanced_scheduler': False,
+    'use_advanced_scheduler': True,
     'weight_decay': 1e-6,
     'max_grad_norm': 1.0,
     
@@ -21,10 +21,10 @@ CONFIG = {
     # Domain settings
     'use_theoretical_domains': True,  # Use theoretical domain computation
     'domain_safety_margin': 0.0,  # No safety margin by default (exact domains)
-    'debug_domains': True,  # Print domain information during training
+    'debug_domains': False,  # Print domain information during training
     
     # Domain violation tracking
-    'track_domain_violations': True,  # Enable to track out-of-domain evaluations
+    'track_domain_violations': False,  # Enable to track out-of-domain evaluations
     'verbose_domain_violations': False,  # Print violations as they occur
 }
 
