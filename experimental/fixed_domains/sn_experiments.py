@@ -29,6 +29,10 @@ def parse_args():
                       help="Save plots to files")
     parser.add_argument("--no_show", action="store_true",
                       help="Don't show plots (useful for batch runs)")
+    parser.add_argument("--debug_domains", action="store_true",
+                      help="Enable domain debugging output")
+    parser.add_argument("--track_violations", action="store_true",
+                      help="Track domain violations during training")
     
     return parser.parse_args()
 
@@ -61,12 +65,22 @@ def main():
     else:
         device = args.device
     
+    # Enable domain debugging if requested
+    from sn_core.config import CONFIG
+    if args.debug_domains:
+        CONFIG['debug_domains'] = True
+    if args.track_violations:
+        CONFIG['track_domain_violations'] = True
+        print("Domain violation tracking enabled.")
+    
     print(f"Using device: {device}")
     print(f"Dataset: {args.dataset}")
     print(f"Architecture: {architecture}")
     print(f"phi knots: {args.phi_knots}, Phi knots: {args.Phi_knots}")
     print(f"Epochs: {args.epochs}")
     print(f"Seed: {args.seed}")
+    print(f"Theoretical domains: {CONFIG.get('use_theoretical_domains', True)}")
+    print(f"Domain safety margin: {CONFIG.get('domain_safety_margin', 0.0)}")
     print()
     
     # Train network
@@ -80,6 +94,17 @@ def main():
         Phi_knots=args.Phi_knots,
         seed=args.seed
     )
+    
+    # Print final domain information
+    print("\nFinal domain ranges:")
+    for idx, layer in enumerate(layers):
+        print(f"Layer {idx}:")
+        print(f"  φ domain: [{layer.phi.in_min:.3f}, {layer.phi.in_max:.3f}]")
+        print(f"  Φ domain: [{layer.Phi.in_min:.3f}, {layer.Phi.in_max:.3f}]")
+        if hasattr(layer, 'input_range') and layer.input_range is not None:
+            print(f"  Input range: {layer.input_range}")
+        if hasattr(layer, 'output_range') and layer.output_range is not None:
+            print(f"  Output range: {layer.output_range}")
     
     # --- Graceful Fallback Plotting Logic ---
     try:

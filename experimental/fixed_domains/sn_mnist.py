@@ -115,6 +115,22 @@ class MNISTSprecherNet(nn.Module):
         if x.dim() > 2:
             x = x.view(x.size(0), -1)
         return self.sprecher_net(x)
+    
+    def update_all_domains(self):
+        """Forward domain update call to the underlying Sprecher network."""
+        self.sprecher_net.update_all_domains()
+    
+    def get_domain_violation_stats(self):
+        """Forward domain violation stats call."""
+        return self.sprecher_net.get_domain_violation_stats()
+    
+    def reset_domain_violation_stats(self):
+        """Forward domain violation reset call."""
+        self.sprecher_net.reset_domain_violation_stats()
+    
+    def print_domain_violation_report(self):
+        """Forward domain violation report call."""
+        self.sprecher_net.print_domain_violation_report()
 
 
 def train_epoch(model, train_loader, optimizer, loss_function, device):
@@ -124,13 +140,21 @@ def train_epoch(model, train_loader, optimizer, loss_function, device):
     correct = 0
     total = 0
     
+    # Reset domain violation stats at start of epoch if tracking
+    if CONFIG.get('track_domain_violations', False):
+        model.reset_domain_violation_stats()
+    
     with tqdm(train_loader, unit="batch") as tepoch:
-        for images, labels in tepoch:
+        for batch_idx, (images, labels) in enumerate(tepoch):
             images, labels = images.to(device), labels.to(device)
             
             # Flatten and normalize to [0, 1]
             images = images.view(images.size(0), -1)
             images = (images + 1) / 2  # Convert from [-1, 1] to [0, 1]
+            
+            # Update domains before each forward pass
+            if CONFIG.get('use_theoretical_domains', True):
+                model.update_all_domains()
             
             optimizer.zero_grad()
             outputs = model(images)
@@ -148,7 +172,12 @@ def train_epoch(model, train_loader, optimizer, loss_function, device):
             correct += (predicted == labels).sum().item()
             
             accuracy = 100 * correct / total
-            tepoch.set_postfix(loss=epoch_loss/len(train_loader), acc=f"{accuracy:.1f}%")
+            tepoch.set_postfix(loss=epoch_loss/(batch_idx+1), acc=f"{accuracy:.1f}%")
+    
+    # Print domain violation report at end of epoch if tracking
+    if CONFIG.get('track_domain_violations', False):
+        print("\nEpoch domain violations:")
+        model.print_domain_violation_report()
     
     return epoch_loss / len(train_loader), accuracy
 
@@ -159,6 +188,10 @@ def test_model(model, test_loader, device):
     correct = 0
     total = 0
     
+    # Reset domain violation stats if tracking
+    if CONFIG.get('track_domain_violations', False):
+        model.reset_domain_violation_stats()
+    
     with torch.no_grad():
         for images, labels in tqdm(test_loader, desc="Testing"):
             images, labels = images.to(device), labels.to(device)
@@ -167,10 +200,19 @@ def test_model(model, test_loader, device):
             images = images.view(images.size(0), -1)
             images = (images + 1) / 2
             
+            # Update domains before forward pass
+            if CONFIG.get('use_theoretical_domains', True):
+                model.update_all_domains()
+            
             outputs = model(images)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
+    
+    # Print domain violation report if tracking
+    if CONFIG.get('track_domain_violations', False):
+        print("\nTest set domain violations:")
+        model.print_domain_violation_report()
     
     accuracy = 100 * correct / total
     return accuracy
@@ -346,6 +388,7 @@ def main():
         
         for epoch in range(MNIST_CONFIG['epochs']):
             print(f"\nEpoch {epoch + 1}/{MNIST_CONFIG['epochs']}")
+            
             avg_loss, train_acc = train_epoch(model, train_loader, optimizer, loss_function, device)
             print(f"Average loss: {avg_loss:.4f}, Training accuracy: {train_acc:.2f}%")
             
@@ -373,12 +416,6 @@ def main():
         # Load with strict=False to handle missing buffers
         model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
         model.eval()
-        
-        # Run a dummy forward pass to update spline domains
-        print("Updating spline domains...")
-        with torch.no_grad():
-            dummy_input = torch.rand(1, 784, device=device)
-            _ = model(dummy_input)
         
         # Print architecture and parameter count
         print_architecture_details(
@@ -418,10 +455,9 @@ def main():
         model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
         model.eval()
         
-        # Run a dummy forward pass to update spline domains
-        with torch.no_grad():
-            dummy_input = torch.rand(1, 784, device=device)
-            _ = model(dummy_input)
+        # Update domains with loaded parameters
+        if CONFIG.get('use_theoretical_domains', True):
+            model.update_all_domains()
         
         # Process image
         if not os.path.exists('digit.png'):
@@ -461,12 +497,10 @@ def main():
         model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
         model.eval()
         
-        # Run a dummy forward pass to update spline domains
-        print("Running forward pass to update spline domains...")
-        with torch.no_grad():
-            # Create dummy MNIST-like input
-            dummy_input = torch.rand(1, 784, device=device)  # One sample, 784 features in [0,1]
-            _ = model(dummy_input)
+        # Update domains with loaded parameters
+        if CONFIG.get('use_theoretical_domains', True):
+            print("Updating spline domains based on loaded parameters...")
+            model.update_all_domains()
         
         # Print architecture details
         print_architecture_details(
@@ -475,8 +509,8 @@ def main():
             MNIST_CONFIG['Phi_knots']
         )
         
-        # Also print the actual domains after the forward pass
-        print("\nSpline domains after forward pass:")
+        # Also print the actual domains after domain update
+        print("\nSpline domains after theoretical update:")
         for idx, layer in enumerate(model.sprecher_net.layers):
             print(f"Block {idx+1}:")
             print(f"  φ domain: [{layer.phi.in_min:.3f}, {layer.phi.in_max:.3f}]")
@@ -485,6 +519,10 @@ def main():
                 cc = layer.phi_codomain_params.cc.item()
                 cr = layer.phi_codomain_params.cr.item()
                 print(f"  Φ codomain: [{cc-cr:.3f}, {cc+cr:.3f}]")
+            if hasattr(layer, 'input_range') and layer.input_range is not None:
+                print(f"  Input range: {layer.input_range}")
+            if hasattr(layer, 'output_range') and layer.output_range is not None:
+                print(f"  Output range: {layer.output_range}")
         
         # Create plots directory if it doesn't exist
         os.makedirs("plots", exist_ok=True)
