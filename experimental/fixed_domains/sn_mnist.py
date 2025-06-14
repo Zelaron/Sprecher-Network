@@ -374,6 +374,12 @@ def main():
         model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
         model.eval()
         
+        # Run a dummy forward pass to update spline domains
+        print("Updating spline domains...")
+        with torch.no_grad():
+            dummy_input = torch.rand(1, 784, device=device)
+            _ = model(dummy_input)
+        
         # Print architecture and parameter count
         print_architecture_details(
             MNIST_CONFIG['architecture'], 
@@ -411,6 +417,11 @@ def main():
         # Load with strict=False to handle missing buffers
         model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
         model.eval()
+        
+        # Run a dummy forward pass to update spline domains
+        with torch.no_grad():
+            dummy_input = torch.rand(1, 784, device=device)
+            _ = model(dummy_input)
         
         # Process image
         if not os.path.exists('digit.png'):
@@ -450,12 +461,30 @@ def main():
         model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
         model.eval()
         
+        # Run a dummy forward pass to update spline domains
+        print("Running forward pass to update spline domains...")
+        with torch.no_grad():
+            # Create dummy MNIST-like input
+            dummy_input = torch.rand(1, 784, device=device)  # One sample, 784 features in [0,1]
+            _ = model(dummy_input)
+        
         # Print architecture details
         print_architecture_details(
             MNIST_CONFIG['architecture'], 
             MNIST_CONFIG['phi_knots'], 
             MNIST_CONFIG['Phi_knots']
         )
+        
+        # Also print the actual domains after the forward pass
+        print("\nSpline domains after forward pass:")
+        for idx, layer in enumerate(model.sprecher_net.layers):
+            print(f"Block {idx+1}:")
+            print(f"  φ domain: [{layer.phi.in_min:.3f}, {layer.phi.in_max:.3f}]")
+            print(f"  Φ domain: [{layer.Phi.in_min:.3f}, {layer.Phi.in_max:.3f}]")
+            if hasattr(layer, 'phi_codomain_params') and layer.phi_codomain_params is not None:
+                cc = layer.phi_codomain_params.cc.item()
+                cr = layer.phi_codomain_params.cr.item()
+                print(f"  Φ codomain: [{cc-cr:.3f}, {cc+cr:.3f}]")
         
         # Create plots directory if it doesn't exist
         os.makedirs("plots", exist_ok=True)
