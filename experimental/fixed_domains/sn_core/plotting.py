@@ -349,7 +349,12 @@ def plot_results(model, layers, dataset=None, save_path=None,
             ax_phi.grid(True, alpha=0.3)
             ax_phi.set_xlabel('Input', fontsize=9)
             ax_phi.set_ylabel('Output', fontsize=9)
-            ax_phi.set_title(f"{block_label} $\\phi^{{({j})}}$ [Domain: {x_min:.2f}, {x_max:.2f}]", fontsize=9)
+            
+            # Add theoretical range info if available
+            domain_info = f"[{x_min:.2f}, {x_max:.2f}]"
+            if hasattr(layer, 'input_range') and layer.input_range is not None:
+                domain_info += f"\nInput range: [{layer.input_range.min:.2f}, {layer.input_range.max:.2f}]"
+            ax_phi.set_title(f"{block_label} $\\phi^{{({j})}}$ Domain: {domain_info}", fontsize=9)
             
             # Plot Phi spline
             ax_Phi = fig.add_subplot(gs_top[0, col_Phi])
@@ -365,15 +370,20 @@ def plot_results(model, layers, dataset=None, save_path=None,
                 if CONFIG['train_phi_codomain'] and hasattr(layer, 'phi_codomain_params') and layer.phi_codomain_params is not None:
                     cc = layer.phi_codomain_params.cc.item()
                     cr = layer.phi_codomain_params.cr.item()
-                    codomain_str = f", Codomain: {cc-cr:.2f}, {cc+cr:.2f}]"
+                    codomain_str = f", Codomain: [{cc-cr:.2f}, {cc+cr:.2f}]"
                 else:
-                    codomain_str = "]"
+                    codomain_str = ""
                     
             ax_Phi.plot(x_vals.cpu(), y_vals.cpu(), 'm-', linewidth=2)
             ax_Phi.grid(True, alpha=0.3)
             ax_Phi.set_xlabel('Input', fontsize=9)
             ax_Phi.set_ylabel('Output', fontsize=9)
-            ax_Phi.set_title(f"{block_label} $\\Phi^{{({j})}}$ [D: {in_min:.2f}, {in_max:.2f}{codomain_str}", fontsize=9)
+            
+            # Add output range info if available
+            title_str = f"{block_label} $\\Phi^{{({j})}}$ D: [{in_min:.2f}, {in_max:.2f}]{codomain_str}"
+            if hasattr(layer, 'output_range') and layer.output_range is not None:
+                title_str += f"\nOut range: [{layer.output_range.min:.2f}, {layer.output_range.max:.2f}]"
+            ax_Phi.set_title(title_str, fontsize=9)
     
     # Plot function comparison if dataset is provided and requested
     if plot_function and dataset is not None and gs_bottom_top is not None:

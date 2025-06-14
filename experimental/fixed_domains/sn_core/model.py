@@ -6,6 +6,20 @@ import numpy as np
 from .config import CONFIG, PHI_RANGE, Q_VALUES_FACTOR
 
 
+class TheoreticalRange:
+    """Tracks theoretical min/max values for a layer's input/output."""
+    def __init__(self, min_val, max_val):
+        self.min = min_val
+        self.max = max_val
+    
+    def __repr__(self):
+        return f"TheoreticalRange({self.min:.3f}, {self.max:.3f})"
+    
+    def contains(self, value):
+        """Check if a value is within this range."""
+        return self.min <= value <= self.max
+
+
 class PhiCodomainParams(nn.Module):
     """
     Trainable codomain parameters for Φ splines.
@@ -40,6 +54,10 @@ class SimpleSpline(nn.Module):
         # Create knots buffer - will be updated dynamically
         self.register_buffer('knots', torch.linspace(self.in_min, self.in_max, num_knots))
         
+        # Domain violation tracking
+        self.domain_violations = 0
+        self.total_evaluations = 0
+        
         # Initialize spline coefficients
         torch.manual_seed(CONFIG['seed'])
         if monotonic:
@@ -65,6 +83,13 @@ class SimpleSpline(nn.Module):
         """Update the domain of the spline by adjusting knot positions."""
         with torch.no_grad():
             self.in_min, self.in_max = new_range
+            
+            # Add safety margin only if explicitly configured (default is 0)
+            if CONFIG.get('domain_safety_margin', 0.0) > 0:
+                margin = CONFIG['domain_safety_margin'] * (self.in_max - self.in_min)
+                self.in_min -= margin
+                self.in_max += margin
+            
             self.knots.data = torch.linspace(self.in_min, self.in_max, self.num_knots, 
                                            device=self.knots.device, dtype=self.knots.dtype)
     
@@ -83,8 +108,48 @@ class SimpleSpline(nn.Module):
             # They will be scaled by codomain if trainable
             return self.coeffs
     
+    def get_actual_output_range(self):
+        """Compute the actual range of outputs this spline can produce."""
+        with torch.no_grad():
+            coeffs = self.get_coeffs()
+            
+            if self.monotonic:
+                # Monotonic splines always output [0, 1]
+                return TheoreticalRange(0.0, 1.0)
+            else:
+                # For Φ splines, the piecewise linear function achieves its extrema at knots
+                # So we just need to check the coefficient values
+                if self.train_codomain and self.codomain_params is not None:
+                    # Apply codomain transformation to coefficients
+                    cc = self.codomain_params.cc.item()
+                    cr = self.codomain_params.cr.item()
+                    coeff_min = coeffs.min().item()
+                    coeff_max = coeffs.max().item()
+                    
+                    # Transform each coefficient
+                    normalized_coeffs = (coeffs - coeff_min) / (coeff_max - coeff_min + 1e-8)
+                    transformed_coeffs = cc - cr + 2 * cr * normalized_coeffs
+                    
+                    # True min/max are among the transformed coefficients
+                    actual_min = transformed_coeffs.min().item()
+                    actual_max = transformed_coeffs.max().item()
+                else:
+                    # No transformation needed - min/max are just coefficient extrema
+                    actual_min = coeffs.min().item()
+                    actual_max = coeffs.max().item()
+                
+                return TheoreticalRange(actual_min, actual_max)
+    
     def forward(self, x):
         x = x.to(self.knots.device)
+        
+        # Track domain violations if debugging
+        if CONFIG.get('track_domain_violations', False):
+            self.total_evaluations += x.numel()
+            violations = ((x < self.in_min) | (x > self.in_max)).sum().item()
+            self.domain_violations += violations
+            if violations > 0 and CONFIG.get('verbose_domain_violations', False):
+                print(f"Domain violation: {violations}/{x.numel()} values outside [{self.in_min:.3f}, {self.in_max:.3f}]")
         
         # Handle out-of-domain inputs by extending the spline linearly
         # This is more theoretically sound than clamping
@@ -160,6 +225,17 @@ class SimpleSpline(nn.Module):
                                    result)
         
         return result
+    
+    def get_domain_violation_stats(self):
+        """Return domain violation statistics."""
+        if self.total_evaluations == 0:
+            return 0.0
+        return self.domain_violations / self.total_evaluations
+    
+    def reset_domain_violation_stats(self):
+        """Reset domain violation tracking."""
+        self.domain_violations = 0
+        self.total_evaluations = 0
 
 
 class SprecherLayerBlock(nn.Module):
@@ -177,6 +253,10 @@ class SprecherLayerBlock(nn.Module):
         self.d_out = d_out
         self.layer_num = layer_num
         self.is_final = is_final
+        
+        # Theoretical range tracking
+        self.input_range = TheoreticalRange(0.0, 1.0) if layer_num == 0 else None
+        self.output_range = None
         
         # Create codomain parameters for Φ if trainable
         if CONFIG['train_phi_codomain']:
@@ -230,24 +310,83 @@ class SprecherLayerBlock(nn.Module):
             self.residual_weight = None
             self.residual_projection = None
     
-    def forward(self, x, x_original=None):
-        # Update φ domain based on current η and input range
-        with torch.no_grad():
-            if self.layer_num == 0:
-                # First layer: inputs assumed to be in [0,1]
-                # Domain needs to handle x + η*q for q in [0, d_out-1]
-                phi_max = 1.0 + self.eta.item() * (self.d_out - 1)
-                self.phi.update_domain((0, phi_max))
-            else:
-                # Deeper layers: based on actual input range
-                x_min = x.min().item()
-                x_max = x.max().item()
-                # Domain needs to handle [x_min, x_max] + η*q
-                phi_min = x_min
-                phi_max = x_max + self.eta.item() * (self.d_out - 1)
-                self.phi.update_domain((phi_min, phi_max))
+    def update_phi_domain_theoretical(self, input_range):
+        """Update φ domain based on theoretical bounds."""
+        self.input_range = input_range
         
-        # Regular forward pass
+        # Domain needs to handle [in_min, in_max] + η*q for q in [0, d_out-1]
+        # We need to handle both positive and negative η
+        eta_val = self.eta.item()
+        
+        if eta_val >= 0:
+            # Normal case: η is positive
+            phi_min = input_range.min
+            phi_max = input_range.max + eta_val * (self.d_out - 1)
+        else:
+            # When η is negative, the max shift is at q=0 and min shift is at q=(d_out-1)
+            phi_min = input_range.min + eta_val * (self.d_out - 1)  # This will be less than input_range.min
+            phi_max = input_range.max  # No shift when q=0
+        
+        # Ensure domain is valid (min < max)
+        if phi_min >= phi_max:
+            # This shouldn't happen in theory, but let's add a small epsilon to ensure validity
+            print(f"Warning: Invalid φ domain [{phi_min:.3f}, {phi_max:.3f}] in layer {self.layer_num}")
+            phi_max = phi_min + 0.1
+        
+        self.phi.update_domain((phi_min, phi_max))
+    
+    def update_Phi_domain_theoretical(self):
+        """Update Φ domain based on theoretical bounds."""
+        # φ outputs in [0,1], weighted by lambdas, plus q term
+        with torch.no_grad():
+            lambda_sum_pos = torch.sum(torch.clamp(self.lambdas, min=0)).item()
+            lambda_sum_neg = torch.sum(torch.clamp(self.lambdas, max=0)).item()
+            
+            # φ outputs in [0,1], so weighted sum is in [lambda_sum_neg, lambda_sum_pos]
+            # Plus q term adds [0, Q_VALUES_FACTOR*(d_out-1)]
+            phi_domain_min = lambda_sum_neg
+            phi_domain_max = lambda_sum_pos + Q_VALUES_FACTOR * (self.d_out - 1)
+            
+            self.Phi.update_domain((phi_domain_min, phi_domain_max))
+    
+    def compute_output_range_theoretical(self):
+        """Compute theoretical output range of this block."""
+        # Get the actual output range of Φ
+        phi_range = self.Phi.get_actual_output_range()
+        
+        # If residual connections are used, we need to account for them
+        if CONFIG['use_residual_weights'] and self.input_range is not None:
+            if self.residual_weight is not None:
+                # Scalar residual weight
+                residual_contribution_min = self.residual_weight.item() * self.input_range.min
+                residual_contribution_max = self.residual_weight.item() * self.input_range.max
+                
+                # Account for both positive and negative weights
+                if self.residual_weight.item() >= 0:
+                    final_min = phi_range.min + residual_contribution_min
+                    final_max = phi_range.max + residual_contribution_max
+                else:
+                    final_min = phi_range.min + residual_contribution_max
+                    final_max = phi_range.max + residual_contribution_min
+            elif self.residual_projection is not None:
+                # For projection, we need to be more conservative
+                # Assume worst-case amplification by projection matrix
+                weight_norm = torch.norm(self.residual_projection.weight, p=2).item()
+                residual_bound = weight_norm * max(abs(self.input_range.min), abs(self.input_range.max))
+                final_min = phi_range.min - residual_bound
+                final_max = phi_range.max + residual_bound
+            else:
+                final_min = phi_range.min
+                final_max = phi_range.max
+        else:
+            final_min = phi_range.min
+            final_max = phi_range.max
+        
+        self.output_range = TheoreticalRange(final_min, final_max)
+        return self.output_range
+    
+    def forward(self, x, x_original=None):
+        # Regular forward pass (no domain updates here anymore!)
         x_expanded = x.unsqueeze(-1)  # shape: (batch_size, d_in, 1)
         q = self.q_values.view(1, 1, -1)  # shape: (1, 1, d_out)
         
@@ -260,17 +399,6 @@ class SprecherLayerBlock(nn.Module):
         # Weight by λ (now a VECTOR) and sum over input dimension
         weighted = phi_out * self.lambdas.view(1, -1, 1)  # Broadcast: (1, d_in, 1)
         s = weighted.sum(dim=1) + Q_VALUES_FACTOR * self.q_values  # shape: (batch_size, d_out)
-        
-        # Update Φ domain based on current λ values
-        with torch.no_grad():
-            # Compute the range of possible inputs to Φ
-            lambda_sum_pos = torch.sum(torch.clamp(self.lambdas, min=0)).item()
-            lambda_sum_neg = torch.sum(torch.clamp(self.lambdas, max=0)).item()
-            # φ outputs in [0,1], so weighted sum is in [lambda_sum_neg, lambda_sum_pos]
-            # Plus q term adds [0, Q_VALUES_FACTOR*(d_out-1)]
-            phi_domain_min = lambda_sum_neg
-            phi_domain_max = lambda_sum_pos + Q_VALUES_FACTOR * (self.d_out - 1)
-            self.Phi.update_domain((phi_domain_min, phi_domain_max))
         
         # Pass through the general outer spline Φ
         activated = self.Phi(s)
@@ -292,13 +420,23 @@ class SprecherLayerBlock(nn.Module):
     
     def get_output_range(self):
         """Get the current output range of this block (for the next layer's input)."""
-        if CONFIG['train_phi_codomain'] and self.phi_codomain_params is not None:
-            cc = self.phi_codomain_params.cc.item()
-            cr = self.phi_codomain_params.cr.item()
-            return (cc - cr, cc + cr)
-        else:
-            # Use the fixed range
-            return (-10.0, 10.0)  # Or whatever fixed range is appropriate
+        # Return the computed theoretical output range
+        if self.output_range is None:
+            return self.compute_output_range_theoretical()
+        return self.output_range
+    
+    def get_domain_violation_stats(self):
+        """Get domain violation statistics for this block."""
+        stats = {
+            'phi': self.phi.get_domain_violation_stats(),
+            'Phi': self.Phi.get_domain_violation_stats()
+        }
+        return stats
+    
+    def reset_domain_violation_stats(self):
+        """Reset domain violation tracking for this block."""
+        self.phi.reset_domain_violation_stats()
+        self.Phi.reset_domain_violation_stats()
 
 
 class SprecherMultiLayerNetwork(nn.Module):
@@ -354,6 +492,30 @@ class SprecherMultiLayerNetwork(nn.Module):
         # Output scaling parameters for better initialization
         self.output_scale = nn.Parameter(torch.tensor(1.0))
         self.output_bias = nn.Parameter(torch.tensor(0.0))
+        
+        # Initialize domains based on theoretical bounds
+        if CONFIG.get('use_theoretical_domains', True):
+            self.update_all_domains()
+    
+    def update_all_domains(self):
+        """Update all spline domains based on theoretical bounds."""
+        current_range = TheoreticalRange(0.0, 1.0)  # Input is in [0,1]
+        
+        for layer in self.layers:
+            # Update φ domain based on input range
+            layer.update_phi_domain_theoretical(current_range)
+            
+            # Update Φ domain based on current lambdas
+            layer.update_Phi_domain_theoretical()
+            
+            # Compute this layer's output range for next layer
+            current_range = layer.compute_output_range_theoretical()
+            
+            # Debug output if configured
+            if CONFIG.get('debug_domains', False):
+                print(f"Layer {layer.layer_num}: input_range={layer.input_range}, output_range={layer.output_range}")
+                print(f"  φ domain: [{layer.phi.in_min:.3f}, {layer.phi.in_max:.3f}]")
+                print(f"  Φ domain: [{layer.Phi.in_min:.3f}, {layer.Phi.in_max:.3f}]")
     
     def forward(self, x):
         x_original = x
@@ -367,3 +529,29 @@ class SprecherMultiLayerNetwork(nn.Module):
         # Apply output scaling and bias
         x = self.output_scale * x + self.output_bias
         return x
+    
+    def get_domain_violation_stats(self):
+        """Get domain violation statistics for all layers."""
+        stats = {}
+        for i, layer in enumerate(self.layers):
+            stats[f'layer_{i}'] = layer.get_domain_violation_stats()
+        return stats
+    
+    def reset_domain_violation_stats(self):
+        """Reset domain violation tracking for all layers."""
+        for layer in self.layers:
+            layer.reset_domain_violation_stats()
+    
+    def print_domain_violation_report(self):
+        """Print a summary of domain violations."""
+        if not CONFIG.get('track_domain_violations', False):
+            print("Domain violation tracking is not enabled.")
+            return
+        
+        print("\nDomain Violation Report:")
+        print("-" * 50)
+        stats = self.get_domain_violation_stats()
+        for layer_name, layer_stats in stats.items():
+            print(f"{layer_name}:")
+            print(f"  φ violations: {layer_stats['phi']:.2%}")
+            print(f"  Φ violations: {layer_stats['Phi']:.2%}")

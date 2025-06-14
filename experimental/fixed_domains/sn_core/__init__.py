@@ -1,6 +1,7 @@
 """Sprecher Network (SN) core package."""
 
 from .model import (
+    TheoreticalRange,
     PhiCodomainParams,
     SimpleSpline,
     SprecherLayerBlock,
@@ -12,6 +13,7 @@ from .plotting import plot_results, plot_loss_curve
 from .config import CONFIG, MNIST_CONFIG, PHI_RANGE, Q_VALUES_FACTOR
 
 __all__ = [
+    'TheoreticalRange',
     'PhiCodomainParams',
     'SimpleSpline',
     'SprecherLayerBlock',

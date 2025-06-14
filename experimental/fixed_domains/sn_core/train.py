@@ -190,8 +190,17 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
     # Gradient clipping value
     max_grad_norm = CONFIG['max_grad_norm']
     
+    # Reset domain violation tracking if enabled
+    if CONFIG.get('track_domain_violations', False):
+        model.reset_domain_violation_stats()
+    
     pbar = tqdm(range(total_epochs), desc="Training Network")
     for epoch in pbar:
+        # Update all domains based on current parameters EVERY ITERATION
+        if CONFIG.get('use_theoretical_domains', True):
+            model.update_all_domains()
+        
+        # Regular training
         optimizer.zero_grad()
         output = model(x_train)
         
@@ -260,11 +269,32 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
                 print(f"Epoch {epoch+1}: Loss = {loss.item():.4e}, Best = {best_loss:.4e}, LR = {current_lr:.4e}")
             else:
                 print(f"Epoch {epoch+1}: Loss = {loss.item():.4e}, Best = {best_loss:.4e}")
+            
+            # Print domain information if debugging
+            if CONFIG.get('debug_domains', False):
+                print("\nDomain ranges:")
+                for idx, layer in enumerate(model.layers):
+                    print(f"  Layer {idx}: φ domain=[{layer.phi.in_min:.3f}, {layer.phi.in_max:.3f}], "
+                          f"Φ domain=[{layer.Phi.in_min:.3f}, {layer.Phi.in_max:.3f}]")
+                print()
+            
+            # Print domain violation statistics if tracking
+            if CONFIG.get('track_domain_violations', False) and (epoch + 1) % (print_every * 5) == 0:
+                model.print_domain_violation_report()
     
     # Load best state before returning
     if best_state is not None:
         model.load_state_dict(best_state)
         print(f"\nLoaded best model with loss: {best_loss:.4e}")
+    
+    # Update domains one final time with best parameters
+    if CONFIG.get('use_theoretical_domains', True):
+        model.update_all_domains()
+    
+    # Print final domain violation report if tracking
+    if CONFIG.get('track_domain_violations', False):
+        print("\nFinal domain violation report:")
+        model.print_domain_violation_report()
     
     # Print final eta and lambda parameters for each block
     print("\nFinal parameters:")
@@ -282,6 +312,12 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
             if hasattr(layer, 'phi_codomain_params') and layer.phi_codomain_params is not None:
                 print(f"Block {idx}: Phi codomain center = {layer.phi_codomain_params.cc.item():.6f}")
                 print(f"Block {idx}: Phi codomain radius = {layer.phi_codomain_params.cr.item():.6f}")
+        
+        # Print theoretical ranges
+        if hasattr(layer, 'input_range') and layer.input_range is not None:
+            print(f"Block {idx}: input_range = {layer.input_range}")
+        if hasattr(layer, 'output_range') and layer.output_range is not None:
+            print(f"Block {idx}: output_range = {layer.output_range}")
         print()
     
     print(f"Final loss: {best_loss:.4e}")
