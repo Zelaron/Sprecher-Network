@@ -42,5 +42,5 @@ MNIST_CONFIG = {
 }
 
 # Mathematical constants (not configuration)
-PHI_RANGE = (-10.0, 10.0)  # Initial domain/codomain for general splines Φ
+PHI_RANGE = (-10.0, 10.0)  # Initial codomain for general splines Φ
 Q_VALUES_FACTOR = 1.0
