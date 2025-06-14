@@ -30,7 +30,7 @@ CONFIG = {
 
 # MNIST-specific settings
 MNIST_CONFIG = {
-    'architecture': [100,100],
+    'architecture': [100],
     'phi_knots': 50,
     'Phi_knots': 50,
     'learning_rate': 0.001,
