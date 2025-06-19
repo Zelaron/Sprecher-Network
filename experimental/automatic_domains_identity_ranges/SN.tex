@@ -87,14 +87,15 @@ In our architecture, the fundamental building unit is the \emph{Sprecher block}.
 \subsection{Sprecher block structure}
 A Sprecher block transforms an input vector $\mathbf{x} \in \mathbb{R}^{d_{\mathrm{in}}}$ to an output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$. This transformation is implemented using the following shared, learnable components specific to that block:
 \begin{itemize}
-    \item \textbf{Monotonic spline $\phi(\cdot)$:} An increasing piecewise-linear function, typically with codomain $[0,1]$. This function is shared across all input-output connections within the block and its coefficients are learnable. Strict monotonicity (strictly increasing) is enforced during training (see Section \ref{sec:implementation}).
+    \item \textbf{Monotonic spline $\phi(\cdot)$:} An increasing piecewise-linear function mapping $\mathbb{R} \to [0,1]$. While we denote the domain as $\mathbb{R}$ for generality, in practice each $\phi^{(\ell)}$ operates on a bounded domain determined by the network's structure and current parameters, as detailed in Section~\ref{sec:theoretical_domains}. This function is shared across all input-output connections within the block and its coefficients are learnable. Strict monotonicity (strictly increasing) is enforced during training (see Section \ref{sec:implementation}).
     \item \textbf{General spline $\Phi(\cdot)$:} A piecewise-linear function (without monotonicity constraints) whose domain and codomain are determined by the network structure and can be either fixed or made trainable. If trainable codomains are used, they can be parameterized in various ways, such as by center and radius parameters, allowing the spline to adapt its output range during training. This function is also shared across the block and its coefficients are learnable.
     \item \textbf{Mixing weights vector $\lambda$:} A vector $\{\lambda_{i}\}$ of size $d_{\mathrm{in}}$, whose entries are learnable. These weights linearly combine the contributions from different input dimensions after transformation by $\phi$. Crucially, these weights are shared across all output dimensions within the block, maintaining fidelity to Sprecher's original formulation.
     \item \textbf{Shift parameter $\eta$:} A learnable scalar $\eta > 0$. This parameter controls the magnitude of the input shift $x_i + \eta q$, which depends on the output index $q$.
 \end{itemize}
 
-Concretely, given an input vector $\mathbf{x} = (x_1, \dots, x_{d_{\mathrm{in}}}) \in \mathbb{R}^{d_{\mathrm{in}}}$, a single Sprecher block (indexed implicitly by $\ell$, with parameters $\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)}$) computes the $q$-th component of its output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$ (where $q=0, \dots, d_{\mathrm{out}}-1$) via:
-$$ h_q = \text{Block}_{\phi,\Phi,\eta,\lambda}(\mathbf{x})_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\mathrm{in}}}\lambda^{(\ell)}_{i}\,\phi^{(\ell)}\Bigl(x_i+\eta^{(\ell)}\,q\Bigr) + \alpha q\Biggr),$$
+Concretely, we first define a single Sprecher block as an operator. Let $B^{(\ell)}: \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell}$ denote the $\ell$-th Sprecher block with parameters $\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)}$. Given an input vector $\mathbf{x} = (x_1, \dots, x_{d_{\mathrm{in}}}) \in \mathbb{R}^{d_{\mathrm{in}}}$, the block computes its output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$ component-wise as:
+$$ [B^{(\ell)}(\mathbf{x})]_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\mathrm{in}}}\lambda^{(\ell)}_{i}\,\phi^{(\ell)}\Bigl(x_i+\eta^{(\ell)}\,q\Bigr) + \alpha q\Biggr),$$
+for $q=0, \dots, d_{\mathrm{out}}-1$, where $\alpha$ is a scaling factor (set to 1 for the original Sprecher construction).
 where $\alpha$ is a scaling factor (set to 1 for the original Sprecher construction). While $\alpha = 1$ maintains theoretical consistency with Sprecher's formula, alternative values may be explored to improve optimization dynamics in deeper networks. Note that $q$ serves dual roles here: as an output index ($q = 0, \ldots, d_{\mathrm{out}}-1$) and as an additive shift parameter within the formula.
 
 In a network with multiple layers, each Sprecher block (indexed by $\ell=1, \dots, L$ or $L+1$) uses its own independent set of shared parameters $(\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)})$. The block operation implements a specific form of transformation: each input coordinate $x_i$ is first shifted by an amount depending on the output index $q$ and the shared shift parameter $\eta^{(\ell)}$, then passed through the shared monotonic spline $\phi^{(\ell)}$. The results are linearly combined using the learnable mixing weights $\lambda^{(\ell)}_{i}$, shifted again by the output index $q$, and finally passed through the shared general spline $\Phi^{(\ell)}$. Stacking these blocks creates a deep, compositional representation.
@@ -457,7 +458,7 @@ Proving Conjectures \ref{conj:vector} and \ref{conj:deep_universal} rigorously w
 \section{Implementation considerations}\label{sec:implementation}
 
 \subsection{Trainable splines}
-For practical implementations, piecewise-linear splines are a natural choice for both $\phi^{(\ell)}$ and $\Phi^{(\ell)}$. Each spline can be defined by a set of knots (x-coordinates) and corresponding coefficients (y-coordinates). A common approach is to use fixed, uniformly spaced knots over the spline's domain, with learnable coefficients. The number of knots is a hyperparameter that affects both expressivity and computational cost.
+For practical implementations, piecewise-linear splines are a natural choice for both $\phi^{(\ell)}$ and $\Phi^{(\ell)}$. While these are only $C^0$ continuous (not smooth in the classical sense), they offer excellent computational efficiency and sufficient expressiveness for function approximation. The piecewise linear structure also simplifies domain analysis, as the extrema of such splines occur at knot locations, enabling exact computation of output ranges during forward propagation. Each spline can be defined by a set of knots (x-coordinates) and corresponding coefficients (y-coordinates). A common approach is to use fixed, uniformly spaced knots over the spline's domain, with learnable coefficients. The number of knots is a hyperparameter that affects both expressivity and computational cost.
 
 For the inner spline $\phi^{(\ell)}$, the codomain is typically fixed to $[0, 1]$. Monotonicity can be enforced through various parameterization strategies. One effective approach uses a transformation that guarantees positive increments between successive spline values, such as parameterizing the differences in log-space and applying a positive activation function. This ensures strict monotonicity throughout training without requiring explicit constraints or post-processing operations, while maintaining good gradient flow properties. The spline should be initialized to provide a reasonable starting point, such as a roughly linear and increasing function within its range.
 
@@ -481,13 +482,14 @@ All learnable parameters (spline coefficients, $\eta^{(\ell)}$, $\lambda^{(\ell)
 %\end{remark}
 
 \subsection{Theoretical domain computation}
-One advantage of the structured Sprecher architecture is the ability to compute exact theoretical bounds for all intermediate values. This enables principled initialization and can aid in debugging and analysis.
+\label{sec:theoretical_domains}
+One advantage of the structured Sprecher architecture is the ability to compute exact theoretical bounds for all intermediate values. Throughout this analysis, we assume inputs lie in $[0, 1]^n$, though the methodology extends naturally to any bounded domain. This assumption enables principled initialization and can aid in debugging and analysis.
 
 \begin{lemma}[Domain propagation through Sprecher blocks]\label{lem:domain_prop}
-Consider a Sprecher block with input range $[a,b]^{d_{in}}$, shift parameter $\eta$, weights $\lambda_i$, and output dimension $d_{out}$. Then:
+Consider a Sprecher block where each input component lies in the same range $[a,b]$, i.e., inputs are in $[a,b]^{d_{in}}$, shift parameter $\eta$, weights $\lambda_i$, and output dimension $d_{out}$. Let us distinguish between a spline's \emph{domain} (the interval of valid inputs) and its \emph{codomain} (the interval of possible outputs). Then:
 \begin{enumerate}
-\item The domain required for $\phi$ is:
-$$\begin{cases}
+\item The domain required for $\phi$ to handle all possible inputs is:
+$$\mathcal{D}_\phi = \begin{cases}
 [a, b + \eta(d_{out}-1)] & \text{if } \eta \geq 0 \\
 [a + \eta(d_{out}-1), b] & \text{if } \eta < 0
 \end{cases}$$
@@ -496,60 +498,75 @@ $$\begin{cases}
 $$\left[\sum_{i: \lambda_i < 0} \lambda_i, \sum_{i: \lambda_i > 0} \lambda_i + \alpha(d_{out}-1)\right]$$
 where $\alpha$ is the scaling factor for the $q$ term (typically $\alpha = 1$).
 
-\item If $\Phi$ has trainable codomain parameters $(c_c, c_r)$ defining codomain $[c_c - c_r, c_c + c_r]$, then the output range is determined by the actual range of $\Phi$ given its domain and parameters.
+\item If $\Phi$ has trainable codomain parameters $(c_c, c_r)$ defining codomain $[c_c - c_r, c_c + c_r]$, then the output range is determined by examining the actual spline coefficients. For piecewise linear splines, the extrema occur at knot points, so the actual output range is $[\min_j \Phi(t_j), \max_j \Phi(t_j)]$ where $t_j$ are the knot locations. This ensures accurate range propagation even for highly oscillatory splines.
 \end{enumerate}
 \end{lemma}
 
 \begin{proof}
+The proof proceeds by interval arithmetic, tracking the range of possible values through each operation.
+
 For (1), the argument to $\phi$ is $x_i + \eta q$ where $x_i \in [a,b]$ and $q \in \{0, 1, \ldots, d_{out}-1\}$. When $\eta \geq 0$, the minimum occurs at $q=0$ (giving $a$) and maximum at $q=d_{out}-1$ (giving $b + \eta(d_{out}-1)$). When $\eta < 0$, these are reversed.
 
 For (2), the argument to $\Phi$ is $\sum_{i} \lambda_i \phi(x_i + \eta q) + \alpha q$. Since $\phi$ outputs in $[0,1]$, the weighted sum achieves its minimum when positive $\lambda_i$ multiply 0 and negative $\lambda_i$ multiply 1, yielding $\sum_{i: \lambda_i < 0} \lambda_i$. The maximum adds the contribution from positive weights and the maximum $\alpha q$ term.
 \end{proof}
 
-This lemma enables a forward propagation algorithm for computing all spline domains throughout the network:
+This lemma enables a forward propagation algorithm for computing all spline domains throughout the network. Importantly, this computation is performed not just at initialization but at every training iteration as the parameters $\lambda^{(\ell)}$ and $\eta^{(\ell)}$ evolve, ensuring that splines always operate on their natural domains:
 
 \begin{algorithm}
 \caption{Forward domain propagation}
-\label{alg:domain_prop} % A label for cross-referencing
-\begin{algorithmic}[1] % The [1] adds line numbers
-    \State Initialize: Set input range to $[0,1]^{d_0}$
-    \For{each block $\ell = 1, \ldots, L$ (or $L+1$ for vector outputs)}
-        \State Compute $\phi^{(\ell)}$ domain using Lemma \ref{lem:domain_prop} part (1)
-        \State Compute $\Phi^{(\ell)}$ domain using Lemma \ref{lem:domain_prop} part (2)
-        \State Compute output range by evaluating $\Phi^{(\ell)}$'s range on its domain
-        \If{residual connections exist}
-            \State Expand range by $[w \cdot a_{in}, w \cdot b_{in}]$ for scalar residual weight $w$
-            \State Expand by worst-case amplification for projection matrix
+\label{alg:domain_prop}
+\begin{algorithmic}[1]
+    \State \textbf{Input:} Network parameters $\{\lambda^{(\ell)}, \eta^{(\ell)}\}_{\ell=1}^L$, input domain $[0,1]^n$
+    \State \textbf{Output:} Domains and ranges for all splines
+    \State Initialize current range $\mathcal{R}_0 \leftarrow [0,1]^n$
+    \For{each block $\ell = 1, \ldots, L$}
+        \State $\mathcal{D}_\phi^{(\ell)} \leftarrow$ apply Lemma \ref{lem:domain_prop} part (1) to $\mathcal{R}_{\ell-1}$
+        \State $\mathcal{D}_\Phi^{(\ell)} \leftarrow$ apply Lemma \ref{lem:domain_prop} part (2)
+        \State $\mathcal{R}_\ell \leftarrow [\min_j \Phi^{(\ell)}(t_j), \max_j \Phi^{(\ell)}(t_j)]$ where $t_j \in \mathcal{D}_\Phi^{(\ell)}$ are knots
+        \If{block $\ell$ has residual weight $w^{(\ell)}$}
+            \State $\mathcal{R}_\ell \leftarrow \mathcal{R}_\ell \oplus w^{(\ell)} \cdot \mathcal{R}_{\ell-1}$ \Comment{Interval arithmetic}
         \EndIf
-        \State Use output range as input range for next block
     \EndFor
 \end{algorithmic}
 \end{algorithm}
 
-One particularly elegant application of this domain computation is the initialization of $\Phi^{(\ell)}$ splines. By computing each $\Phi^{(\ell)}$'s theoretical domain before training begins, we can initialize both its domain and codomain parameters to match this computed range, making each $\Phi^{(\ell)}$ start as an approximate identity function on its natural operating range. This provides a theoretically motivated initialization that avoids arbitrary choices and can improve optimization dynamics.
+where $\oplus$ denotes interval addition: $[a_1, b_1] \oplus [a_2, b_2] = [a_1 + a_2, b_1 + b_2]$.
 
-\begin{remark}[Domain-aware initialization]
-The ability to compute exact domains enables the following initialization strategy:
-\begin{enumerate}
-\item Initialize all parameters ($\lambda^{(\ell)}, \eta^{(\ell)}$) with small random values
-\item Run forward domain propagation to compute each spline's theoretical domain
-\item For each $\Phi^{(\ell)}$:
-    \begin{itemize}
-    \item Set domain knots uniformly across the computed domain
-    \item If using trainable codomain, initialize $(c_c, c_r)$ so the codomain matches the domain
-    \item Initialize coefficients to create an approximately linear function from domain minimum to maximum
-    \end{itemize}
-\item For each $\phi^{(\ell)}$:
-    \begin{itemize}
-    \item Set domain knots uniformly across the computed domain
-    \item Initialize to an approximately linear increasing function mapping the domain to $[0,1]$
-    \end{itemize}
-\end{enumerate}
-This ensures all splines begin in reasonable configurations based on the network structure.
+\begin{remark}[Horizontal rescaling during training]
+When spline domains change during training due to evolving parameters, we preserve the learned function by horizontally rescaling it to the new domain. Specifically, if a spline's domain changes from $[a_{old}, b_{old}]$ to $[a_{new}, b_{new}]$, we remap the knot positions linearly while keeping the knot values (coefficients) unchanged. This maintains the functional relationship learned by the spline while adapting to the network's evolving internal representations. However, this approach has potential drawbacks that warrant further investigation. Horizontal rescaling changes the derivative at every point, which may disrupt gradient flow during optimization. For the highly oscillatory $\Phi$ splines, compression can amplify oscillations and cause numerical instability. Alternative approaches that preserve the learned function more faithfully, such as adaptive knot placement within a fixed domain or careful initialization to prevent excessive domain growth, may prove more effective in practice.
 \end{remark}
 
-\subsection{Grid extension for splines}
-Inspired by techniques used for KANs \cite{liu2024kan}, the spline resolution (number of knots $G$) can be adaptively increased during training. This approach starts training with a coarse grid (e.g., $G=5$) and periodically increases the number of knots (e.g., $G \to 10, \to 20, \dots$) based on a schedule or loss stagnation. When increasing the grid resolution from $G_1$ knots to $G_2 > G_1$ knots, the coefficients for the new, finer grid are initialized by fitting the fine spline to the current coarse spline using least squares projection on a dense set of evaluation points. This preserves the learned function while providing more degrees of freedom. This often leads to ``staircase'' learning curves, where the loss drops significantly after each grid extension, allowing the model to achieve higher accuracy than possible with a fixed coarse grid, while potentially starting optimization in a smoother landscape.
+One particularly elegant application of this domain computation is the initialization of $\Phi^{(\ell)}$ splines. By computing each $\Phi^{(\ell)}$'s theoretical domain before training begins, we can initialize both its domain and codomain parameters to match this computed range, making each $\Phi^{(\ell)}$ start as an approximate identity function on its natural operating range. This provides a principled initialization strategy: by starting each $\Phi^{(\ell)}$ as an approximate identity function on its computed domain, we ensure that the initial network performs a series of near-identity transformations. However, the effectiveness of this initialization strategy remains an empirical question, as identity initialization may not always lead to better optimization dynamics than alternatives such as variance-preserving initialization or carefully chosen random initialization.
+
+\begin{remark}[Domain-aware initialization and dynamic updates]
+The ability to compute exact domains enables the following strategy:
+\begin{enumerate}
+\item \textbf{Initialization:}
+    \begin{itemize}
+    \item Initialize all parameters ($\lambda^{(\ell)}, \eta^{(\ell)}$) with small random values
+    \item Run forward domain propagation (Algorithm~\ref{alg:domain_prop}) to compute each spline's theoretical domain
+    \item For each $\Phi^{(\ell)}$: set domain knots uniformly, initialize $(c_c, c_r)$ to match the domain if trainable, and set coefficients to create an approximately linear function
+    \item For each $\phi^{(\ell)}$: set domain knots uniformly and initialize as an approximately linear increasing function mapping to $[0,1]$
+    \end{itemize}
+\item \textbf{Dynamic updates during training:}
+    \begin{itemize}
+    \item At each training iteration, as parameters $\lambda^{(\ell)}$ and $\eta^{(\ell)}$ evolve, recompute all domains via Algorithm~\ref{alg:domain_prop}
+    \item Adjust spline knot positions to match new domains while preserving the learned function shapes (horizontal rescaling)
+    \item This ensures splines always operate on their natural domains as the network evolves
+    \end{itemize}
+\end{enumerate}
+\end{remark}
+
+\begin{remark}[Practical benefits]
+The ability to compute exact domains through interval arithmetic provides several practical benefits: (i) it enables theoretically grounded initialization without arbitrary hyperparameters, (ii) it can help diagnose training issues by detecting when values fall outside expected ranges, and (iii) it ensures numerical stability by keeping spline evaluations within their intended operating regions. These benefits distinguish Sprecher Networks from architectures with less structured internal representations.
+\end{remark}
+
+\begin{remark}[Conservative domain estimates and oscillatory splines]
+The interval arithmetic used for domain computation provides worst-case bounds that may be overly conservative in practice. When domains become unnecessarily wide, splines must distribute their knots sparsely, often leading to the oscillatory behavior observed in learned $\Phi^{(\ell)}$ functions. This suggests that tighter domain estimation or regularization of weight magnitudes during early training could improve both optimization dynamics and the interpretability of learned splines. Future work might explore adaptive knot placement strategies that concentrate knots in regions of high data density while maintaining the fixed parameter count that is central to SNs' theoretical appeal.
+\end{remark}
+
+% \subsection{Grid extension for splines}
+ % Inspired by techniques used for KANs \cite{liu2024kan}, the spline resolution (number of knots $G$) can be adaptively increased during training. This approach starts training with a coarse grid (e.g., $G=5$) and periodically increases the number of knots (e.g., $G \to 10, \to 20, \dots$) based on a schedule or loss stagnation. When increasing the grid resolution from $G_1$ knots to $G_2 > G_1$ knots, the coefficients for the new, finer grid are initialized by fitting the fine spline to the current coarse spline using least squares projection on a dense set of evaluation points. This preserves the learned function while providing more degrees of freedom. This often leads to ``staircase'' learning curves, where the loss drops significantly after each grid extension, allowing the model to achieve higher accuracy than possible with a fixed coarse grid, while potentially starting optimization in a smoother landscape.
 
 \section{Parameter counting and efficiency as a trade-off}
 A key consequence of adhering to the vector-based weighting scheme inspired by Sprecher's formula is a dramatic reduction in parameters compared to standard architectures. This represents a strong architectural constraint that may serve as either a beneficial inductive bias or a limitation, depending on the target function class. The specific design of SNs, particularly the sharing of splines and use of weight vectors rather than matrices, leads to a distinctive parameter scaling that warrants careful analysis.
@@ -622,6 +639,8 @@ These examples demonstrate the feasibility of training SNs and the potential int
 Learned outer splines $\Phi^{(\ell)}$ often develop pronounced oscillations, particularly when using vector weights rather than matrix weights. These oscillations can be understood as a compensation mechanism: with fewer degrees of freedom in the mixing weights, the outer splines must work harder to achieve the necessary transformations. This phenomenon parallels observations in other constrained architectures, where limiting one component's flexibility forces other components to develop more complex behaviors. From an optimization perspective, these oscillations may indicate that the network is operating near the limits of its expressivity for the given architecture, suggesting that wider or deeper networks might achieve the same function approximation with smoother splines.
 \end{remark}
 
+The domain management strategy also plays a crucial role in these oscillations. The current implementation's use of horizontal rescaling to adapt spline domains, while theoretically sound, may exacerbate oscillatory behavior by compressing existing oscillations when domains shrink. This suggests that the interplay between domain computation, parameter constraints, and spline smoothness is more subtle than initially apparent and deserves further theoretical and empirical investigation.
+
 \subsection{Systematic benchmarks (selected examples)}
 To provide more quantitative insight, we consider how SNs might perform on examples from the KAN article, focusing on parameter efficiency and scaling. These projections are based on the architectural differences and require empirical validation.
 
@@ -648,7 +667,7 @@ While Sprecher Networks offer a theoretically-inspired architecture with potenti
 \subsection{Implementation and training challenges}
 Current implementations face several significant obstacles. Training speed and stability remain primary concerns, with SNs often requiring more computation time compared to comparable MLPs per epoch. The shared spline structure can lead to optimization difficulties where networks converge to suboptimal local minima with flat or overly simplistic splines. Escaping such minima likely requires advanced optimization techniques tailored specifically to the unique parameter structure of SNs.
 
-The initialization of splines, shifts, and weights significantly impacts training success, yet optimal strategies beyond the domain-aware initialization discussed in Section \ref{sec:implementation} remain elusive. Similarly, architectural choices such as network depth and hidden layer widths have profound effects on performance, but principled methods for architecture selection are lacking. The number of knots for shared splines represents a critical hyperparameter that, unlike in KANs where complexity can vary per edge, affects the entire block's expressivity in SNs. Developing adaptive strategies for knot placement and automated methods for selecting appropriate spline resolution based on data complexity would be highly valuable.
+The initialization of splines, shifts, and weights significantly impacts training success, yet optimal strategies beyond the domain-aware initialization discussed in Section \ref{sec:implementation} remain elusive. Similarly, architectural choices such as network depth and hidden layer widths have profound effects on performance, but principled methods for architecture selection are lacking. The number of knots for shared splines represents a critical hyperparameter that, unlike in KANs where complexity can vary per edge, affects the entire block's expressivity in SNs. Developing adaptive strategies for knot placement and automated methods for selecting appropriate spline resolution based on data complexity would be highly valuable. In particular, adaptive knot placement that maintains a fixed total knot count while concentrating resolution where the data lives could address the oscillatory spline behavior observed in practice without sacrificing the architecture's parameter efficiency. This could involve quantile-based knot spacing or other data-aware placement strategies that respect the theoretical domain bounds while improving function approximation quality.
 
 \subsection{Directions for further research}
 The theoretical foundations of deep SNs require significant development. One particularly intriguing direction concerns potential equivariance properties of the architecture. The weight-sharing structure of SNs, analogous to convolutions, raises the question of whether SNs satisfy any form of equivariance. While CNNs exhibit translation equivariance, the relevant group action for SNs is less clear—it may relate to permutations of output indices or transformations of the function domain. Understanding such properties could provide deeper insight into the inductive bias of the architecture and guide its application to problems with known symmetries.
