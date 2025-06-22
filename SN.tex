@@ -471,18 +471,6 @@ Each block includes the learnable scalar shift $\eta^{(\ell)}$ and the learnable
 
 All learnable parameters (spline coefficients, $\eta^{(\ell)}$, $\lambda^{(\ell)}$, and potentially range parameters for $\Phi^{(\ell)}$) are trained jointly using gradient-based optimization methods like Adam \cite{kingma2014adam} or LBFGS. The loss function is typically Mean Squared Error (MSE) for regression tasks.
 
-%\begin{remark}[Regularization for smoother splines]
-%While training with MSE alone is sufficient, the splines learned under pure MSE optimization can exhibit rapid oscillations or jagged behavior. To encourage smoother, more interpretable splines (as shown in Figures \ref{fig:onevar_example} and \ref{fig:twovarsprecher_revised}), additional regularization terms can be incorporated:
-%$$ \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{MSE}} + w_{\text{flat}} \sum_{\ell} \text{Penalty}(\Phi^{(\ell)}) + w_{\text{sparse}} \sum_{\ell} \text{Sparsity}(\lambda^{(\ell)}) + w_{\text{var}} \mathcal{L}_{\text{variance}} $$
-%where:
-%\begin{itemize}
-%    \item $\text{Penalty}(\Phi^{(\ell)})$ is a flatness penalty encouraging smoothness, calculated as the mean squared second difference of spline coefficients: $\frac{1}{K-2} \sum_{k=1}^{K-1} (c_{k+1} - 2c_k + c_{k-1})^2$
-%    \item $\text{Sparsity}(\lambda^{(\ell)})$ encourages sparse mixing weights (e.g., using L1 norm combined with entropy)
-%    \item $\mathcal{L}_{\text{variance}} = (\sigma_{\text{output}} - \sigma_{\text{target}})^2$ encourages the network output to match the target variance
-%\end{itemize}
-%These regularization terms are not necessary for successful training but can improve interpretability and generalization. The weights $w_{\text{flat}}$, $w_{\text{sparse}}$, and $w_{\text{var}}$ control the strength of each regularization component.
-%\end{remark}
-
 \subsection{Theoretical domain computation}
 \label{sec:theoretical_domains}
 One advantage of the structured Sprecher architecture is the ability to compute exact theoretical bounds for all intermediate values. Throughout this analysis, we assume inputs lie in $[0, 1]^n$, though the methodology extends naturally to any bounded domain. This assumption enables principled initialization and can aid in debugging and analysis.
@@ -551,25 +539,6 @@ This targeted, dual-strategy approach is theoretically sounder than naive rescal
 
 One particularly elegant application of this domain computation is the initialization of $\Phi^{(\ell)}$ splines. By computing each $\Phi^{(\ell)}$'s theoretical domain before training begins, we can initialize both its domain and codomain parameters to match this computed range, making each $\Phi^{(\ell)}$ start as an approximate identity function on its natural operating range. This provides a principled initialization strategy: by starting each $\Phi^{(\ell)}$ as an approximate identity function on its computed domain, we ensure that the initial network performs a series of near-identity transformations. However, the effectiveness of this initialization strategy remains an empirical question, as identity initialization may not always lead to better optimization dynamics than alternatives such as variance-preserving initialization or carefully chosen random initialization.
 
-\begin{remark}[Domain-aware initialization and dynamic updates]
-The ability to compute exact domains enables the following strategy:
-\begin{enumerate}
-\item \textbf{Initialization:}
-    \begin{itemize}
-    \item Initialize all parameters ($\lambda^{(\ell)}, \eta^{(\ell)}$) with small random values
-    \item Run forward domain propagation (Algorithm~\ref{alg:domain_prop}) to compute each spline's theoretical domain
-    \item For each $\Phi^{(\ell)}$: set domain knots uniformly, initialize $(c_c, c_r)$ to match the domain if trainable, and set coefficients to create an approximately linear function
-    \item For each $\phi^{(\ell)}$: set domain knots uniformly and initialize as an approximately linear increasing function mapping to $[0,1]$
-    \end{itemize}
-\item \textbf{Dynamic updates during training:}
-    \begin{itemize}
-    \item At each training iteration, as parameters $\lambda^{(\ell)}$ and $\eta^{(\ell)}$ evolve, recompute all domains via Algorithm~\ref{alg:domain_prop}
-    \item Adjust spline knot positions to match new domains while preserving the learned function shapes (horizontal rescaling)
-    \item This ensures splines always operate on their natural domains as the network evolves
-    \end{itemize}
-\end{enumerate}
-\end{remark}
-
 \begin{remark}[Practical benefits]
 The ability to compute exact domains through interval arithmetic provides several practical benefits: (i) it enables theoretically grounded initialization without arbitrary hyperparameters, (ii) it can help diagnose training issues by detecting when values fall outside expected ranges, and (iii) it ensures numerical stability by keeping spline evaluations within their intended operating regions. These benefits distinguish Sprecher Networks from architectures with less structured internal representations.
 \end{remark}
@@ -577,9 +546,6 @@ The ability to compute exact domains through interval arithmetic provides severa
 \begin{remark}[Conservative domain estimates and oscillatory splines]
 The interval arithmetic used for domain computation provides worst-case bounds that may be overly conservative in practice. When domains become unnecessarily wide, splines must distribute their knots sparsely, often leading to the oscillatory behavior observed in learned $\Phi^{(\ell)}$ functions. This suggests that tighter domain estimation or regularization of weight magnitudes during early training could improve both optimization dynamics and the interpretability of learned splines. Future work might explore adaptive knot placement strategies that concentrate knots in regions of high data density while maintaining the fixed parameter count that is central to SNs' theoretical appeal.
 \end{remark}
-
-% \subsection{Grid extension for splines}
- % Inspired by techniques used for KANs \cite{liu2024kan}, the spline resolution (number of knots $G$) can be adaptively increased during training. This approach starts training with a coarse grid (e.g., $G=5$) and periodically increases the number of knots (e.g., $G \to 10, \to 20, \dots$) based on a schedule or loss stagnation. When increasing the grid resolution from $G_1$ knots to $G_2 > G_1$ knots, the coefficients for the new, finer grid are initialized by fitting the fine spline to the current coarse spline using least squares projection on a dense set of evaluation points. This preserves the learned function while providing more degrees of freedom. This often leads to ``staircase'' learning curves, where the loss drops significantly after each grid extension, allowing the model to achieve higher accuracy than possible with a fixed coarse grid, while potentially starting optimization in a smoother landscape.
 
 \section{Parameter counting and efficiency as a trade-off}
 A key consequence of adhering to the vector-based weighting scheme inspired by Sprecher's formula is a dramatic reduction in parameters compared to standard architectures. This represents a strong architectural constraint that may serve as either a beneficial inductive bias or a limitation, depending on the target function class. The specific design of SNs, particularly the sharing of splines and use of weight vectors rather than matrices, leads to a distinctive parameter scaling that warrants careful analysis.
