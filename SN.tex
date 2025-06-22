@@ -512,7 +512,8 @@ For (1), the argument to $\phi$ is $x_i + \eta q$ where $x_i \in [a,b]$ and $q \
 For (2), the argument to $\Phi$ is $\sum_{i} \lambda_i \phi(x_i + \eta q) + \alpha q$. Since $\phi$ outputs in $[0,1]$, the weighted sum achieves its minimum when positive $\lambda_i$ multiply 0 and negative $\lambda_i$ multiply 1, yielding $\sum_{i: \lambda_i < 0} \lambda_i$. The maximum adds the contribution from positive weights and the maximum $\alpha q$ term.
 \end{proof}
 
-This lemma enables a forward propagation algorithm for computing all spline domains throughout the network. Importantly, this computation is performed not just at initialization but at every training iteration as the parameters $\lambda^{(\ell)}$ and $\eta^{(\ell)}$ evolve, ensuring that splines always operate on their natural domains:
+This lemma enables a forward propagation algorithm for computing all spline domains throughout the network. Crucially, the algorithm's efficiency relies on the property of piecewise-linear splines (formalized in Lemma~\ref{lem:domain_prop}, part 3), which 
+allows for the exact computation of output ranges by simply finding the extrema of the spline's values at its knots. Importantly, this computation is performed not just at initialization but at every training iteration as the parameters $\lambda^{(\ell)}$ and $\eta^{(\ell)}$ evolve, ensuring that splines always operate on their natural domains:
 
 \begin{algorithm}
 \caption{Forward domain propagation}
