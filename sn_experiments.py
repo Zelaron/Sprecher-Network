@@ -94,6 +94,9 @@ def main():
         Phi_knots=args.Phi_knots,
         seed=args.seed
     )
+
+    # Put model in evaluation mode. This is relevant for batchnorm
+    model.eval()
     
     # Print final domain information
     print("\nFinal domain ranges:")

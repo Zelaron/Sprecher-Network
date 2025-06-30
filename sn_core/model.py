@@ -528,12 +528,13 @@ class SprecherMultiLayerNetwork(nn.Module):
     """
     Builds the Sprecher network with a given hidden-layer architecture and final output dimension.
     """
-    def __init__(self, input_dim, architecture, final_dim=1, phi_knots=100, Phi_knots=100):
+    def __init__(self, input_dim, architecture, final_dim=1, phi_knots=100, Phi_knots=100, batchnorm=False):
         super().__init__()
         self.input_dim = input_dim
         self.architecture = architecture
         self.final_dim = final_dim
-        
+        self.batchnorm = batchnorm
+
         layers = []
         if not architecture: # No hidden layers
             is_final = (final_dim == 1)
@@ -566,7 +567,12 @@ class SprecherMultiLayerNetwork(nn.Module):
                 ))
         
         self.layers = nn.ModuleList(layers)
+
         
+        # Batch normalization 
+        if batchnorm:
+            self.batch_layers = nn.ModuleList([torch.nn.BatchNorm1d(i) for i in architecture[:-1]])            
+
         # Output scaling parameters for better initialization
         self.output_scale = nn.Parameter(torch.tensor(1.0))
         self.output_bias = nn.Parameter(torch.tensor(0.0))
@@ -579,7 +585,7 @@ class SprecherMultiLayerNetwork(nn.Module):
         """Update all spline domains based on theoretical bounds."""
         current_range = TheoreticalRange(0.0, 1.0)  # Input is in [0,1]
         
-        for layer in self.layers:
+        for i, layer in enumerate(self.layers):
             # Update φ domain based on input range
             layer.update_phi_domain_theoretical(current_range)
             
@@ -599,6 +605,8 @@ class SprecherMultiLayerNetwork(nn.Module):
         x_in = x
         for i, layer in enumerate(self.layers):
             # For residual connections, pass the input of the *current* layer
+            if (i > 0) and self.batchnorm:
+                x_in = self.batch_layers[i - 1](x_in)
             x_out = layer(x_in, x_in) 
             x_in = x_out # The output of this layer is the input to the next
         

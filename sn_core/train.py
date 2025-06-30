@@ -196,6 +196,10 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
     
     pbar = tqdm(range(total_epochs), desc="Training Network")
     for epoch in pbar:
+    
+        # Put model in train mode. This is relevant for batchnorm
+        model.train()
+
         # Update all domains based on current parameters EVERY ITERATION
         if CONFIG.get('use_theoretical_domains', True):
             model.update_all_domains()
