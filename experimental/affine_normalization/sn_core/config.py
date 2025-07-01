@@ -4,7 +4,7 @@
 CONFIG = {
     # Model settings
     'train_phi_codomain': True,  # Whether to train Φ codomain parameters
-    'use_residual_weights': False,
+    'use_residual_weights': True,
     'seed': 45,
     
     # Training settings
