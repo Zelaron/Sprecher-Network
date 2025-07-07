@@ -73,7 +73,8 @@ def has_batchnorm(model):
 
 def train_network(dataset, architecture, total_epochs=4000, print_every=400, 
                   device="cpu", phi_knots=100, Phi_knots=100, seed=None,
-                  norm_type='none', norm_position='after', norm_skip_first=True):
+                  norm_type='none', norm_position='after', norm_skip_first=True,
+                  no_load_best=False):
     """
     Train a Sprecher network on the given dataset.
     
@@ -89,6 +90,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
         norm_type: Type of normalization ('none', 'batch', 'layer')
         norm_position: Position of normalization ('before', 'after')
         norm_skip_first: Whether to skip normalization for first block
+        no_load_best: If True, don't load best checkpoint at end
     
     Returns:
         model: Trained model
@@ -332,7 +334,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
                 model.print_domain_violation_report()
     
     # Load best checkpoint before returning
-    if best_checkpoint is not None:
+    if best_checkpoint is not None and not no_load_best:
         model.load_state_dict(best_checkpoint['model_state_dict'])
         print(f"\nLoaded best model from epoch {best_checkpoint['epoch']} with loss: {best_loss:.4e}")
         
@@ -340,6 +342,10 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
         if best_checkpoint['has_batchnorm']:
             print("Recalculating BatchNorm statistics on training data...")
             recalculate_bn_stats(model, x_train, num_passes=3)
+    elif no_load_best:
+        print("\nSkipping best model loading (--no_load_best flag set)")
+        print(f"Using final model state with loss: {losses[-1]:.4e}")
+        print(f"Best loss during training was: {best_loss:.4e}")
     
     # Set model to eval mode
     model.eval()

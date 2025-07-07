@@ -44,6 +44,10 @@ def parse_args():
     parser.add_argument("--norm_skip_first", action="store_true", default=True,
                       help="Skip normalization for the first block (default: True)")
     
+    # Debugging/testing arguments
+    parser.add_argument("--no_load_best", action="store_true",
+                      help="Don't load best checkpoint at end of training (for debugging)")
+    
     return parser.parse_args()
 
 
@@ -92,6 +96,8 @@ def main():
     print(f"Theoretical domains: {CONFIG.get('use_theoretical_domains', True)}")
     print(f"Domain safety margin: {CONFIG.get('domain_safety_margin', 0.0)}")
     print(f"Normalization: {args.norm_type} (position: {args.norm_position}, skip_first: {args.norm_skip_first})")
+    if args.no_load_best:
+        print("WARNING: Best model loading disabled (--no_load_best)")
     print()
     
     # Train network
@@ -106,7 +112,8 @@ def main():
         seed=args.seed,
         norm_type=args.norm_type,
         norm_position=args.norm_position,
-        norm_skip_first=args.norm_skip_first
+        norm_skip_first=args.norm_skip_first,
+        no_load_best=args.no_load_best
     )
     
     # Ensure model is in eval mode for final domain information and plotting
