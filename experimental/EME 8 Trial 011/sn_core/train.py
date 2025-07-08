@@ -86,6 +86,9 @@ def has_batchnorm(model):
     return False
 
 
+# Removed set_bn_eval and set_bn_train - we should never use eval mode
+
+
 def train_network(dataset, architecture, total_epochs=4000, print_every=400, 
                   device="cpu", phi_knots=100, Phi_knots=100, seed=None,
                   norm_type='none', norm_position='after', norm_skip_first=True,
@@ -302,6 +305,19 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
         
         # Update best loss and save checkpoint
         if loss.item() < best_loss:
+            # CRITICAL: Save BatchNorm stats BEFORE updating best_loss
+            # This ensures we capture the exact state that produced this loss
+            
+            # First, verify that computing loss didn't change BN stats (for debugging)
+            if has_bn and CONFIG.get('debug_checkpoint_loading', False):
+                print(f"\n[CHECKPOINT DEBUG] New best loss found at epoch {epoch}: {loss.item():.4e}")
+                for name, module in model.named_modules():
+                    if isinstance(module, nn.BatchNorm1d):
+                        print(f"  BN stats at best loss - {name}:")
+                        print(f"    running_mean[:3]: {module.running_mean[:3].cpu().numpy()}")
+                        print(f"    num_batches_tracked: {module.num_batches_tracked.item()}")
+                        break
+            
             best_loss = loss.item()
             
             # Save complete BatchNorm statistics at this exact moment
@@ -309,6 +325,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
             if has_bn:
                 for name, module in model.named_modules():
                     if isinstance(module, nn.BatchNorm1d):
+                        # Deep clone all BN state to isolate from future changes
                         bn_statistics[name] = {
                             'running_mean': module.running_mean.clone().cpu(),
                             'running_var': module.running_var.clone().cpu(),
@@ -316,12 +333,16 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
                             'momentum': module.momentum,
                             'eps': module.eps,
                             'affine': module.affine,
-                            'track_running_stats': module.track_running_stats
+                            'track_running_stats': module.track_running_stats,
+                            # Also save the affine parameters if they exist
+                            'weight': module.weight.clone().cpu() if module.affine else None,
+                            'bias': module.bias.clone().cpu() if module.affine else None
                         }
             
+            # Create complete checkpoint with all state
             best_checkpoint = {
                 'epoch': epoch,
-                'model_state_dict': model.state_dict(),
+                'model_state_dict': model.state_dict().copy(),  # Deep copy the state dict
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': loss.item(),
                 'has_batchnorm': has_bn,
@@ -331,7 +352,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
                 'training_mode': model.training,  # Save training state
                 'x_train': x_train.cpu().clone(),  # Save exact training batch
                 'y_train': y_train.cpu().clone(),  # Save exact target values
-                'output': output.detach().cpu().clone(),  # Save exact model output
+                'output': output.detach().cpu().clone(),  # Save exact model output at best loss
                 # Save model creation parameters for exact reconstruction
                 'model_params': {
                     'input_dim': dataset.input_dim,
@@ -456,30 +477,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
                     print(f"  Layer {i}: {ranges}")
                 
             
-            # Test fresh model after loading checkpoint
-            print("\n[CHECKPOINT DEBUG] Testing fresh model AFTER loading state_dict:")
-            with torch.no_grad():
-                test_out = fresh_model(x_train[:5])
-                print(f"  Model output after state_dict: {test_out.cpu().numpy().flatten()[:5]}")
-            
-            # Restore exact BatchNorm statistics from best checkpoint
-            if best_checkpoint.get('has_batchnorm', False) and 'bn_statistics' in best_checkpoint:
-                print("\n[CHECKPOINT DEBUG] Restoring exact BatchNorm statistics from best epoch...")
-                for name, module in fresh_model.named_modules():
-                    if isinstance(module, nn.BatchNorm1d) and name in best_checkpoint['bn_statistics']:
-                        saved_stats = best_checkpoint['bn_statistics'][name]
-                        # Restore the exact statistics from when best loss was achieved
-                        module.running_mean.copy_(saved_stats['running_mean'])
-                        module.running_var.copy_(saved_stats['running_var'])
-                        module.num_batches_tracked.copy_(saved_stats['num_batches_tracked'])
-                        print(f"  {name}: Restored exact BN stats from epoch {best_checkpoint['epoch']}")
-                        print(f"    num_batches_tracked: {module.num_batches_tracked.item()}")
-                        print(f"    running_mean (first 3): {module.running_mean[:3].cpu().numpy()}")
-                        print(f"    running_var (first 3): {module.running_var[:3].cpu().numpy()}")
-            elif best_checkpoint.get('has_batchnorm', False):
-                print("\n[CHECKPOINT DEBUG] WARNING: No saved BN statistics in checkpoint (old format)")
-                print("  BatchNorm statistics will be from final training epoch, not best epoch!")
-                print("  This will likely cause checkpoint restoration to fail.")
+            # DON'T test the model yet - wait until after BN stats are restored!
             
             # Replace the old model with the fresh one
             model = fresh_model
@@ -494,6 +492,32 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
             print("Restoring spline domain states from checkpoint...")
             model.set_all_domain_states(best_checkpoint['domain_states'])
             print("Domain states restored successfully!")
+        
+        # CRITICAL: Restore exact BatchNorm statistics from best checkpoint
+        # This MUST happen AFTER domain states but BEFORE any forward passes
+        if best_checkpoint.get('has_batchnorm', False) and 'bn_statistics' in best_checkpoint:
+            print("\n[CHECKPOINT DEBUG] Restoring exact BatchNorm statistics from best epoch...")
+            for name, module in model.named_modules():
+                if isinstance(module, nn.BatchNorm1d) and name in best_checkpoint['bn_statistics']:
+                    saved_stats = best_checkpoint['bn_statistics'][name]
+                    # Restore the exact statistics from when best loss was achieved
+                    module.running_mean.copy_(saved_stats['running_mean'])
+                    module.running_var.copy_(saved_stats['running_var'])
+                    module.num_batches_tracked.copy_(saved_stats['num_batches_tracked'])
+                    
+                    # Also restore affine parameters if they exist
+                    if module.affine and saved_stats.get('weight') is not None:
+                        module.weight.data.copy_(saved_stats['weight'])
+                        module.bias.data.copy_(saved_stats['bias'])
+                    
+                    print(f"  {name}: Restored exact BN stats from epoch {best_checkpoint['epoch']}")
+                    print(f"    num_batches_tracked: {module.num_batches_tracked.item()}")
+                    print(f"    running_mean (first 3): {module.running_mean[:3].cpu().numpy()}")
+                    print(f"    running_var (first 3): {module.running_var[:3].cpu().numpy()}")
+        elif best_checkpoint.get('has_batchnorm', False):
+            print("\n[CHECKPOINT DEBUG] WARNING: No saved BN statistics in checkpoint (old format)")
+            print("  BatchNorm statistics will be from final training epoch, not best epoch!")
+            print("  This will likely cause checkpoint restoration to fail.")
             
             # Debug: Check domains after restoration
             print("\n[CHECKPOINT DEBUG] Domains after restoration:")
@@ -519,10 +543,42 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
             print("Model set to eval mode")
         
         # Get a sample output after loading checkpoint
+        # Use the exact same x_train that was saved in the checkpoint
+        
+        # First, save current BN stats to verify they don't change
+        if has_bn and CONFIG.get('debug_checkpoint_loading', False):
+            bn_stats_before_forward = {}
+            for name, module in model.named_modules():
+                if isinstance(module, nn.BatchNorm1d):
+                    bn_stats_before_forward[name] = {
+                        'mean': module.running_mean.clone(),
+                        'var': module.running_var.clone(),
+                        'tracked': module.num_batches_tracked.clone()
+                    }
+        
         with torch.no_grad():
             output_after = model(x_train[:5]).cpu().numpy()
         print(f"Sample outputs AFTER loading checkpoint: {output_after.flatten()[:5]}")
         print(f"Output change: {np.abs(output_after - output_before).mean():.4e}")
+        
+        # Verify BN stats didn't change during forward pass
+        if has_bn and CONFIG.get('debug_checkpoint_loading', False):
+            print("\n[CHECKPOINT DEBUG] Verifying BN stats didn't change during forward pass...")
+            for name, module in model.named_modules():
+                if isinstance(module, nn.BatchNorm1d) and name in bn_stats_before_forward:
+                    before = bn_stats_before_forward[name]
+                    mean_changed = not torch.allclose(module.running_mean, before['mean'])
+                    var_changed = not torch.allclose(module.running_var, before['var'])
+                    tracked_changed = module.num_batches_tracked.item() != before['tracked'].item()
+                    
+                    if mean_changed or var_changed or tracked_changed:
+                        print(f"  WARNING: {name} stats changed during forward pass!")
+                        print(f"    mean changed: {mean_changed}")
+                        print(f"    var changed: {var_changed}")
+                        print(f"    tracked changed: {tracked_changed} ({before['tracked'].item()} -> {module.num_batches_tracked.item()})")
+                    else:
+                        print(f"  ✓ {name} stats unchanged")
+                    break
         
         # If we have saved training data, verify the checkpoint
         if 'x_train' in best_checkpoint:
@@ -532,6 +588,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
             saved_output = best_checkpoint['output']
             
             # Compute loss with saved training data
+            # The model should produce EXACTLY the same output as when checkpoint was saved
             with torch.no_grad():
                 current_output = model(saved_x)
                 current_loss = torch.mean((current_output - saved_y) ** 2).item()
