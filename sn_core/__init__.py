@@ -7,7 +7,7 @@ from .model import (
     SprecherLayerBlock,
     SprecherMultiLayerNetwork
 )
-from .train import train_network, PlateauAwareCosineAnnealingLR
+from .train import train_network, PlateauAwareCosineAnnealingLR, recalculate_bn_stats, has_batchnorm
 from .data import get_dataset, DATASETS
 from .plotting import plot_results, plot_loss_curve
 from .config import CONFIG, MNIST_CONFIG, Q_VALUES_FACTOR
@@ -20,6 +20,8 @@ __all__ = [
     'SprecherMultiLayerNetwork',
     'train_network',
     'PlateauAwareCosineAnnealingLR',
+    'recalculate_bn_stats',
+    'has_batchnorm',
     'get_dataset',
     'DATASETS',
     'plot_results',

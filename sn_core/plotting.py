@@ -82,6 +82,13 @@ def plot_network_structure_ax(ax, layers, input_dim, final_dim=1):
 
 def plot_high_dim_function(ax, model, dataset, device):
     """Plot high-dimensional function using dimension slices or statistics."""
+    print(f"DEBUG in plot_high_dim_function: model type = {type(model)}")
+    print(f"DEBUG in plot_high_dim_function: model.training = {model.training}")
+    
+    # Keep model in its current mode (likely training mode)
+    # was_training = model.training
+    # model.eval()  # Removed to maintain consistent BatchNorm behavior
+    
     input_dim = dataset.input_dim
     output_dim = dataset.output_dim
     
@@ -239,11 +246,15 @@ def plot_high_dim_function(ax, model, dataset, device):
         ax.set_title(f'Output Distribution ({input_dim}D input)\nTrue mean: {y_true_np.mean():.3f}, Pred mean: {y_pred_np.mean():.3f}')
         ax.legend()
         ax.grid(True, alpha=0.3)
+    
+    # No need to restore mode since we didn't change it
+    # if was_training:
+    #     model.train()
 
 
 def plot_results(model, layers, dataset=None, save_path=None, 
                  plot_network=True, plot_function=True, plot_splines=True,
-                 title_suffix=""):
+                 title_suffix="", x_train=None, y_train=None):
     """
     Plot network structure, splines, and function approximation.
     
@@ -256,10 +267,20 @@ def plot_results(model, layers, dataset=None, save_path=None,
         plot_function: Whether to plot function comparison (default: True)
         plot_splines: Whether to plot splines (default: True)
         title_suffix: Additional text to add to figure title (default: "")
+        x_train: Training input data (optional, for consistent evaluation)
+        y_train: Training target data (optional, for consistent evaluation)
     
     Returns:
         fig: Matplotlib figure
     """
+    print(f"\nDEBUG in plot_results: model type = {type(model)}")
+    print(f"DEBUG in plot_results: model.training = {model.training}")
+    print(f"DEBUG in plot_results: number of layers = {len(layers)}")
+    
+    # Keep model in its current mode for consistent BatchNorm behavior
+    # was_training = model.training
+    # model.eval()  # Removed to maintain training mode
+    
     if len(layers) > 0:
         input_dim = layers[0].d_in
     else:
@@ -387,11 +408,26 @@ def plot_results(model, layers, dataset=None, save_path=None,
     
     # Plot function comparison if dataset is provided and requested
     if plot_function and dataset is not None and gs_bottom_top is not None:
+        print("DEBUG: Plotting function comparison")
+        print(f"DEBUG: Using model: {type(model)}")
+        
         if input_dim == 1:
-            # Create test points for 1D input
-            x_test, y_true = dataset.sample(200, device=next(model.parameters()).device)
+            # Use training data if provided, otherwise create test points
+            if x_train is not None and y_train is not None:
+                print("DEBUG: Using provided training data for plotting")
+                device = next(model.parameters()).device
+                x_test = x_train.to(device)
+                y_true = y_train.to(device)
+            else:
+                print("DEBUG: Generating new test data for plotting")
+                x_test, y_true = dataset.sample(200, device=next(model.parameters()).device)
+            
+            print(f"DEBUG: About to evaluate model on test data")
+            print(f"DEBUG: Test data shape: {x_test.shape}")
             with torch.no_grad():
                 y_pred = model(x_test)
+            print(f"DEBUG: Model predictions shape: {y_pred.shape}")
+            print(f"DEBUG: Sample predictions: {y_pred[:5].flatten().cpu().numpy()}")
             
             if final_dim == 1:
                 # For scalar output, plot the target vs. prediction
@@ -470,6 +506,10 @@ def plot_results(model, layers, dataset=None, save_path=None,
     if save_path:
         fig.savefig(save_path, dpi=240, bbox_inches='tight')
         print(f"Figure saved to {save_path}")
+    
+    # No need to restore mode since we didn't change it
+    # if was_training:
+    #     model.train()
     
     return fig
 

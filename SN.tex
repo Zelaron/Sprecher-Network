@@ -89,16 +89,15 @@ In our architecture, the fundamental building unit is the \emph{Sprecher block}.
 \subsection{Sprecher block structure}
 A Sprecher block transforms an input vector $\mathbf{x} \in \mathbb{R}^{d_{\mathrm{in}}}$ to an output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$. This transformation is implemented using the following shared, learnable components specific to that block:
 \begin{itemize}
-    \item \textbf{Monotonic spline $\phi(\cdot)$:} An increasing piecewise-linear function mapping $\mathbb{R} \to [0,1]$. While we denote the domain as $\mathbb{R}$ for generality, in practice each $\phi^{(\ell)}$ operates on a bounded domain determined by the network's structure and current parameters, as detailed in Section~\ref{sec:theoretical_domains}. This function is shared across all input-output connections within the block and its coefficients are learnable. Strict monotonicity (strictly increasing) is enforced during training (see Section \ref{sec:implementation}).
+    \item \textbf{Monotonic spline $\phi(\cdot)$:} A non-decreasing piecewise-linear function mapping $\mathbb{R} \to [0,1]$. While we denote the domain as $\mathbb{R}$ for generality, in practice each $\phi^{(\ell)}$ operates on a bounded domain determined dynamically by the network's structure and current parameters, as detailed in Section~\ref{sec:theoretical_domains}. This function is shared across all input-output connections within the block and its coefficients are learnable. Monotonicity is enforced during training through appropriate parameterization (see Section \ref{sec:implementation}).
     \item \textbf{General spline $\Phi(\cdot)$:} A piecewise-linear function (without monotonicity constraints) whose domain and codomain are determined by the network structure and can be either fixed or made trainable. If trainable codomains are used, they can be parameterized in various ways, such as by center and radius parameters, allowing the spline to adapt its output range during training. This function is also shared across the block and its coefficients are learnable.
     \item \textbf{Mixing weights vector $\lambda$:} A vector $\{\lambda_{i}\}$ of size $d_{\mathrm{in}}$, whose entries are learnable. These weights linearly combine the contributions from different input dimensions after transformation by $\phi$. Crucially, these weights are shared across all output dimensions within the block, maintaining fidelity to Sprecher's original formulation.
-    \item \textbf{Shift parameter $\eta$:} A learnable scalar $\eta > 0$. This parameter controls the magnitude of the input shift $x_i + \eta q$, which depends on the output index $q$.
+    \item \textbf{Shift parameter $\eta$:} A learnable scalar $\eta$. This parameter controls the magnitude of the input shift $x_i + \eta q$, which depends on the output index $q$. While Sprecher's original construction requires $\eta > 0$, practical implementations may allow $\eta$ to take any real value during training.
 \end{itemize}
 
 Concretely, we first define a single Sprecher block as an operator. Let $B^{(\ell)}: \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell}$ denote the $\ell$-th Sprecher block with parameters $\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)}$. Given an input vector $\mathbf{x} = (x_1, \dots, x_{d_{\mathrm{in}}}) \in \mathbb{R}^{d_{\mathrm{in}}}$, the block computes its output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$ component-wise as:
 $$ [B^{(\ell)}(\mathbf{x})]_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\mathrm{in}}}\lambda^{(\ell)}_{i}\,\phi^{(\ell)}\Bigl(x_i+\eta^{(\ell)}\,q\Bigr) + \alpha q\Biggr),$$
-for $q=0, \dots, d_{\mathrm{out}}-1$, where $\alpha$ is a scaling factor (set to 1 for the original Sprecher construction).
-where $\alpha$ is a scaling factor (set to 1 for the original Sprecher construction). While $\alpha = 1$ maintains theoretical consistency with Sprecher's formula, alternative values may be explored to improve optimization dynamics in deeper networks. Note that $q$ serves dual roles here: as an output index ($q = 0, \ldots, d_{\mathrm{out}}-1$) and as an additive shift parameter within the formula.
+for $q=0, \dots, d_{\mathrm{out}}-1$, where $\alpha$ is a scaling factor (typically set to 1 to maintain consistency with Sprecher's original construction). While $\alpha = 1$ maintains theoretical fidelity, alternative values may be explored to improve optimization dynamics in deeper networks. Note that $q$ serves dual roles here: as an output index ($q = 0, \ldots, d_{\mathrm{out}}-1$) and as an additive shift parameter within the formula.
 
 In a network with multiple layers, each Sprecher block (indexed by $\ell=1, \dots, L$ or $L+1$) uses its own independent set of shared parameters $(\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)})$. The block operation implements a specific form of transformation: each input coordinate $x_i$ is first shifted by an amount depending on the output index $q$ and the shared shift parameter $\eta^{(\ell)}$, then passed through the shared monotonic spline $\phi^{(\ell)}$. The results are linearly combined using the learnable mixing weights $\lambda^{(\ell)}_{i}$, shifted again by the output index $q$, and finally passed through the shared general spline $\Phi^{(\ell)}$. Stacking these blocks creates a deep, compositional representation.
 
@@ -111,9 +110,26 @@ Several optional components can enhance the basic Sprecher block:
     w_{\text{res}} \cdot x_q & \text{if } d_{\mathrm{in}} = d_{\mathrm{out}}\\
     (W_{\text{res}} \mathbf{x})_q & \text{if } d_{\mathrm{in}} \neq d_{\mathrm{out}}
     \end{cases}$$
+    where $h_q$ denotes the $q$-th component of the block's output before the residual connection is applied, and $\mathbf{x}$ is the input to the block.
     
-    \item \textbf{Output scaling:} The network may include learnable output scaling parameters $\gamma$ (scale) and $\beta$ (bias) applied to the final network output. These can be particularly useful for optimization, with appropriate initialization strategies (e.g., initializing $\beta$ to match target statistics and $\gamma$ to control initial output magnitudes).
+    \item \textbf{Normalization:} Batch or layer normalization can be applied to block outputs to improve training stability, particularly in deeper networks. See Section \ref{sec:normalization} for details.
+    
+    \item \textbf{Output scaling:} The network may include learnable output scaling parameters $\gamma$ (scale) and $\beta$ (bias) applied to the final network output: $f_{\text{final}}(\mathbf{x}) = \gamma \cdot f(\mathbf{x}) + \beta$. These parameters can improve optimization dynamics and are typically initialized with $\gamma = 0.1$ and $\beta$ set to match the mean of the target distribution when available.
 \end{itemize}
+
+\subsection{Normalization considerations}\label{sec:normalization}
+
+The unique structure of Sprecher Networks requires careful consideration when incorporating normalization techniques. While standard neural networks typically normalize individual neuron activations, the shared-spline architecture of SNs suggests a different approach: normalizing the entire vector output $\mathbf{h}^{(\ell)} \in \mathbb{R}^{d_\ell}$ of each Sprecher block as a cohesive unit.
+
+When normalization is applied after block $\ell$, the transformation takes the familiar form:
+$$\tilde{\mathbf{h}}^{(\ell)} = \gamma^{(\ell)} \odot \frac{\mathbf{h}^{(\ell)} - \mu^{(\ell)}}{\sigma^{(\ell)} + \epsilon} + \beta^{(\ell)}$$
+where $\gamma^{(\ell)}, \beta^{(\ell)} \in \mathbb{R}^{d_\ell}$ are learnable affine parameters. The statistics $\mu^{(\ell)}$ and $\sigma^{(\ell)}$ are computed per-dimension across the batch for batch normalization or across dimensions for layer normalization.
+
+This approach maintains the parameter efficiency central to SNs: each normalization layer adds only $2d_\ell$ parameters, preserving the $O(LN)$ scaling. Moreover, by treating the block output as a unified representation rather than normalizing individual components, the method respects the architectural philosophy that all output dimensions arise from shared transformations through $\phi^{(\ell)}$ and $\Phi^{(\ell)}$.
+
+Normalization can be positioned either before or after each Sprecher block, with post-block normalization often providing better gradient flow through the constrained parameter space. For networks with scalar output, where the final block's outputs are summed, normalization on the scalar sum effectively becomes a simple affine transformation. Practitioners often find it beneficial to skip normalization for the first block, allowing the network to directly process the input features while still stabilizing deeper layers. This selective application is particularly important when theoretical domain computation assumes inputs in $[0,1]^n$, as normalization could shift the data outside expected ranges.
+
+Our empirical findings suggest that the combination of normalization with residual connections proves particularly effective for deeper SNs, enabling successful training of networks with many blocks while maintaining the characteristic parameter efficiency of the architecture.
 
 \subsection{Layer composition and final mapping}
 Let $L$ be the number of hidden layers specified by the architecture $[d_1, \dots, d_L]$. In our framework, a ``hidden layer'' corresponds to the vector output of a Sprecher block. The mapping from the representation at layer $\ell-1$ to layer $\ell$ is implemented by the $\ell$-th Sprecher block.
@@ -179,7 +195,7 @@ We illustrate the vector-output case ($m>1$) for a network architecture $d_0\to[
     \draw[-{Stealth[length=2mm]}] (OB) -- (Y);  % Vertical arrow
 \end{tikzpicture}
 \end{center}
-Here, $X^{(\ell)} = \mathbf{h}^{(\ell)}$ denotes the output vector of the $\ell$-th Sprecher block. Each block $T^{(\ell)}$ internally uses its own pair of shared splines $(\phi^{(\ell)}, \Phi^{(\ell)})$, mixing weights $\lambda^{(\ell)}$, and shift $\eta^{(\ell)}$. The final output block $T^{(4)}$ maps the representation $X^{(3)}$ to the final $m$-dimensional output $\mathbf{y}$ without subsequent summation.
+Here, $X^{(\ell)} = \mathbf{h}^{(\ell)}$ denotes the output vector of the $\ell$-th Sprecher block (we use both notations interchangeably for clarity in different contexts). Each block $T^{(\ell)}$ internally uses its own pair of shared splines $(\phi^{(\ell)}, \Phi^{(\ell)})$, mixing weights $\lambda^{(\ell)}$, and shift $\eta^{(\ell)}$. The final output block $T^{(4)}$ maps the representation $X^{(3)}$ to the final $m$-dimensional output $\mathbf{y}$ without subsequent summation.
 
 \subsection{Illustrative expansions (scalar output)}
 To further clarify the compositional structure for the scalar output case ($m=1$), we write out the full expansions for networks with $L=1, 2, 3$ hidden layers.
@@ -246,7 +262,7 @@ Feature                   & MLP                 & LAN / Adaptive-MLP & KAN      
 \bottomrule
 \end{tabular}
 \vspace{2mm}
-\parbox{\textwidth}{\footnotesize \textit{Notes:} $L$=depth, $N$=average width, $G$=spline grid size/complexity. UAT=Universal Approx. Theorem, KAT=Kolmogorov-Arnold Theorem, KAS=Kolmogorov-Arnold-Sprecher. LAN details often follow KAN Appendix B \cite{liu2024kan}.
+\parbox{\textwidth}{\footnotesize \textit{Notes:} $L$=depth, $N$=average width, $G$=spline grid size/complexity. UAT=Universal Approx. Theorem, KAT=Kolmogorov-Arnold Theorem, KAS=Kolmogorov-Arnold-Sprecher. LAN details often follow KAN Appendix B \cite{liu2024kan}. All architectures may optionally include normalization layers; SNs apply normalization to entire block outputs rather than individual activations.
 \textit{The parameter scaling notation uses $N$ to denote a typical or average layer width for simplicity, following \cite{liu2024kan}. For architectures with varying widths $d_\ell$, the $LN^2$ terms should be understood as $\sum_{\ell} d_{\ell-1}d_{\ell}$ (MLP, LAN), the $LN^2G$ term for KAN as $(\sum_{\ell} d_{\ell-1}d_{\ell})G$, and the $LN$ term for SN as $\sum_{\ell} d_{\ell-1}$ (since SN uses weight vectors, not matrices), where the sum is over the relevant blocks/layers, for precise counts.}}
 \end{table}
 
@@ -263,7 +279,7 @@ where $A^{(k)} \colon \mathbb{R}^{d_{k-1}} \rightarrow \mathbb{R}^{d_k}$ is an a
 \end{definition}
 
 \begin{remark}[Note on weight structure]
-The following proposition assumes matrix weights $\lambda_{i,q}^{(\ell)}$ as originally described. However, the actual implementation uses vector weights $\lambda_i^{(\ell)}$, which would require modifying the weight matrix structure in the proposition accordingly. We present the matrix version here for completeness, noting that the vector version represents an even more constrained (and parameter-efficient) special case of LANs.
+The following proposition uses matrix weights $\lambda_{i,q}^{(\ell)}$ to establish the connection between SNs and LANs. However, the architecture we propose and analyze throughout this paper uses vector weights $\lambda_i^{(\ell)}$ (following Sprecher's original formulation), where the same weights are shared across all output dimensions. This vector version represents an even more constrained special case of the LAN formulation shown below. The practical SN architecture with vector weights would require the weight matrices in the proposition to have repeated rows, i.e., $\lambda_{i,q}^{(\ell)} = \lambda_i^{(\ell)}$ for all $q$.
 \end{remark}
 
 \begin{prop} \label{prop:SNareLAN}
@@ -314,7 +330,7 @@ While this proposition shows that SNs are special cases of LANs with specific st
 \end{figure}
 
 \begin{remark}[Domain considerations]
-The above proposition assumes that the spline functions $\phi^{(\ell)}$ can handle inputs outside their original domain $[0,1]$, which may arise due to the shifts $\eta^{(\ell)}q$. In Sprecher's original construction with inputs in $[0,1]^n$, the shifted values $x_i + \eta q$ can indeed fall outside $[0,1]$. While the theoretical construction can extend $\phi$ to a larger domain, practical implementations typically handle this by computing exact theoretical bounds for all spline domains based on the network structure, ensuring that all possible inputs fall within the spline's operating range.
+The above proposition assumes that the spline functions $\phi^{(\ell)}$ can handle inputs outside their original domain $[0,1]$, which may arise due to the shifts $\eta^{(\ell)}q$. While Sprecher's theoretical construction extends $\phi$ appropriately, practical implementations typically compute exact theoretical bounds for all spline domains based on the network structure, ensuring that all evaluations fall within the spline's operating range through dynamic domain updates.
 \end{remark}
 
 \section{Theoretical aspects and open questions}\label{sec:universality}
@@ -341,7 +357,7 @@ Suppose the input satisfies $\mathbf{z} \in \mathcal{B}_{in} := [-B_{in}, B_{in}
 \item $I_\Phi := [-R_{out}, R_{out}]$ where $R_{out} := \Lambda d_{in} \|\phi\|_{L^\infty(I_\phi)} + d_{out}$ (domain containing all possible arguments to $\Phi$)
 \end{itemize}
 
-Let $\hat{\phi}$ be a monotonic spline of degree $k$ with $G_\phi$ uniformly spaced knots on $I_\phi$, and $\hat{\Phi}$ be a spline of degree $k$ with $G_\Phi$ uniformly spaced knots on $I_\Phi$. If
+Let $\hat{\phi}$ be a monotonic spline of degree $k$ with $G_\phi$ uniformly spaced knots on $I_\phi$, and $\hat{\Phi}$ be a spline of degree $k$ with $G_\Phi$ uniformly spaced knots on $I_\Phi$. Note that while this theorem assumes degree-$k$ splines for generality, practical implementations often use piecewise linear splines ($k=1$) for computational efficiency. If
 $$\|\phi - \hat{\phi}\|_{L^\infty(I_\phi)} \leq \frac{\|\phi^{(k+1)}\|_{L^\infty(I_\phi)}}{(k+1)!} \left(\frac{|I_\phi|}{G_\phi}\right)^{k+1}$$
 $$\|\Phi - \hat{\Phi}\|_{L^\infty(I_\Phi)} \leq \frac{\|\Phi^{(k+1)}\|_{L^\infty(I_\Phi)}}{(k+1)!} \left(\frac{|I_\Phi|}{G_\Phi}\right)^{k+1}$$
 then the approximate block $\hat{T}$ using $\hat{\phi}, \hat{\Phi}$ satisfies
@@ -435,7 +451,7 @@ Substituting the bound for $E_L$ gives the result.
 \end{proof}
 
 \begin{remark}[Monotonic spline approximation]
-The approximation rates in Lemma \ref{lem:single_block} assume we can achieve standard spline approximation rates while maintaining monotonicity for $\phi^{(\ell)}$. This can be achieved using positive B-splines of degree $k$ with appropriate knot sequences, Bernstein polynomial approximation followed by degree elevation, or the specific log-space parameterization used in implementation, which maintains monotonicity by construction. Each approach may have slightly different constants but achieves the same $O(G^{-(k+1)})$ rate for smooth monotonic functions.
+The approximation rates in Lemma \ref{lem:single_block} assume we can achieve standard spline approximation rates while maintaining monotonicity for $\phi^{(\ell)}$. While the theoretical analysis considers general degree-$k$ splines, practical implementations typically use piecewise linear splines ($k=1$) with a log-space parameterization that maintains monotonicity by construction. For piecewise linear splines approximating smooth functions, the approximation rate becomes $O(G^{-2})$.
 \end{remark}
 
 \begin{remark}[Dependence on depth]
@@ -460,9 +476,9 @@ Proving Conjectures \ref{conj:vector} and \ref{conj:deep_universal} rigorously w
 \section{Implementation considerations}\label{sec:implementation}
 
 \subsection{Trainable splines}
-For practical implementations, piecewise-linear splines are a natural choice for both $\phi^{(\ell)}$ and $\Phi^{(\ell)}$. While these are only $C^0$ continuous (not smooth in the classical sense), they offer excellent computational efficiency and sufficient expressiveness for function approximation. The piecewise linear structure also simplifies domain analysis, as the extrema of such splines occur at knot locations, enabling exact computation of output ranges during forward propagation. Each spline can be defined by a set of knots (x-coordinates) and corresponding coefficients (y-coordinates). A common approach is to use fixed, uniformly spaced knots over the spline's domain, with learnable coefficients. The number of knots is a hyperparameter that affects both expressivity and computational cost.
+For practical implementations, piecewise-linear splines are used for both $\phi^{(\ell)}$ and $\Phi^{(\ell)}$. While these are only $C^0$ continuous (not smooth in the classical sense), they offer excellent computational efficiency and sufficient expressiveness for function approximation. Each piecewise linear spline with $G$ intervals requires $G+1$ parameters (the values at the $G+1$ knot locations). The piecewise linear structure also simplifies domain analysis, as the extrema of such splines occur at knot locations, enabling exact computation of output ranges during forward propagation. Each spline can be defined by a set of knots (x-coordinates) and corresponding coefficients (y-coordinates). A common approach is to use fixed, uniformly spaced knots over the spline's domain, with learnable coefficients. The number of knots is a hyperparameter that affects both expressivity and computational cost.
 
-For the inner spline $\phi^{(\ell)}$, the codomain is typically fixed to $[0, 1]$. Monotonicity can be enforced through various parameterization strategies. One effective approach uses a transformation that guarantees positive increments between successive spline values, such as parameterizing the differences in log-space and applying a positive activation function. This ensures strict monotonicity throughout training without requiring explicit constraints or post-processing operations, while maintaining good gradient flow properties. The spline should be initialized to provide a reasonable starting point, such as a roughly linear and increasing function within its range.
+For the inner spline $\phi^{(\ell)}$, the codomain is typically fixed to $[0, 1]$. Strict monotonicity (strictly increasing) is enforced during training. This can be achieved through various parameterization strategies, such as using a transformation that guarantees positive increments between successive spline values. One effective approach parameterizes the differences between knot values in log-space and applies a positive activation function (e.g., softplus), ensuring that the spline remains strictly increasing throughout training without requiring explicit constraints or projection steps. The spline should be initialized to provide a reasonable starting point, such as a roughly linear and increasing function within its range.
 
 The outer spline $\Phi^{(\ell)}$ operates on a domain determined by the network structure. Both the domain and codomain can be fixed or made trainable via parameters (e.g., center and radius). Trainable ranges add flexibility but also complexity to the optimization. Monotonicity is not required for $\Phi^{(\ell)}$.
 
@@ -473,7 +489,7 @@ All learnable parameters (spline coefficients, $\eta^{(\ell)}$, $\lambda^{(\ell)
 
 \subsection{Theoretical domain computation}
 \label{sec:theoretical_domains}
-One advantage of the structured Sprecher architecture is the ability to compute exact theoretical bounds for all intermediate values. Throughout this analysis, we assume inputs lie in $[0, 1]^n$, though the methodology extends naturally to any bounded domain. This assumption enables principled initialization and can aid in debugging and analysis.
+One advantage of the structured Sprecher architecture is the ability to compute exact theoretical bounds for all intermediate values when using piecewise-linear splines, as the extrema of such functions occur at knot locations. Throughout this analysis, we assume inputs lie in $[0, 1]^n$, though the methodology extends naturally to any bounded domain. This assumption enables principled initialization and can aid in debugging and analysis.
 
 \begin{lemma}[Domain propagation through Sprecher blocks]\label{lem:domain_prop}
 Consider a Sprecher block where each input component lies in the same range $[a,b]$, i.e., inputs are in $[a,b]^{d_{in}}$, shift parameter $\eta$, weights $\lambda_i$, and output dimension $d_{out}$. Let us distinguish between a spline's \emph{domain} (the interval of valid inputs) and its \emph{codomain} (the interval of possible outputs). Then:
@@ -488,7 +504,7 @@ $$\mathcal{D}_\phi = \begin{cases}
 $$\left[\sum_{i: \lambda_i < 0} \lambda_i, \sum_{i: \lambda_i > 0} \lambda_i + \alpha(d_{out}-1)\right]$$
 where $\alpha$ is the scaling factor for the $q$ term (typically $\alpha = 1$).
 
-\item If $\Phi$ has trainable codomain parameters $(c_c, c_r)$ defining codomain $[c_c - c_r, c_c + c_r]$, then the output range is determined by examining the actual spline coefficients. For piecewise linear splines, the extrema occur at knot points, so the actual output range is $[\min_j \Phi(t_j), \max_j \Phi(t_j)]$ where $t_j$ are the knot locations. This ensures accurate range propagation even for highly oscillatory splines.
+\item If $\Phi$ has trainable codomain parameters $(c_c, c_r)$ defining codomain $[c_c - c_r, c_c + c_r]$, then the actual output range is determined by examining the spline values at its knots. For piecewise linear splines, since the function is linear between knots, the extrema occur at knot points. Thus, the actual output range is $[\min_j \Phi(t_j), \max_j \Phi(t_j)]$ where $t_j$ are the knot locations within the domain $\mathcal{D}_\Phi$. This ensures accurate range propagation even for highly oscillatory splines.
 \end{enumerate}
 \end{lemma}
 
@@ -501,7 +517,7 @@ For (2), the argument to $\Phi$ is $\sum_{i} \lambda_i \phi(x_i + \eta q) + \alp
 \end{proof}
 
 This lemma enables a forward propagation algorithm for computing all spline domains throughout the network. Crucially, the algorithm's efficiency relies on the property of piecewise-linear splines (formalized in Lemma~\ref{lem:domain_prop}, part 3), which 
-allows for the exact computation of output ranges by simply finding the extrema of the spline's values at its knots. Importantly, this computation is performed not just at initialization but at every training iteration as the parameters $\lambda^{(\ell)}$ and $\eta^{(\ell)}$ evolve, ensuring that splines always operate on their natural domains:
+allows for the exact computation of output ranges by simply finding the extrema of the spline's values at its knots. In practical implementations, this computation is performed periodically during training as the parameters $\lambda^{(\ell)}$ and $\eta^{(\ell)}$ evolve, ensuring that splines operate on appropriate domains:
 
 \begin{algorithm}
 \caption{Forward domain propagation}
@@ -521,7 +537,7 @@ allows for the exact computation of output ranges by simply finding the extrema 
 \end{algorithmic}
 \end{algorithm}
 
-where $\oplus$ denotes interval addition: $[a_1, b_1] \oplus [a_2, b_2] = [a_1 + a_2, b_1 + b_2]$.
+where $\oplus$ denotes interval addition: $[a_1, b_1] \oplus [a_2, b_2] = [a_1 + a_2, b_1 + b_2]$. Note that when the residual weight is negative, the interval arithmetic must account for the sign appropriately.
 
 \begin{remark}[Dynamic spline updates and function preservation]
 A critical challenge in training Sprecher Networks is that the domains of the splines $\phi^{(\ell)}$ and $\Phi^{(\ell)}$ evolve as the parameters $\eta^{(\ell)}$ and $\lambda^{(\ell)}$ are updated. This evolution could be mitigated by clamping the spline inputs to fixed (or slowly trainable) intervals. However, this would break the direct correspondence with Sprecher's formula. His construction, for a function on $[0,1]^n$, explicitly relies on evaluating the inner function $\phi$ on shifted inputs $x_i + \eta q$. Since each $x_i \in [0,1]$, these shifted values necessarily extend beyond this initial interval, requiring $\phi$ to operate on a wider domain.
@@ -554,7 +570,7 @@ Let's assume a network of depth $L$ (meaning $L$ hidden layers, thus $L$ blocks 
 
 The parameter counts for different architectures scale as follows. MLPs primarily consist of linear weight matrices, leading to a total parameter count dominated by these weights, scaling as $O(L N^2)$. LANs (Adaptive-MLPs) have both linear weights ($O(L N^2)$) and learnable activations; if each of the $N$ nodes per layer has a learnable spline, this adds $O(L N G)$ parameters, for a total of $O(L N^2 + L N G)$. KANs replace linear weights with learnable edge splines, with $O(N^2)$ edges between layers. If each edge has a spline with $O(G)$ parameters, the total count per layer is $O(N^2 G)$, leading to an overall scaling of $O(L N^2 G)$.
 
-Sprecher Networks have a fundamentally different structure. Each block contains mixing weights $\lambda^{(\ell)}$ with $O(N_{in})$ parameters for the first block and $O(N)$ for subsequent blocks (crucially, these are vectors, not matrices), shared splines $\phi^{(\ell)}, \Phi^{(\ell)}$ with $2 \times O(G) = O(G)$ parameters per block independent of $N$, and a shift parameter $\eta^{(\ell)}$ with $O(1)$ parameter per block. Summing over $L$ (or $L+1$) blocks, the total parameter count scales approximately as $O(LN + LG + L)$.
+Sprecher Networks have a fundamentally different structure. Each block contains mixing weights $\lambda^{(\ell)}$ with $O(N_{in})$ parameters for the first block and $O(N)$ for subsequent blocks (crucially, these are vectors, not matrices), shared splines $\phi^{(\ell)}, \Phi^{(\ell)}$ with $2 \times O(G) = O(G)$ parameters per block independent of $N$, and a shift parameter $\eta^{(\ell)}$ with $O(1)$ parameter per block. When normalization is used, each block may have an associated normalization layer adding $O(N)$ parameters (specifically $2N$ for the affine transformation). Summing over $L$ (or $L+1$) blocks, the total parameter count scales approximately as $O(LN + LG + L)$, where the linear dependence on $N$ now includes both mixing weights and optional normalization parameters.
 
 This scaling reveals the crucial trade-off: SNs achieve a reduction from $O(LN^2)$ to $O(LN)$ in the width-dependent term by using weight vectors rather than matrices. Additionally, in KANs, the spline complexity $G$ multiplies the $N^2$ term ($O(L N^2 G)$), while in SNs, due to spline sharing within blocks, it appears as an additive term ($O(L G)$). This suggests potential for significant parameter savings, particularly when high spline resolution ($G$) is required for accuracy or when the layer width ($N$) is moderate to large.
 
@@ -566,17 +582,17 @@ We present parameter count comparisons based on architectures reported in \cite{
 \paragraph{PDE solving example (KAN Ref \S 3.4):}
 KAN architecture $[2, 10, 1]$, reported effective. $N_{in}=2, N_{hid}=10, N_{out}=1$.
 \begin{itemize}
-    \item \textbf{KAN (est.):} $(2\times10 + 10\times1) = 30$ edges/splines. Assume $G=20$ intervals, $k=3$ B-splines ($G+k \approx 23$ params/spline). Total KAN params $\approx 30 \times 23 = 690$.
-    \item \textbf{SN (hypothetical):} Architecture $2 \to [10] \to 1$. $L=1$ hidden layer, scalar output means $L=1$ block total. Shared splines: $2 \times (G+k) \approx 2 \times 23 = 46$. Mixing weights: $d_0 = 2$ (vector weights). Shift $\eta^{(1)}$: $1$. Total SN params $\approx 46 + 2 + 1 = 49$.
-    \item \textbf{Potential advantage:} For equivalent structure, theoretical reduction factor $\approx 14$x (49 vs 690). Actual performance requires empirical validation.
+    \item \textbf{KAN (est.):} $(2\times10 + 10\times1) = 30$ edges/splines. KANs use B-splines with $G=20$ intervals, $k=3$ ($G+k \approx 23$ params/spline). Total KAN params $\approx 30 \times 23 = 690$.
+    \item \textbf{SN (hypothetical):} Architecture $2 \to [10] \to 1$. $L=1$ hidden layer, scalar output means $L=1$ block total. SNs use piecewise linear splines with $G=20$ intervals ($G+1 = 21$ params/spline). Shared splines: $2 \times 21 = 42$. Mixing weights: $d_0 = 2$ (vector weights). Shift $\eta^{(1)}$: $1$. Total SN params $\approx 42 + 2 + 1 = 45$.
+    \item \textbf{Potential advantage:} For equivalent structure, theoretical reduction factor $\approx 15$x (45 vs 690). Actual performance requires empirical validation.
 \end{itemize}
 
 \paragraph{Knot theory example (KAN Ref \S 4.3):}
-Pruned KAN $[17, 1, 14]$, $G=3, k=3$ ($G+k \approx 6$ params/spline).
+Pruned KAN $[17, 1, 14]$, with B-splines using $G=3$ intervals, $k=3$ ($G+k \approx 6$ params/spline).
 \begin{itemize}
     \item \textbf{KAN (est.):} $(17\times1 + 1\times14) = 31$ edges/splines. Total KAN params $\approx 31 \times 6 = 186$.
-    \item \textbf{SN (hypothetical):} Architecture $17 \to [1] \to 14$. $L=1$ hidden layer, vector output means $L+1=2$ blocks total. Shared splines: $2(L+1) \times (G+k) \approx 4 \times 6 = 24$. Mixing weights: $d_0 + d_1 = 17 + 1 = 18$ (vector weights). Shifts $\eta^{(1)}, \eta^{(2)}$: $2$. Total SN params $\approx 24 + 18 + 2 = 44$.
-    \item \textbf{Potential advantage:} Theoretical reduction factor $\approx 4.2$x (44 vs 186). The narrow intermediate dimension $d_1=1$ might pose challenges for SN training.
+    \item \textbf{SN (hypothetical):} Architecture $17 \to [1] \to 14$. $L=1$ hidden layer, vector output means $L+1=2$ blocks total. Using piecewise linear splines with $G=3$ intervals: $2(L+1) \times (G+1) = 4 \times 4 = 16$. Mixing weights: $d_0 + d_1 = 17 + 1 = 18$ (vector weights). Shifts $\eta^{(1)}, \eta^{(2)}$: $2$. Total SN params $\approx 16 + 18 + 2 = 36$.
+    \item \textbf{Potential advantage:} Theoretical reduction factor $\approx 5.2$x (36 vs 186). The narrow intermediate dimension $d_1=1$ might pose challenges for SN training.
 \end{itemize}
 
 These calculations illustrate the dramatic parameter reduction possible with SNs, but they also highlight a crucial practical consideration: the optimal architecture for SNs likely differs substantially from that of MLPs or KANs. With vector weights providing only linear scaling in width, SNs may require wider or deeper architectures to achieve comparable expressivity. The art of architecture selection for SNs involves balancing the parameter efficiency against the need for sufficient expressivity—a trade-off that remains poorly understood and likely depends strongly on the problem domain. Early empirical evidence suggests that SNs excel when the target function aligns well with their compositional, shift-based structure, but struggle when forced to approximate functions that require truly independent processing of different output dimensions.

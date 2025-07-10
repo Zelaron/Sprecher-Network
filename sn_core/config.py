@@ -12,7 +12,14 @@ CONFIG = {
     'weight_decay': 1e-6,
     'max_grad_norm': 1.0,
     
-    # Scheduler settings (only used if use_advanced_scheduler=True)
+    # Normalization settings
+    'use_normalization': True,  # Whether to use normalization
+    'norm_type': 'batch',  # Default normalization type when enabled
+    'norm_position': 'after',  # Default position when enabled
+    'norm_skip_first': True,  # Default skip_first setting when enabled
+    
+    # Scheduler settings
+    'scheduler_type': 'plateau_cosine',  # Type of scheduler when use_advanced_scheduler=True
     'scheduler_base_lr': 0.0001,
     'scheduler_max_lr': 0.01,
     'scheduler_patience': 500,
@@ -26,6 +33,9 @@ CONFIG = {
     # Domain violation tracking
     'track_domain_violations': False,  # Enable to track out-of-domain evaluations
     'verbose_domain_violations': False,  # Print violations as they occur
+    
+    # Checkpoint debugging
+    'debug_checkpoint_loading': False,  # Enable detailed logging during checkpoint operations
 }
 
 # MNIST-specific settings

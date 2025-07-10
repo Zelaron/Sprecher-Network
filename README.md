@@ -24,41 +24,49 @@ pip install -r requirements.txt
 
 ### Basic Function Approximation
 
-Run a single experiment with default settings:
+Run a single experiment on a toy dataset:
 
 ```
+# Run with default settings (toy_1d_poly dataset)
 python sn_experiments.py
-```
 
-Customize the architecture and training parameters:
-
-```
+# Customize the architecture and training, then save plots
 python sn_experiments.py --dataset toy_2d --arch 10,10,10 --epochs 5000 --save_plots
 ```
 
 ### MNIST Classification
 
-Sprecher Networks can also handle classification tasks. The MNIST example demonstrates competitive performance with dramatically fewer parameters than equivalent MLPs:
+Sprecher Networks can also handle classification tasks. Use the `sn_mnist.py` script with the `--mode` flag:
 
 ```
-# Train on MNIST (interactive mode selection)
-python sn_mnist.py
+# Train a new model on MNIST for 5 epochs
+python sn_mnist.py --mode train --arch 100 --epochs 5 --save_plots
 
-# The script will prompt for mode:
-# 0: Train a new model
-# 1: Test existing model
-# 2: Classify a single image (requires 'digit.png')
-# 3: Visualize learned splines
+# Test the accuracy of an existing model
+python sn_mnist.py --mode test --arch 100
+
+# Run inference on a single image
+python sn_mnist.py --mode infer --image digit.png
+
+# Visualize the learned splines from a trained model
+python sn_mnist.py --mode plot --arch 100
 ```
 
-A single-layer network with architecture 784→[100]→10 achieves ~92% accuracy with only ~45,000 parameters, compared to over 100,000 for a comparable MLP.
+A single-layer network with architecture 784→[100]→10 achieves ~92% accuracy with only ~45,000 parameters.
 
 ### Batch Experiments
 
-Run a comprehensive sweep of predefined configurations:
+The modernized `sn_sweeps.py` script can run a comprehensive suite of experiments in parallel.
 
 ```
+# List all available sweeps
+python sn_sweeps.py --list
+
+# Run all sweeps in parallel using all available CPU cores
 python sn_sweeps.py
+
+# Run a few specific sweeps sequentially (1 worker)
+python sn_sweeps.py --sweeps toy_1d_poly feynman_uv --parallel 1
 ```
 
 ## Available Datasets
@@ -85,10 +93,10 @@ The main configuration options are accessible through `sn_core/config.py`:
 
 ```
 CONFIG = {
-    'train_phi_range': True,      # Enable trainable domain/codomain for Φ splines
+    'train_phi_codomain': True,   # Enable trainable codomain for Φ splines
     'use_residual_weights': True, # Enable residual connections
     'seed': 45,                   # Random seed for reproducibility
-    'use_advanced_scheduler': True, # Plateau-aware learning rate scheduling
+    'use_advanced_scheduler': False, # Option for plateau-aware learning rate scheduling
     'weight_decay': 1e-6,         # L2 regularization
     'max_grad_norm': 1.0,         # Gradient clipping threshold
 }
@@ -96,15 +104,25 @@ CONFIG = {
 
 ### Command Line Arguments
 
-- `--dataset`: Choose from available datasets
-- `--arch`: Hidden layer widths as comma-separated values
-- `--phi_knots`: Number of knots for monotonic φ splines (default: 100)
-- `--Phi_knots`: Number of knots for general Φ splines (default: 100)
-- `--epochs`: Training epochs (default: 4000)
-- `--seed`: Random seed
-- `--device`: Device selection (auto/cpu/cuda)
-- `--save_plots`: Save visualizations to files
-- `--no_show`: Suppress plot display (useful for batch runs)
+Arguments are specific to each script.
+
+**`sn_experiments.py` & `sn_mnist.py` (Common arguments):**
+- `--arch`: Hidden layer widths as comma-separated values (e.g., `15,15`).
+- `--phi_knots` / `--Phi_knots`: Number of knots for φ and Φ splines.
+- `--epochs`: Number of training epochs.
+- `--seed`: Random seed.
+- `--device`: Device selection (`auto`/`cpu`/`cuda`).
+- `--save_plots`: Save visualizations to files in the `plots/` directory.
+- `--no_show`: Suppress interactive plot display (useful for batch runs).
+
+**`sn_mnist.py` (Specific arguments):**
+- `--mode [train|test|infer|plot]`: Selects the operation mode.
+
+**`sn_sweeps.py` (Specific arguments):**
+- `--list`: Lists all available sweep names.
+- `--sweeps [NAME ...]`: Specifies which sweeps to run (default: all).
+- `--parallel N`: Number of sweeps to run in parallel.
+- `--fail-fast`: Stops all jobs if a single sweep fails.
 
 ## Implementation Structure
 
@@ -133,18 +151,19 @@ The monotonic inner splines φ use a log-space parameterization to ensure strict
 ### Training Features
 
 The implementation includes several advanced training techniques:
-- Gradient clipping to handle the challenging optimization landscape created by shared splines
-- Plateau-aware cosine annealing that increases learning rate when stuck in local minima
-- Optional residual connections that adapt based on dimensional compatibility
-- Regularization options for smoother splines and better generalization
+- Gradient clipping to handle the challenging optimization landscape created by shared splines.
+- Plateau-aware cosine annealing that increases learning rate when stuck in local minima.
+- Optional residual connections that adapt based on dimensional compatibility.
+- Regularization options for smoother splines and better generalization.
+- Extremely robust checkpointing to ensure plots perfectly reflect the best model state.
 
 ## Visualization
 
 The package generates comprehensive visualizations saved to the `plots/` directory:
-- Network architecture diagrams showing the block structure
-- Learned spline functions φ and Φ for each block
-- Function approximation comparisons (for regression tasks)
-- Training loss curves with logarithmic scaling
+- Network architecture diagrams showing the block structure.
+- Learned spline functions φ and Φ for each block.
+- Function approximation comparisons (for regression tasks).
+- Training loss and accuracy curves.
 
 Visualizations are automatically saved with descriptive filenames indicating the dataset, architecture, and training configuration.
 
@@ -152,7 +171,7 @@ Visualizations are automatically saved with descriptive filenames indicating the
 
 ### Adding Custom Datasets
 
-Create new datasets by extending the base Dataset class:
+Create new datasets by extending the base `Dataset` class in `sn_core/data.py`:
 
 ```
 from sn_core.data import Dataset, DATASETS

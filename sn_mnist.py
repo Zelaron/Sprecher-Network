@@ -1,10 +1,12 @@
 """
-sn_mnist.py - MNIST classification using Sprecher Networks
+sn_mnist.py - MNIST classification using Sprecher Networks (Modernized)
 """
 
 import os
 import sys
 import shutil
+import argparse
+import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -18,8 +20,194 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 # Import Sprecher Network components
-from sn_core import SprecherMultiLayerNetwork, plot_results
+from sn_core import SprecherMultiLayerNetwork, plot_results, plot_loss_curve
 from sn_core.config import CONFIG, MNIST_CONFIG
+
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Train Sprecher Networks on MNIST")
+    
+    # Mode selection
+    parser.add_argument("--mode", type=str, required=True,
+                        choices=["train", "test", "infer", "plot"],
+                        help="Operation mode: train, test, infer, or plot")
+    
+    # Architecture and model settings
+    parser.add_argument("--arch", type=str, default=None,
+                        help="Architecture as comma-separated values (default: from MNIST_CONFIG)")
+    parser.add_argument("--phi_knots", type=int, default=None,
+                        help="Number of knots for phi splines (default: from MNIST_CONFIG)")
+    parser.add_argument("--Phi_knots", type=int, default=None,
+                        help="Number of knots for Phi splines (default: from MNIST_CONFIG)")
+    
+    # Training settings
+    parser.add_argument("--epochs", type=int, default=None,
+                        help="Number of training epochs (default: from MNIST_CONFIG)")
+    parser.add_argument("--batch_size", type=int, default=None,
+                        help="Batch size (default: from MNIST_CONFIG)")
+    parser.add_argument("--lr", type=float, default=None,
+                        help="Learning rate (default: from MNIST_CONFIG)")
+    parser.add_argument("--seed", type=int, default=45,
+                        help="Random seed (default: 45)")
+    parser.add_argument("--device", type=str, default="auto",
+                        help="Device: auto, cpu, or cuda (default: auto)")
+    
+    # File paths
+    parser.add_argument("--model_file", type=str, default=None,
+                        help="Model file path (default: from MNIST_CONFIG)")
+    parser.add_argument("--data_dir", type=str, default=None,
+                        help="Data directory path (default: from MNIST_CONFIG)")
+    parser.add_argument("--image", type=str, default="digit.png",
+                        help="Image file for inference mode (default: digit.png)")
+    
+    # Training options
+    parser.add_argument("--retrain", action="store_true",
+                        help="Delete existing model and retrain from scratch")
+    
+    # Plotting options
+    parser.add_argument("--save_plots", action="store_true",
+                        help="Save plots to files")
+    parser.add_argument("--no_show", action="store_true",
+                        help="Don't show plots (useful for batch runs)")
+    
+    # Normalization arguments
+    parser.add_argument("--norm_type", type=str,
+                        choices=["none", "batch", "layer"],
+                        help="Type of normalization to use (default: from CONFIG)")
+    parser.add_argument("--norm_position", type=str, default="after",
+                        choices=["before", "after"],
+                        help="Position of normalization relative to blocks (default: after)")
+    parser.add_argument("--norm_skip_first", action="store_true", default=True,
+                        help="Skip normalization for the first block (default: True)")
+    
+    # Feature control arguments
+    parser.add_argument("--no_residual", action="store_true",
+                        help="Disable residual connections (default: enabled)")
+    parser.add_argument("--no_norm", action="store_true",
+                        help="Disable normalization (default: enabled with batch norm)")
+    parser.add_argument("--use_advanced_scheduler", action="store_true",
+                        help="Use PlateauAwareCosineAnnealingLR scheduler (default: disabled)")
+    
+    # Debug options
+    parser.add_argument("--debug_domains", action="store_true",
+                        help="Enable domain debugging output")
+    parser.add_argument("--track_violations", action="store_true",
+                        help="Track domain violations during training")
+    
+    return parser.parse_args()
+
+
+def get_config_suffix(args, CONFIG):
+    """Build filename suffix for non-default configurations."""
+    parts = []
+    
+    # Check normalization (default is enabled with batch)
+    if args.no_norm or (hasattr(args, 'norm_type') and args.norm_type == 'none'):
+        parts.append("NoNorm")
+    elif hasattr(args, 'norm_type') and args.norm_type and args.norm_type not in ['none', 'batch']:
+        parts.append(f"Norm{args.norm_type.capitalize()}")
+    
+    # Check residuals (default is enabled)
+    if not CONFIG.get('use_residual_weights', True):
+        parts.append("NoResidual")
+    
+    # Check scheduler (default is disabled)
+    if CONFIG.get('use_advanced_scheduler', False):
+        parts.append("AdvScheduler")
+    
+    # Join with dashes
+    return "-" + "-".join(parts) if parts else ""
+
+
+def discover_models(model_dir="."):
+    """Discover trained MNIST models and extract their architectures.
+    
+    Returns:
+        dict: A dictionary mapping architectures to model info:
+              {
+                  "40-40-40-40": {
+                      "epochs": 3,
+                      "files": ["sn_mnist_model-40-40-40-40-3epochs.pth", 
+                               "sn_mnist_model-40-40-40-40-3epochs_best.pth"]
+                  }
+              }
+    """
+    import glob
+    import re
+    
+    models = {}
+    pattern = os.path.join(model_dir, "sn_mnist_model-*-*epochs*.pth")
+    
+    for filepath in glob.glob(pattern):
+        filename = os.path.basename(filepath)
+        # Extract architecture and epochs from filename
+        # Pattern: sn_mnist_model-{arch}-{epochs}epochs[_best].pth
+        match = re.match(r"sn_mnist_model-([\d-]+)-(\d+)epochs(_best)?\.pth", filename)
+        if match:
+            arch_str = match.group(1)
+            epochs = int(match.group(2))
+            
+            if arch_str not in models:
+                models[arch_str] = {
+                    "epochs": epochs,
+                    "files": []
+                }
+            models[arch_str]["files"].append(filename)
+            # Update epochs if we find a different value (shouldn't happen normally)
+            if models[arch_str]["epochs"] != epochs:
+                print(f"Warning: Found models with same architecture but different epochs: {epochs} vs {models[arch_str]['epochs']}")
+    
+    return models
+
+
+def auto_discover_architecture(args, mode_name):
+    """Auto-discover model architecture if not specified.
+    
+    Args:
+        args: Command line arguments
+        mode_name: Name of the mode (test/infer/plot) for messages
+        
+    Returns:
+        tuple: (architecture, epochs) or (None, None) if discovery fails
+    """
+    if args.arch is not None:
+        # User specified architecture, use it
+        architecture = [int(x) for x in args.arch.split(",")]
+        epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+        return architecture, epochs
+    
+    # Try to discover models
+    print(f"No architecture specified, searching for trained models...")
+    models = discover_models()
+    
+    if not models:
+        print("No trained models found in current directory.")
+        print(f"Will use default architecture: {MNIST_CONFIG['architecture']}")
+        return None, None
+    
+    if len(models) == 1:
+        # Only one architecture found, use it
+        arch_str = list(models.keys())[0]
+        model_info = models[arch_str]
+        architecture = [int(x) for x in arch_str.split("-")]
+        epochs = model_info["epochs"]
+        
+        print(f"Auto-detected model: architecture={architecture}, epochs={epochs}")
+        print(f"Found files: {', '.join(model_info['files'])}")
+        return architecture, epochs
+    
+    else:
+        # Multiple architectures found
+        print(f"\nFound {len(models)} different model architectures:")
+        for arch_str, info in sorted(models.items()):
+            arch_list = [int(x) for x in arch_str.split("-")]
+            print(f"  - Architecture: 784 -> {arch_list} -> 10 (epochs={info['epochs']})")
+            print(f"    Files: {', '.join(info['files'])}")
+        
+        print(f"\nPlease specify which architecture to use with --arch")
+        print(f"Example: python sn_mnist.py --mode {mode_name} --arch {list(models.keys())[0]}")
+        return None, None
 
 
 def count_parameters_detailed(model):
@@ -29,8 +217,8 @@ def count_parameters_detailed(model):
     lambda_params = 0
     eta_params = 0
     residual_params = 0
-    output_params = 2  # output_scale and output_bias
     codomain_params = 0
+    norm_params = 0
     
     for name, param in model.named_parameters():
         if not param.requires_grad:
@@ -48,21 +236,21 @@ def count_parameters_detailed(model):
         elif 'residual_weight' in name or 'residual_projection' in name:
             # Residual connection parameters
             residual_params += param.numel()
-        elif 'output_scale' in name or 'output_bias' in name:
-            # Already counted above
-            pass
         elif 'phi_codomain_params' in name:
             # Codomain parameters (cc, cr)
             codomain_params += param.numel()
+        elif 'norm' in name.lower():
+            # Normalization parameters
+            norm_params += param.numel()
     
     # Core parameters (excluding residual and output params)
     core_params = total_spline_knots + lambda_params + eta_params
     
     # Total parameters
     if CONFIG['train_phi_codomain']:
-        total_params = core_params + residual_params + output_params + codomain_params
+        total_params = core_params + residual_params + codomain_params + norm_params
     else:
-        total_params = core_params + residual_params + output_params
+        total_params = core_params + residual_params + norm_params
     
     # Count blocks
     num_blocks = len(model.sprecher_net.layers)
@@ -74,8 +262,8 @@ def count_parameters_detailed(model):
         'lambda': lambda_params,
         'eta': eta_params,
         'residual': residual_params,
-        'output': output_params,
         'codomain': codomain_params,
+        'norm': norm_params,
         'num_blocks': num_blocks
     }
 
@@ -100,14 +288,18 @@ def process_image(file_path):
 class MNISTSprecherNet(nn.Module):
     """Wrapper around SprecherMultiLayerNetwork for MNIST classification."""
     
-    def __init__(self, architecture, phi_knots=100, Phi_knots=100):
+    def __init__(self, architecture, phi_knots=100, Phi_knots=100,
+                 norm_type="none", norm_position="after", norm_skip_first=True):
         super().__init__()
         self.sprecher_net = SprecherMultiLayerNetwork(
             input_dim=784,  # 28x28 flattened
             architecture=architecture,
             final_dim=10,   # 10 digit classes
             phi_knots=phi_knots,
-            Phi_knots=Phi_knots
+            Phi_knots=Phi_knots,
+            norm_type=norm_type,
+            norm_position=norm_position,
+            norm_skip_first=norm_skip_first
         )
     
     def forward(self, x):
@@ -133,7 +325,7 @@ class MNISTSprecherNet(nn.Module):
         self.sprecher_net.print_domain_violation_report()
 
 
-def train_epoch(model, train_loader, optimizer, loss_function, device):
+def train_epoch(model, train_loader, optimizer, scheduler, loss_function, device):
     """Train for one epoch."""
     model.train()
     epoch_loss = 0
@@ -161,8 +353,8 @@ def train_epoch(model, train_loader, optimizer, loss_function, device):
             loss = loss_function(outputs, labels)
             loss.backward()
             
-            # Gradient clipping (as in SN code)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), CONFIG.get('max_grad_norm', 1.0))
             
             optimizer.step()
             
@@ -174,6 +366,10 @@ def train_epoch(model, train_loader, optimizer, loss_function, device):
             accuracy = 100 * correct / total
             tepoch.set_postfix(loss=epoch_loss/(batch_idx+1), acc=f"{accuracy:.1f}%")
     
+    # Step scheduler if using advanced scheduler
+    if scheduler is not None:
+        scheduler.step(epoch_loss / len(train_loader))
+    
     # Print domain violation report at end of epoch if tracking
     if CONFIG.get('track_domain_violations', False):
         print("\nEpoch domain violations:")
@@ -184,7 +380,9 @@ def train_epoch(model, train_loader, optimizer, loss_function, device):
 
 def test_model(model, test_loader, device):
     """Evaluate model on test set."""
-    model.eval()
+    # Keep model in training mode for consistency with checkpoint
+    # model.eval()  # Commented out - we maintain the mode from training
+    # This ensures BatchNorm uses the same statistics as during training
     correct = 0
     total = 0
     
@@ -218,48 +416,814 @@ def test_model(model, test_loader, device):
     return accuracy
 
 
-def print_architecture_details(architecture, phi_knots, Phi_knots):
-    """Print detailed architecture information."""
-    print(f"\nSprecher Network Configuration:")
-    print(f"  Architecture: 784 → {architecture} → 10")
-    print(f"  φ knots per spline: {phi_knots}")
-    print(f"  Φ knots per spline: {Phi_knots}")
+def print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_size, lr):
+    """Print configuration summary."""
+    print(f"Using device: {args.device if args.device != 'auto' else 'cuda' if torch.cuda.is_available() else 'cpu'}")
+    print(f"Mode: {args.mode}")
+    print(f"Architecture: 784 -> {architecture} -> 10")
+    print(f"phi knots: {phi_knots}, Phi knots: {Phi_knots}")
+    print(f"Epochs: {epochs}")
+    print(f"Batch size: {batch_size}")
+    print(f"Learning rate: {lr}")
+    print(f"Seed: {args.seed}")
+    print(f"Theoretical domains: {CONFIG.get('use_theoretical_domains', True)}")
+    print(f"Domain safety margin: {CONFIG.get('domain_safety_margin', 0.0)}")
+    print(f"Residual connections: {'enabled' if CONFIG.get('use_residual_weights', True) else 'disabled'}")
     
-    # Calculate number of blocks
-    if len(architecture) == 0:
-        num_blocks = 1
+    # Determine effective normalization
+    if args.no_norm:
+        print("Normalization: disabled")
+    elif args.norm_type:
+        print(f"Normalization: {args.norm_type} (position: {args.norm_position}, skip_first: {args.norm_skip_first})")
     else:
-        num_blocks = len(architecture) + 1
+        print(f"Normalization: {CONFIG.get('norm_type', 'batch')} (position: {args.norm_position}, skip_first: {args.norm_skip_first})")
     
-    print(f"  Number of blocks: {num_blocks}")
-    print(f"  Total φ splines: {num_blocks} (one per block)")
-    print(f"  Total Φ splines: {num_blocks} (one per block)")
-    print(f"  Total spline knots: {num_blocks * (phi_knots + Phi_knots)}")
+    print(f"Scheduler: {'PlateauAwareCosineAnnealingLR' if CONFIG.get('use_advanced_scheduler', False) else 'Adam (fixed LR)'}")
+    print()
 
 
-def plot_splines_with_fallback(model, save_path=None, show_plots=True):
-    """Plot splines with graceful fallback for GUI errors."""
+def train_mnist(args):
+    """Training mode."""
+    # Get configuration values
+    architecture = [int(x) for x in args.arch.split(",")] if args.arch else MNIST_CONFIG['architecture']
+    phi_knots = args.phi_knots if args.phi_knots else MNIST_CONFIG['phi_knots']
+    Phi_knots = args.Phi_knots if args.Phi_knots else MNIST_CONFIG['Phi_knots']
+    epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+    batch_size = args.batch_size if args.batch_size else MNIST_CONFIG['batch_size']
+    lr = args.lr if args.lr else MNIST_CONFIG['learning_rate']
+    model_file = args.model_file if args.model_file else MNIST_CONFIG['model_file']
+    data_dir = args.data_dir if args.data_dir else MNIST_CONFIG['data_directory']
+    
+    # Determine device
+    if args.device == "auto":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(args.device)
+    
+    # Set random seed
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    
+    # Handle configuration overrides
+    if args.debug_domains:
+        CONFIG['debug_domains'] = True
+    if args.track_violations:
+        CONFIG['track_domain_violations'] = True
+        print("Domain violation tracking enabled.")
+    if args.no_residual:
+        CONFIG['use_residual_weights'] = False
+    if args.no_norm:
+        CONFIG['use_normalization'] = False
+    if args.use_advanced_scheduler:
+        CONFIG['use_advanced_scheduler'] = True
+    
+    # Determine effective normalization settings
+    if CONFIG.get('use_normalization', True) and not args.no_norm:
+        if args.norm_type == "none":
+            effective_norm_type = "none"
+        elif args.norm_type is not None:
+            effective_norm_type = args.norm_type
+        else:
+            effective_norm_type = CONFIG.get('norm_type', 'batch')
+    else:
+        effective_norm_type = "none"
+    
+    # Print configuration
+    print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_size, lr)
+    
+    # Initialize model
+    model = MNISTSprecherNet(
+        architecture=architecture,
+        phi_knots=phi_knots,
+        Phi_knots=Phi_knots,
+        norm_type=effective_norm_type,
+        norm_position=args.norm_position,
+        norm_skip_first=args.norm_skip_first
+    ).to(device)
+    
+    # Count and display parameters
+    param_counts = count_parameters_detailed(model)
+    print(f"Total number of trainable parameters: {param_counts['total']:,}")
+    print(f"  - Lambda weight VECTORS: {param_counts['lambda']:,} (TRUE SPRECHER!)")
+    print(f"  - Eta shift parameters: {param_counts['eta']:,}")
+    print(f"  - Spline parameters: {param_counts['spline_knots']:,}")
+    if CONFIG['use_residual_weights'] and param_counts['residual'] > 0:
+        print(f"  - Residual connection weights: {param_counts['residual']:,}")
+    if param_counts['norm'] > 0:
+        print(f"  - Normalization parameters: {param_counts['norm']:,}")
+    if CONFIG['train_phi_codomain'] and param_counts['codomain'] > 0:
+        print(f"  - Phi codomain parameters (cc, cr per block): {param_counts['codomain']:,}")
+    print()
+    
+    # Check if model exists and handle retrain
+    config_suffix = get_config_suffix(args, CONFIG)
+    arch_str = "-".join(map(str, architecture))
+    model_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
+    model_path = os.path.join(os.path.dirname(model_file), model_filename)
+    
+    if os.path.exists(model_path) and args.retrain:
+        os.remove(model_path)
+        print(f"Deleted existing model file: {model_path}")
+        if os.path.exists(data_dir):
+            shutil.rmtree(data_dir)
+            print(f"Deleted existing data directory: {data_dir}")
+    elif os.path.exists(model_path) and not args.retrain:
+        model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
+        print(f"Loaded saved model from {model_path} for further training.")
+    
+    # Setup data
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))  # This gives [-1, 1], we'll convert to [0, 1] later
+    ])
+    train_dataset = MNIST(root=data_dir, train=True, download=True, transform=transform)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    
+    # Setup optimizer
+    optimizer = optim.AdamW(
+        model.parameters(), 
+        lr=lr,
+        weight_decay=MNIST_CONFIG.get('weight_decay', 1e-6)
+    )
+    
+    # Setup scheduler if requested
+    scheduler = None
+    if CONFIG.get('use_advanced_scheduler', False):
+        from sn_core.train import PlateauAwareCosineAnnealingLR
+        scheduler = PlateauAwareCosineAnnealingLR(
+            optimizer,
+            base_lr=CONFIG['scheduler_base_lr'],
+            max_lr=CONFIG['scheduler_max_lr'],
+            patience=CONFIG['scheduler_patience'],
+            threshold=CONFIG['scheduler_threshold']
+        )
+    
+    loss_function = nn.CrossEntropyLoss()
+    
+    # Training loop
+    print(f"Starting training for {epochs} epochs...")
+    best_accuracy = 0
+    losses = []
+    accuracies = []
+    best_plotting_snapshot = None  # Will store complete snapshot for plotting
+    best_checkpoint = None  # Will store complete checkpoint
+    
+    # Get a sample batch for snapshot (we'll update this when we find best accuracy)
+    sample_images, sample_labels = next(iter(train_loader))
+    sample_images = sample_images.to(device)
+    sample_labels = sample_labels.to(device)
+    # Flatten and normalize sample images
+    sample_images = sample_images.view(sample_images.shape[0], -1)
+    sample_images = (sample_images + 1) / 2  # Convert from [-1, 1] to [0, 1]
+    
+    for epoch in range(epochs):
+        print(f"\nEpoch {epoch + 1}/{epochs}")
+        
+        avg_loss, train_acc = train_epoch(model, train_loader, optimizer, scheduler, loss_function, device)
+        losses.append(avg_loss)
+        accuracies.append(train_acc)
+        
+        # Print epoch summary every 10%
+        if (epoch + 1) % max(1, epochs // 10) == 0 or epoch == 0:
+            print(f"Epoch {epoch + 1}: Loss = {avg_loss:.4e}, Accuracy = {train_acc:.2f}%")
+        
+        # Always save current model state
+        torch.save(model.state_dict(), model_path)
+        
+        if train_acc > best_accuracy:
+            best_accuracy = train_acc
+            
+            # Get current model output on sample batch
+            with torch.no_grad():
+                sample_output = model(sample_images)
+                sample_loss = loss_function(sample_output, sample_labels).item()
+            
+            # Create complete plotting snapshot (similar to sn_core/train.py)
+            best_plotting_snapshot = {
+                'model': copy.deepcopy(model),  # Complete deep copy of the model
+                'x_train': sample_images.clone(),  # Training inputs
+                'y_train': sample_labels.clone(),  # Training targets
+                'output': sample_output.detach().clone(),  # Model output at this moment
+                'loss': sample_loss,  # Loss value
+                'accuracy': train_acc,  # Accuracy value
+                'epoch': epoch,  # Epoch number
+                'device': device  # Device for later use
+            }
+            
+            # Save complete BatchNorm statistics if normalization is used
+            bn_statistics = {}
+            has_bn = effective_norm_type in ['batch', 'layer']
+            if has_bn:
+                for name, module in model.named_modules():
+                    if isinstance(module, nn.BatchNorm1d):
+                        # Deep clone all BN state to isolate from future changes
+                        bn_statistics[name] = {
+                            'running_mean': module.running_mean.clone().cpu(),
+                            'running_var': module.running_var.clone().cpu(),
+                            'num_batches_tracked': module.num_batches_tracked.clone().cpu(),
+                            'momentum': module.momentum,
+                            'eps': module.eps,
+                            'affine': module.affine,
+                            'track_running_stats': module.track_running_stats,
+                            # Also save the affine parameters if they exist
+                            'weight': module.weight.clone().cpu() if module.affine else None,
+                            'bias': module.bias.clone().cpu() if module.affine else None
+                        }
+            
+            # Create complete checkpoint with all state
+            best_checkpoint = {
+                'epoch': epoch,
+                'model_state_dict': copy.deepcopy(model.state_dict()),  # Deep copy the state dict
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': sample_loss,
+                'accuracy': train_acc,
+                'has_batchnorm': has_bn,
+                'bn_statistics': bn_statistics,  # Save exact BN stats at best epoch
+                'training_mode': model.training,  # Save training state
+                'x_train': sample_images.cpu().clone(),  # Save exact training batch
+                'y_train': sample_labels.cpu().clone(),  # Save exact target values
+                'output': sample_output.detach().cpu().clone(),  # Save exact model output
+                # Save model creation parameters for exact reconstruction
+                'model_params': {
+                    'architecture': architecture,
+                    'phi_knots': phi_knots,
+                    'Phi_knots': Phi_knots,
+                    'norm_type': effective_norm_type,
+                    'norm_position': args.norm_position,
+                    'norm_skip_first': args.norm_skip_first
+                }
+            }
+            
+            # Save to disk immediately
+            best_model_path = model_path.replace('.pth', '_best.pth')
+            torch.save(best_checkpoint, best_model_path)
+    
+    print(f"\nTraining complete! Best accuracy: {best_accuracy:.2f}%")
+    print(f"Model saved to: {model_path}")
+    
+    # IMPORTANT: We keep the model in training mode throughout
+    # This ensures BatchNorm statistics remain consistent with how the model was saved
+    # Using model.eval() would change BatchNorm behavior and make results inconsistent
+    
+    # Verify the snapshot works correctly if we have one
+    if best_plotting_snapshot is not None:
+        print("\nVerifying plotting snapshot consistency...")
+        print("Computing accuracy multiple times to ensure perfect reproducibility:")
+        
+        snapshot_model = best_plotting_snapshot['model']
+        snapshot_images = best_plotting_snapshot['x_train']
+        snapshot_labels = best_plotting_snapshot['y_train']
+        
+        accuracies_verification = []
+        for i in range(3):
+            with torch.no_grad():
+                snapshot_output = snapshot_model(snapshot_images)
+                _, predicted = torch.max(snapshot_output, 1)
+                correct = (predicted == snapshot_labels).sum().item()
+                accuracy = 100 * correct / snapshot_labels.size(0)
+                accuracies_verification.append(accuracy)
+                print(f"  Computation {i+1}: accuracy = {accuracy:.2f}%")
+        
+        print(f"\nSaved accuracy from snapshot: {best_plotting_snapshot['accuracy']:.2f}%")
+        print(f"Mean of verifications: {np.mean(accuracies_verification):.2f}%")
+        print(f"Std of verifications: {np.std(accuracies_verification):.4f}%")
+        
+        if np.std(accuracies_verification) < 1e-6:
+            print("Perfect consistency achieved! The snapshot is completely isolated.")
+    
+    # Plot training curves if requested
+    if args.save_plots or not args.no_show:
+        # Graceful fallback plotting logic (similar to sn_experiments.py)
+        try:
+            os.makedirs("plots", exist_ok=True)
+            
+            # Plot loss curve
+            loss_filename = f"mnist_loss-{arch_str}-{epochs}epochs{config_suffix}.png"
+            loss_save_path = os.path.join("plots", loss_filename) if args.save_plots else None
+            plot_loss_curve(losses, loss_save_path)
+            
+            # Handle show/close for loss curve plot
+            if not args.no_show:
+                plt.show()
+            else:
+                plt.close()
+            
+            # Plot accuracy curve
+            plt.figure(figsize=(10, 6))
+            plt.plot(accuracies)
+            plt.title("MNIST Training Accuracy")
+            plt.xlabel("Epoch")
+            plt.ylabel("Accuracy (%)")
+            plt.grid(True)
+            
+            if args.save_plots:
+                acc_filename = f"mnist_accuracy-{arch_str}-{epochs}epochs{config_suffix}.png"
+                acc_save_path = os.path.join("plots", acc_filename)
+                plt.savefig(acc_save_path, dpi=150, bbox_inches='tight')
+                print(f"Accuracy curve saved to {acc_save_path}")
+            
+            if not args.no_show:
+                plt.show()
+            else:
+                plt.close()
+                
+        except Exception as e:
+            # This block will catch TclError on Windows or other GUI-related errors
+            print("\n" + "="*60)
+            print("WARNING: A plotting error occurred.")
+            print(f"Error type: {type(e).__name__}")
+            print("The default plotting backend on your system has failed.")
+            print("This is common on systems without a configured GUI toolkit.")
+            print("\nSwitching to the reliable 'Agg' backend to proceed.")
+            print("="*60 + "\n")
+            
+            # Set the backend and re-import pyplot
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            
+            # Ensure we save plots if this fallback is triggered
+            if not args.save_plots:
+                print("Plots could not be shown interactively. Enabling file saving automatically.")
+                args.save_plots = True
+            
+            # Re-run plotting logic with the safe backend
+            os.makedirs("plots", exist_ok=True)
+            
+            # Plot loss curve
+            loss_filename = f"mnist_loss-{arch_str}-{epochs}epochs{config_suffix}.png"
+            loss_save_path = os.path.join("plots", loss_filename)
+            plot_loss_curve(losses, loss_save_path)
+            plt.close()
+            
+            # Plot accuracy curve
+            plt.figure(figsize=(10, 6))
+            plt.plot(accuracies)
+            plt.title("MNIST Training Accuracy")
+            plt.xlabel("Epoch")
+            plt.ylabel("Accuracy (%)")
+            plt.grid(True)
+            
+            acc_filename = f"mnist_accuracy-{arch_str}-{epochs}epochs{config_suffix}.png"
+            acc_save_path = os.path.join("plots", acc_filename)
+            plt.savefig(acc_save_path, dpi=150, bbox_inches='tight')
+            plt.close()
+            
+            print(f"Loss curve saved to {loss_save_path}")
+            print(f"Accuracy curve saved to {acc_save_path}")
+            print(f"\nPlots have been saved to the 'plots/' directory.")
+
+
+def test_mnist(args):
+    """Testing mode."""
+    # Try to auto-discover architecture if not specified
+    discovered_arch, discovered_epochs = auto_discover_architecture(args, "test")
+    
+    # Get configuration values
+    if discovered_arch is not None:
+        architecture = discovered_arch
+        epochs = discovered_epochs
+    else:
+        # Use defaults or exit if discovery failed with multiple architectures
+        if args.arch is None and discovered_arch is None:
+            # Either no models found or multiple architectures found
+            architecture = MNIST_CONFIG['architecture']
+            epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+            # If we're using defaults because of multiple architectures, exit
+            models = discover_models()
+            if len(models) > 1:
+                return
+        else:
+            architecture = [int(x) for x in args.arch.split(",")]
+            epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+    
+    phi_knots = args.phi_knots if args.phi_knots else MNIST_CONFIG['phi_knots']
+    Phi_knots = args.Phi_knots if args.Phi_knots else MNIST_CONFIG['Phi_knots']
+    batch_size = args.batch_size if args.batch_size else MNIST_CONFIG['batch_size']
+    model_file = args.model_file if args.model_file else MNIST_CONFIG['model_file']
+    data_dir = args.data_dir if args.data_dir else MNIST_CONFIG['data_directory']
+    
+    # Determine device
+    if args.device == "auto":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(args.device)
+    
+    # Handle configuration
+    if args.debug_domains:
+        CONFIG['debug_domains'] = True
+    if args.track_violations:
+        CONFIG['track_domain_violations'] = True
+    if args.no_residual:
+        CONFIG['use_residual_weights'] = False
+    if args.no_norm:
+        CONFIG['use_normalization'] = False
+    
+    # Determine effective normalization
+    if CONFIG.get('use_normalization', True) and not args.no_norm:
+        if args.norm_type == "none":
+            effective_norm_type = "none"
+        elif args.norm_type is not None:
+            effective_norm_type = args.norm_type
+        else:
+            effective_norm_type = CONFIG.get('norm_type', 'batch')
+    else:
+        effective_norm_type = "none"
+    
+    print(f"Using device: {device}")
+    print(f"Architecture: 784 -> {architecture} -> 10")
+    print(f"Normalization: {effective_norm_type}")
+    print()
+    
+    # Initialize model
+    model = MNISTSprecherNet(
+        architecture=architecture,
+        phi_knots=phi_knots,
+        Phi_knots=Phi_knots,
+        norm_type=effective_norm_type,
+        norm_position=args.norm_position,
+        norm_skip_first=args.norm_skip_first
+    ).to(device)
+    
+    # Construct model filename to match training convention
+    config_suffix = get_config_suffix(args, CONFIG)
+    arch_str = "-".join(map(str, architecture))
+    epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+    model_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
+    model_path = os.path.join(os.path.dirname(model_file), model_filename)
+    
+    # Try to find the model file (check for _best variant first)
+    best_model_path = model_path.replace('.pth', '_best.pth')
+    if os.path.exists(best_model_path):
+        model_path = best_model_path
+        print(f"Loading best model from {model_path}")
+    elif os.path.exists(model_path):
+        print(f"Loading model from {model_path}")
+    else:
+        print(f"Error: Model file {model_path} not found. Please train first.")
+        return
+    
+    # Load checkpoint and handle both old and new formats
+    checkpoint = torch.load(model_path, map_location=device)
+    
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        # New format with complete checkpoint
+        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        print(f"Loaded checkpoint from epoch {checkpoint.get('epoch', 'unknown')} with accuracy {checkpoint.get('accuracy', 'unknown'):.2f}%")
+        
+        # Restore BatchNorm statistics if available
+        if checkpoint.get('has_batchnorm', False) and 'bn_statistics' in checkpoint:
+            for name, module in model.named_modules():
+                if isinstance(module, nn.BatchNorm1d) and name in checkpoint['bn_statistics']:
+                    bn_stats = checkpoint['bn_statistics'][name]
+                    module.running_mean.copy_(bn_stats['running_mean'].to(device))
+                    module.running_var.copy_(bn_stats['running_var'].to(device))
+                    if 'num_batches_tracked' in bn_stats:
+                        module.num_batches_tracked.copy_(bn_stats['num_batches_tracked'].to(device))
+    else:
+        # Old format - just state dict
+        model.load_state_dict(checkpoint, strict=False)
+    
+    # Keep model in training mode - do not use model.eval()
+    # This maintains consistency with how the model was saved
+    
+    # Count parameters
+    param_counts = count_parameters_detailed(model)
+    print(f"Model has {param_counts['total']:,} parameters")
+    
+    # Setup test data
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
+    test_dataset = MNIST(root=data_dir, train=False, download=True, transform=transform)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    
+    # Test
+    accuracy = test_model(model, test_loader, device)
+    print(f"\nTest accuracy: {accuracy:.2f}%")
+
+
+def infer_mnist(args):
+    """Inference mode."""
+    # Try to auto-discover architecture if not specified
+    discovered_arch, discovered_epochs = auto_discover_architecture(args, "infer")
+    
+    # Get configuration values
+    if discovered_arch is not None:
+        architecture = discovered_arch
+        epochs = discovered_epochs
+    else:
+        # Use defaults or exit if discovery failed with multiple architectures
+        if args.arch is None and discovered_arch is None:
+            # Either no models found or multiple architectures found
+            architecture = MNIST_CONFIG['architecture']
+            epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+            # If we're using defaults because of multiple architectures, exit
+            models = discover_models()
+            if len(models) > 1:
+                return
+        else:
+            architecture = [int(x) for x in args.arch.split(",")]
+            epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+    
+    phi_knots = args.phi_knots if args.phi_knots else MNIST_CONFIG['phi_knots']
+    Phi_knots = args.Phi_knots if args.Phi_knots else MNIST_CONFIG['Phi_knots']
+    model_file = args.model_file if args.model_file else MNIST_CONFIG['model_file']
+    
+    # Determine device
+    if args.device == "auto":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(args.device)
+    
+    # Handle configuration
+    if args.no_residual:
+        CONFIG['use_residual_weights'] = False
+    if args.no_norm:
+        CONFIG['use_normalization'] = False
+    
+    # Determine effective normalization
+    if CONFIG.get('use_normalization', True) and not args.no_norm:
+        if args.norm_type == "none":
+            effective_norm_type = "none"
+        elif args.norm_type is not None:
+            effective_norm_type = args.norm_type
+        else:
+            effective_norm_type = CONFIG.get('norm_type', 'batch')
+    else:
+        effective_norm_type = "none"
+    
+    print(f"Using device: {device}")
+    print(f"Image file: {args.image}")
+    print()
+    
+    # Initialize model
+    model = MNISTSprecherNet(
+        architecture=architecture,
+        phi_knots=phi_knots,
+        Phi_knots=Phi_knots,
+        norm_type=effective_norm_type,
+        norm_position=args.norm_position,
+        norm_skip_first=args.norm_skip_first
+    ).to(device)
+    
+    # Construct model filename to match training convention
+    config_suffix = get_config_suffix(args, CONFIG)
+    arch_str = "-".join(map(str, architecture))
+    epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+    model_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
+    model_path = os.path.join(os.path.dirname(model_file), model_filename)
+    
+    # Try to find the model file (check for _best variant first)
+    best_model_path = model_path.replace('.pth', '_best.pth')
+    if os.path.exists(best_model_path):
+        model_path = best_model_path
+        print(f"Loading best model from {model_path}")
+    elif os.path.exists(model_path):
+        print(f"Loading model from {model_path}")
+    else:
+        print(f"Error: Model file {model_path} not found. Please train first.")
+        return
+    
+    # Load checkpoint and handle both old and new formats
+    checkpoint = torch.load(model_path, map_location=device)
+    
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        # New format with complete checkpoint
+        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        print(f"Loaded checkpoint from epoch {checkpoint.get('epoch', 'unknown')} with accuracy {checkpoint.get('accuracy', 'unknown'):.2f}%")
+        
+        # Restore BatchNorm statistics if available
+        if checkpoint.get('has_batchnorm', False) and 'bn_statistics' in checkpoint:
+            for name, module in model.named_modules():
+                if isinstance(module, nn.BatchNorm1d) and name in checkpoint['bn_statistics']:
+                    bn_stats = checkpoint['bn_statistics'][name]
+                    module.running_mean.copy_(bn_stats['running_mean'].to(device))
+                    module.running_var.copy_(bn_stats['running_var'].to(device))
+                    if 'num_batches_tracked' in bn_stats:
+                        module.num_batches_tracked.copy_(bn_stats['num_batches_tracked'].to(device))
+    else:
+        # Old format - just state dict
+        model.load_state_dict(checkpoint, strict=False)
+        checkpoint = None  # Mark as old format
+    
+    # Keep model in training mode - do not use model.eval()
+    # This ensures consistent behavior with the saved model state
+    
+    # Update domains
+    if CONFIG.get('use_theoretical_domains', True):
+        model.update_all_domains()
+    
+    # Process image
+    if not os.path.exists(args.image):
+        print(f"Error: '{args.image}' not found. Please provide an image file.")
+        return
+    
+    image_data = process_image(args.image)
+    image_tensor = torch.from_numpy(image_data).float().unsqueeze(0).to(device)
+    
+    # For BatchNorm in training mode, we need a diverse batch
+    if effective_norm_type in ['batch', 'layer']:
+        # Try to use saved batch from checkpoint for diversity
+        if isinstance(checkpoint, dict) and 'x_train' in checkpoint:
+            # Use saved batch from checkpoint
+            saved_batch = checkpoint['x_train'].to(device)
+            # Replace first sample with our inference image
+            batch_tensor = saved_batch.clone()
+            batch_tensor[0] = image_tensor.squeeze(0)
+            image_tensor = batch_tensor
+            print(f"Using saved batch of {batch_tensor.shape[0]} samples for BatchNorm diversity")
+        else:
+            # Fallback: Create diverse batch using noise
+            print("No saved batch found, creating diverse batch with noise")
+            batch_size = 16
+            noise_levels = torch.linspace(0.0, 0.1, batch_size).to(device)
+            batch_list = []
+            
+            for i in range(batch_size):
+                if i == 0:
+                    # First sample is the original image
+                    batch_list.append(image_tensor.squeeze(0))
+                else:
+                    # Add noise to create diversity
+                    noise = torch.randn_like(image_tensor.squeeze(0)) * noise_levels[i]
+                    noisy_image = image_tensor.squeeze(0) + noise
+                    # Clamp to valid range [0, 1]
+                    noisy_image = torch.clamp(noisy_image, 0, 1)
+                    batch_list.append(noisy_image)
+            
+            image_tensor = torch.stack(batch_list)
+        
+    # Inference
+    with torch.no_grad():
+        output = model(image_tensor)
+        
+        # Take only the first result (our target image)
+        if effective_norm_type in ['batch', 'layer']:
+            output = output[0:1]  # Take first sample
+            
+        probabilities = torch.softmax(output, dim=1)
+        probs_list = probabilities.cpu().numpy().flatten()
+        
+        print("Probabilities:")
+        for i, prob in enumerate(probs_list):
+            print(f"  Digit {i}: {prob:.6f}")
+        
+        predicted = torch.argmax(probabilities, dim=1).item()
+        confidence = probs_list[predicted] * 100
+        print(f"\nPredicted digit: {predicted} (confidence: {confidence:.1f}%)")
+
+
+def plot_mnist_splines(args):
+    """Plot splines mode."""
+    # Try to auto-discover architecture if not specified
+    discovered_arch, discovered_epochs = auto_discover_architecture(args, "plot")
+    
+    # Get configuration values
+    if discovered_arch is not None:
+        architecture = discovered_arch
+        epochs = discovered_epochs
+    else:
+        # Use defaults or exit if discovery failed with multiple architectures
+        if args.arch is None and discovered_arch is None:
+            # Either no models found or multiple architectures found
+            architecture = MNIST_CONFIG['architecture']
+            epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+            # If we're using defaults because of multiple architectures, exit
+            models = discover_models()
+            if len(models) > 1:
+                return
+        else:
+            architecture = [int(x) for x in args.arch.split(",")]
+            epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+    
+    phi_knots = args.phi_knots if args.phi_knots else MNIST_CONFIG['phi_knots']
+    Phi_knots = args.Phi_knots if args.Phi_knots else MNIST_CONFIG['Phi_knots']
+    model_file = args.model_file if args.model_file else MNIST_CONFIG['model_file']
+    
+    # Determine device
+    if args.device == "auto":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(args.device)
+    
+    # Handle configuration
+    if args.no_residual:
+        CONFIG['use_residual_weights'] = False
+    if args.no_norm:
+        CONFIG['use_normalization'] = False
+    
+    # Determine effective normalization
+    if CONFIG.get('use_normalization', True) and not args.no_norm:
+        if args.norm_type == "none":
+            effective_norm_type = "none"
+        elif args.norm_type is not None:
+            effective_norm_type = args.norm_type
+        else:
+            effective_norm_type = CONFIG.get('norm_type', 'batch')
+    else:
+        effective_norm_type = "none"
+    
+    print(f"Using device: {device}")
+    print(f"Architecture: 784 -> {architecture} -> 10")
+    print(f"phi knots: {phi_knots}, Phi knots: {Phi_knots}")
+    print()
+    
+    # Initialize model
+    model = MNISTSprecherNet(
+        architecture=architecture,
+        phi_knots=phi_knots,
+        Phi_knots=Phi_knots,
+        norm_type=effective_norm_type,
+        norm_position=args.norm_position,
+        norm_skip_first=args.norm_skip_first
+    ).to(device)
+    
+    # Construct model filename to match training convention
+    config_suffix = get_config_suffix(args, CONFIG)
+    arch_str = "-".join(map(str, architecture))
+    epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+    model_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
+    model_path = os.path.join(os.path.dirname(model_file), model_filename)
+    
+    # Try to find the model file (check for _best variant first)
+    best_model_path = model_path.replace('.pth', '_best.pth')
+    if os.path.exists(best_model_path):
+        model_path = best_model_path
+        print(f"Loading best model from {model_path}")
+    elif os.path.exists(model_path):
+        print(f"Loading model from {model_path}")
+    else:
+        print(f"Error: Model file {model_path} not found. Please train first.")
+        return
+    
+    # Load checkpoint and handle both old and new formats
+    checkpoint = torch.load(model_path, map_location=device)
+    
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        # New format with complete checkpoint
+        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        print(f"Loaded checkpoint from epoch {checkpoint.get('epoch', 'unknown')} with accuracy {checkpoint.get('accuracy', 'unknown'):.2f}%")
+        
+        # Restore BatchNorm statistics if available
+        if checkpoint.get('has_batchnorm', False) and 'bn_statistics' in checkpoint:
+            for name, module in model.named_modules():
+                if isinstance(module, nn.BatchNorm1d) and name in checkpoint['bn_statistics']:
+                    bn_stats = checkpoint['bn_statistics'][name]
+                    module.running_mean.copy_(bn_stats['running_mean'].to(device))
+                    module.running_var.copy_(bn_stats['running_var'].to(device))
+                    if 'num_batches_tracked' in bn_stats:
+                        module.num_batches_tracked.copy_(bn_stats['num_batches_tracked'].to(device))
+    else:
+        # Old format - just state dict
+        model.load_state_dict(checkpoint, strict=False)
+    
+    # Keep model in training mode for consistency with checkpoint
+    # model.eval()  # Commented out - we maintain the mode from training
+    
+    # Update domains
+    if CONFIG.get('use_theoretical_domains', True):
+        print("Updating spline domains based on loaded parameters...")
+        model.update_all_domains()
+    
+    # Print domain information
+    print("\nSpline domains after theoretical update:")
+    for idx, layer in enumerate(model.sprecher_net.layers):
+        print(f"Block {idx+1}:")
+        print(f"  phi domain: [{layer.phi.in_min:.3f}, {layer.phi.in_max:.3f}]")
+        print(f"  Phi domain: [{layer.Phi.in_min:.3f}, {layer.Phi.in_max:.3f}]")
+    
+    # Create save path
+    if args.save_plots:
+        os.makedirs("plots", exist_ok=True)
+        config_suffix = get_config_suffix(args, CONFIG)
+        arch_str = "-".join(map(str, architecture))
+        save_path = f"plots/mnist_splines-{arch_str}{config_suffix}.png"
+    else:
+        save_path = None
+    
+    # Plot splines
+    print("\nPlotting learned splines...")
     try:
-        # Try to create the plot
         fig = plot_results(
             model.sprecher_net, 
             model.sprecher_net.layers,
             dataset=None,
             save_path=save_path,
-            plot_network=False,  # Don't plot network structure for MNIST
-            plot_function=False,  # Don't plot function comparison
+            plot_network=False,
+            plot_function=False,
             plot_splines=True,
             title_suffix="MNIST Sprecher Network - Learned Splines"
         )
         
-        if show_plots and fig is not None:
+        if not args.no_show and fig is not None:
             print("Displaying plots. Close the plot windows to exit.")
             plt.show()
         elif fig is not None:
             plt.close(fig)
             
     except Exception as e:
-        # Handle plotting errors gracefully
+        # This block will catch TclError on Windows or other GUI-related errors
         print("\n" + "="*60)
         print("WARNING: A plotting error occurred.")
         print(f"Error type: {type(e).__name__}")
@@ -267,17 +1231,23 @@ def plot_splines_with_fallback(model, save_path=None, show_plots=True):
         print("This is common on systems without a configured GUI toolkit.")
         print("\nSwitching to the reliable 'Agg' backend to proceed.")
         print("="*60 + "\n")
-
-        # Set the backend and re-run the plotting logic
+        
+        # Set the backend and re-import pyplot
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
         
         # Ensure we save plots if this fallback is triggered
-        if save_path is None:
-            os.makedirs("plots", exist_ok=True)
-            save_path = "plots/mnist_splines.png"
+        if not args.save_plots:
+            print("Plots could not be shown interactively. Enabling file saving automatically.")
+            args.save_plots = True
+            
+        # Re-create save path since we're now saving
+        os.makedirs("plots", exist_ok=True)
+        config_suffix = get_config_suffix(args, CONFIG)
+        arch_str = "-".join(map(str, architecture))
+        save_path = f"plots/mnist_splines-{arch_str}{config_suffix}.png"
         
-        # Re-run plotting with the safe backend
+        # Re-run plotting logic with the safe backend
         fig = plot_results(
             model.sprecher_net, 
             model.sprecher_net.layers,
@@ -291,246 +1261,37 @@ def plot_splines_with_fallback(model, save_path=None, show_plots=True):
         
         if fig is not None:
             plt.close(fig)
-        print(f"Plots were successfully saved to {save_path}")
+            
+        print(f"Plots saved to {save_path}")
+        print(f"\nPlots have been saved to the 'plots/' directory.")
+        print("Tip: Use --no_show flag to avoid GUI dependencies in the future.")
 
 
 def main():
-    # Set device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    """Main function."""
+    args = parse_args()
     
-    # Get program mode
-    while True:
-        try:
-            mode = int(input("Enter mode (0: train, 1: test, 2: infer, 3: plot splines): "))
-            if mode in [0, 1, 2, 3]:
-                break
-            else:
-                print("Please enter 0, 1, 2, or 3.")
-        except ValueError:
-            print("Please enter a valid integer.")
+    # If --no_show is used, force the 'Agg' backend upfront
+    if args.no_show:
+        matplotlib.use('Agg')
+        print("Using non-interactive 'Agg' backend for plotting (as requested by --no_show).")
     
-    if mode == 0:  # Training
-        # Initialize model
-        model = MNISTSprecherNet(
-            architecture=MNIST_CONFIG['architecture'],
-            phi_knots=MNIST_CONFIG['phi_knots'],
-            Phi_knots=MNIST_CONFIG['Phi_knots']
-        ).to(device)
-        
-        # Print architecture details
-        print_architecture_details(
-            MNIST_CONFIG['architecture'], 
-            MNIST_CONFIG['phi_knots'], 
-            MNIST_CONFIG['Phi_knots']
-        )
-        
-        # Count and display parameters
-        param_counts = count_parameters_detailed(model)
-        print(f"\nTotal number of trainable parameters: {param_counts['total']:,}")
-        print(f"  - Spline knots: {param_counts['spline_knots']:,}")
-        print(f"  - Lambda (λ) weight matrices: {param_counts['lambda']:,}")
-        print(f"  - Eta (η) shift parameters: {param_counts['eta']:,}")
-        if CONFIG['use_residual_weights'] and param_counts['residual'] > 0:
-            print(f"  - Residual connection weights: {param_counts['residual']:,}")
-        print(f"  - Output scale and bias: {param_counts['output']:,}")
-        if CONFIG['train_phi_codomain'] and param_counts['codomain'] > 0:
-            print(f"  - Phi codomain parameters (cc, cr per block): {param_counts['codomain']:,}")
-        
-        # Check if model exists
-        model_exists = os.path.exists(MNIST_CONFIG['model_file'])
-        retrain_from_scratch = False
-        
-        if model_exists:
-            while True:
-                try:
-                    user_input = input("\nRetrain from scratch? (1: Yes, 0: No): ")
-                    retrain_from_scratch = int(user_input.strip())
-                    if retrain_from_scratch in [0, 1]:
-                        retrain_from_scratch = bool(retrain_from_scratch)
-                        break
-                    else:
-                        print("Please enter 0 or 1.")
-                except ValueError:
-                    print("Please enter a valid integer.")
-            
-            if retrain_from_scratch:
-                os.remove(MNIST_CONFIG['model_file'])
-                print(f"Deleted existing model file: {MNIST_CONFIG['model_file']}")
-                if os.path.exists(MNIST_CONFIG['data_directory']):
-                    shutil.rmtree(MNIST_CONFIG['data_directory'])
-                    print(f"Deleted existing data directory: {MNIST_CONFIG['data_directory']}")
-        
-        # Load model if continuing training
-        if model_exists and not retrain_from_scratch:
-            model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
-            print("Loaded saved model for further training.")
-        
-        # Setup data
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))  # This gives [-1, 1], we'll convert to [0, 1] later
-        ])
-        train_dataset = MNIST(root=MNIST_CONFIG['data_directory'], train=True, download=True, transform=transform)
-        train_loader = DataLoader(train_dataset, batch_size=MNIST_CONFIG['batch_size'], shuffle=True)
-        
-        # Setup optimizer (using AdamW like in SN code)
-        optimizer = optim.AdamW(
-            model.parameters(), 
-            lr=MNIST_CONFIG['learning_rate'],
-            weight_decay=MNIST_CONFIG['weight_decay']
-        )
-        loss_function = nn.CrossEntropyLoss()
-        
-        # Training loop
-        print(f"\nStarting training for {MNIST_CONFIG['epochs']} epochs...")
-        best_accuracy = 0
-        
-        for epoch in range(MNIST_CONFIG['epochs']):
-            print(f"\nEpoch {epoch + 1}/{MNIST_CONFIG['epochs']}")
-            
-            avg_loss, train_acc = train_epoch(model, train_loader, optimizer, loss_function, device)
-            print(f"Average loss: {avg_loss:.4f}, Training accuracy: {train_acc:.2f}%")
-            
-            # Save model after each epoch
-            torch.save(model.state_dict(), MNIST_CONFIG['model_file'])
-            
-            if train_acc > best_accuracy:
-                best_accuracy = train_acc
-                torch.save(model.state_dict(), MNIST_CONFIG['model_file'].replace('.pth', '_best.pth'))
-        
-        print(f"\nTraining complete! Best accuracy: {best_accuracy:.2f}%")
-        
-    elif mode == 1:  # Testing
-        # Load model
-        model = MNISTSprecherNet(
-            architecture=MNIST_CONFIG['architecture'],
-            phi_knots=MNIST_CONFIG['phi_knots'],
-            Phi_knots=MNIST_CONFIG['Phi_knots']
-        ).to(device)
-        
-        if not os.path.exists(MNIST_CONFIG['model_file']):
-            print(f"Error: Model file {MNIST_CONFIG['model_file']} not found. Please train first.")
-            return
-        
-        # Load with strict=False to handle missing buffers
-        model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
-        model.eval()
-        
-        # Print architecture and parameter count
-        print_architecture_details(
-            MNIST_CONFIG['architecture'], 
-            MNIST_CONFIG['phi_knots'], 
-            MNIST_CONFIG['Phi_knots']
-        )
-        
-        param_counts = count_parameters_detailed(model)
-        print(f"\nModel has {param_counts['total']:,} parameters")
-        
-        # Setup test data
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
-        ])
-        test_dataset = MNIST(root=MNIST_CONFIG['data_directory'], train=False, download=True, transform=transform)
-        test_loader = DataLoader(test_dataset, batch_size=MNIST_CONFIG['batch_size'], shuffle=False)
-        
-        # Test
-        accuracy = test_model(model, test_loader, device)
-        print(f"\nTest accuracy: {accuracy:.2f}%")
-        
-    elif mode == 2:  # Inference
-        # Load model
-        model = MNISTSprecherNet(
-            architecture=MNIST_CONFIG['architecture'],
-            phi_knots=MNIST_CONFIG['phi_knots'],
-            Phi_knots=MNIST_CONFIG['Phi_knots']
-        ).to(device)
-        
-        if not os.path.exists(MNIST_CONFIG['model_file']):
-            print(f"Error: Model file {MNIST_CONFIG['model_file']} not found. Please train first.")
-            return
-        
-        # Load with strict=False to handle missing buffers
-        model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
-        model.eval()
-        
-        # Update domains with loaded parameters
-        if CONFIG.get('use_theoretical_domains', True):
-            model.update_all_domains()
-        
-        # Process image
-        if not os.path.exists('digit.png'):
-            print("Error: 'digit.png' not found. Please provide an image file.")
-            return
-        
-        image_data = process_image('digit.png')
-        image_tensor = torch.from_numpy(image_data).float().unsqueeze(0).to(device)
-        
-        # Inference
-        with torch.no_grad():
-            output = model(image_tensor)
-            probabilities = torch.softmax(output, dim=1)
-            probs_list = probabilities.cpu().numpy().flatten()
-            
-            print("\nProbabilities:")
-            for i, prob in enumerate(probs_list):
-                print(f"  Digit {i}: {prob:.6f}")
-            
-            predicted = torch.argmax(probabilities, dim=1).item()
-            confidence = probs_list[predicted] * 100
-            print(f"\nPredicted digit: {predicted} (confidence: {confidence:.1f}%)")
-            
-    elif mode == 3:  # Plot splines
-        # Load model
-        model = MNISTSprecherNet(
-            architecture=MNIST_CONFIG['architecture'],
-            phi_knots=MNIST_CONFIG['phi_knots'],
-            Phi_knots=MNIST_CONFIG['Phi_knots']
-        ).to(device)
-        
-        if not os.path.exists(MNIST_CONFIG['model_file']):
-            print(f"Error: Model file {MNIST_CONFIG['model_file']} not found. Please train first.")
-            return
-        
-        # Load with strict=False to handle missing buffers
-        model.load_state_dict(torch.load(MNIST_CONFIG['model_file'], map_location=device), strict=False)
-        model.eval()
-        
-        # Update domains with loaded parameters
-        if CONFIG.get('use_theoretical_domains', True):
-            print("Updating spline domains based on loaded parameters...")
-            model.update_all_domains()
-        
-        # Print architecture details
-        print_architecture_details(
-            MNIST_CONFIG['architecture'], 
-            MNIST_CONFIG['phi_knots'], 
-            MNIST_CONFIG['Phi_knots']
-        )
-        
-        # Also print the actual domains after domain update
-        print("\nSpline domains after theoretical update:")
-        for idx, layer in enumerate(model.sprecher_net.layers):
-            print(f"Block {idx+1}:")
-            print(f"  φ domain: [{layer.phi.in_min:.3f}, {layer.phi.in_max:.3f}]")
-            print(f"  Φ domain: [{layer.Phi.in_min:.3f}, {layer.Phi.in_max:.3f}]")
-            if hasattr(layer, 'phi_codomain_params') and layer.phi_codomain_params is not None:
-                cc = layer.phi_codomain_params.cc.item()
-                cr = layer.phi_codomain_params.cr.item()
-                print(f"  Φ codomain: [{cc-cr:.3f}, {cc+cr:.3f}]")
-            if hasattr(layer, 'input_range') and layer.input_range is not None:
-                print(f"  Input range: {layer.input_range}")
-            if hasattr(layer, 'output_range') and layer.output_range is not None:
-                print(f"  Output range: {layer.output_range}")
-        
-        # Create plots directory if it doesn't exist
-        os.makedirs("plots", exist_ok=True)
-        save_path = "plots/mnist_splines.png"
-        
-        # Plot splines with fallback handling
-        print("\nPlotting learned splines...")
-        plot_splines_with_fallback(model, save_path=save_path, show_plots=True)
+    # Enable domain debugging if requested
+    from sn_core.config import CONFIG
+    if args.debug_domains:
+        CONFIG['debug_domains'] = True
+    if args.track_violations:
+        CONFIG['track_domain_violations'] = True
+    
+    # Handle different modes
+    if args.mode == "train":
+        train_mnist(args)
+    elif args.mode == "test":
+        test_mnist(args)
+    elif args.mode == "infer":
+        infer_mnist(args)
+    elif args.mode == "plot":
+        plot_mnist_splines(args)
 
 
 if __name__ == "__main__":
