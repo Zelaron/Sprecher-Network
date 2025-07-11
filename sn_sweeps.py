@@ -42,7 +42,7 @@ SWEEPS = {
         "dataset": "toy_1d_poly", "arch": "15,15,15,15", "phi_knots": 20, "Phi_knots": 20, "epochs": 3000
     },
     "toy_1d_complex": {
-        "dataset": "toy_1d_complex", "arch": "10", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000
+        "dataset": "toy_1d_complex", "arch": "10", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000, "extra_args": ["--norm_first"]
     },
     "toy_2d": {
         "dataset": "toy_2d", "arch": "10,10,10", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000
@@ -50,9 +50,8 @@ SWEEPS = {
     "toy_2d_vector": {
         "dataset": "toy_2d_vector", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 2000
     },
-    "toy_100d": {
-        "dataset": "toy_100d", "arch": "100", "phi_knots": 15, "Phi_knots": 15, "epochs": 100,
-        "extra_args": ["--norm_first"]  # Enable normalization on first block for high-dim problem
+    "toy_100d": { # Enable normalization on first block for high-dim problem
+        "dataset": "toy_100d", "arch": "100", "phi_knots": 15, "Phi_knots": 15, "epochs": 100, "extra_args": ["--norm_first"]
     },
     "special_bessel": {
         "dataset": "special_bessel", "arch": "10,10,10", "phi_knots": 50, "Phi_knots": 50, "epochs": 4000
