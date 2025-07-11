@@ -80,6 +80,8 @@ def parse_args():
                         help="Position of normalization relative to blocks (default: after)")
     parser.add_argument("--norm_skip_first", action="store_true", default=True,
                         help="Skip normalization for the first block (default: True)")
+    parser.add_argument("--norm_first", action="store_true",
+                        help="Enable normalization for the first block (overrides norm_skip_first)")
     
     # Feature control arguments
     parser.add_argument("--no_residual", action="store_true",
@@ -416,7 +418,7 @@ def test_model(model, test_loader, device):
     return accuracy
 
 
-def print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_size, lr):
+def print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_size, lr, final_norm_skip_first):
     """Print configuration summary."""
     print(f"Using device: {args.device if args.device != 'auto' else 'cuda' if torch.cuda.is_available() else 'cpu'}")
     print(f"Mode: {args.mode}")
@@ -434,12 +436,44 @@ def print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_
     if args.no_norm:
         print("Normalization: disabled")
     elif args.norm_type:
-        print(f"Normalization: {args.norm_type} (position: {args.norm_position}, skip_first: {args.norm_skip_first})")
+        print(f"Normalization: {args.norm_type} (position: {args.norm_position}, skip_first: {final_norm_skip_first})")
     else:
-        print(f"Normalization: {CONFIG.get('norm_type', 'batch')} (position: {args.norm_position}, skip_first: {args.norm_skip_first})")
+        print(f"Normalization: {CONFIG.get('norm_type', 'batch')} (position: {args.norm_position}, skip_first: {final_norm_skip_first})")
     
     print(f"Scheduler: {'PlateauAwareCosineAnnealingLR' if CONFIG.get('use_advanced_scheduler', False) else 'Adam (fixed LR)'}")
     print()
+
+
+def load_checkpoint_and_get_model_params(model_path, device, args):
+    """Load checkpoint and extract model parameters.
+    
+    Returns:
+        tuple: (checkpoint, model_params_dict)
+    """
+    if not os.path.exists(model_path):
+        return None, None
+    
+    checkpoint = torch.load(model_path, map_location=device)
+    
+    # For new format checkpoints with model_params
+    if isinstance(checkpoint, dict) and 'model_params' in checkpoint:
+        model_params = checkpoint['model_params'].copy()
+        
+        # Override with command-line args if explicitly provided
+        # But preserve critical architecture parameters from checkpoint
+        if args.phi_knots is not None:
+            model_params['phi_knots'] = args.phi_knots
+        if args.Phi_knots is not None:
+            model_params['Phi_knots'] = args.Phi_knots
+            
+        print("Using model configuration from checkpoint:")
+        print(f"  Architecture: {model_params['architecture']}")
+        print(f"  Normalization: {model_params['norm_type']} (skip_first: {model_params['norm_skip_first']})")
+        
+        return checkpoint, model_params
+    else:
+        # Old format - return None for model_params
+        return checkpoint, None
 
 
 def train_mnist(args):
@@ -488,8 +522,14 @@ def train_mnist(args):
     else:
         effective_norm_type = "none"
     
+    # Handle the --norm_first flag
+    if args.norm_first:
+        final_norm_skip_first = False
+    else:
+        final_norm_skip_first = args.norm_skip_first if hasattr(args, 'norm_skip_first') else CONFIG.get('norm_skip_first', True)
+    
     # Print configuration
-    print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_size, lr)
+    print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_size, lr, final_norm_skip_first)
     
     # Initialize model
     model = MNISTSprecherNet(
@@ -498,7 +538,7 @@ def train_mnist(args):
         Phi_knots=Phi_knots,
         norm_type=effective_norm_type,
         norm_position=args.norm_position,
-        norm_skip_first=args.norm_skip_first
+        norm_skip_first=final_norm_skip_first
     ).to(device)
     
     # Count and display parameters
@@ -650,7 +690,7 @@ def train_mnist(args):
                     'Phi_knots': Phi_knots,
                     'norm_type': effective_norm_type,
                     'norm_position': args.norm_position,
-                    'norm_skip_first': args.norm_skip_first
+                    'norm_skip_first': final_norm_skip_first
                 }
             }
             
@@ -689,7 +729,7 @@ def train_mnist(args):
         print(f"Std of verifications: {np.std(accuracies_verification):.4f}%")
         
         if np.std(accuracies_verification) < 1e-6:
-            print("Perfect consistency achieved! The snapshot is completely isolated.")
+            print("✓ Perfect consistency achieved! The snapshot is completely isolated.")
     
     # Plot training curves if requested
     if args.save_plots or not args.no_show:
@@ -818,32 +858,6 @@ def test_mnist(args):
     if args.no_norm:
         CONFIG['use_normalization'] = False
     
-    # Determine effective normalization
-    if CONFIG.get('use_normalization', True) and not args.no_norm:
-        if args.norm_type == "none":
-            effective_norm_type = "none"
-        elif args.norm_type is not None:
-            effective_norm_type = args.norm_type
-        else:
-            effective_norm_type = CONFIG.get('norm_type', 'batch')
-    else:
-        effective_norm_type = "none"
-    
-    print(f"Using device: {device}")
-    print(f"Architecture: 784 -> {architecture} -> 10")
-    print(f"Normalization: {effective_norm_type}")
-    print()
-    
-    # Initialize model
-    model = MNISTSprecherNet(
-        architecture=architecture,
-        phi_knots=phi_knots,
-        Phi_knots=Phi_knots,
-        norm_type=effective_norm_type,
-        norm_position=args.norm_position,
-        norm_skip_first=args.norm_skip_first
-    ).to(device)
-    
     # Construct model filename to match training convention
     config_suffix = get_config_suffix(args, CONFIG)
     arch_str = "-".join(map(str, architecture))
@@ -862,9 +876,61 @@ def test_mnist(args):
         print(f"Error: Model file {model_path} not found. Please train first.")
         return
     
-    # Load checkpoint and handle both old and new formats
-    checkpoint = torch.load(model_path, map_location=device)
+    # Load checkpoint and get model parameters
+    checkpoint, model_params = load_checkpoint_and_get_model_params(model_path, device, args)
+    if checkpoint is None:
+        print(f"Error: Could not load model from {model_path}")
+        return
     
+    # Use checkpoint parameters if available, otherwise fall back to command-line args
+    if model_params is not None:
+        # Use saved parameters
+        effective_norm_type = model_params['norm_type']
+        final_norm_skip_first = model_params['norm_skip_first']
+        norm_position = model_params['norm_position']
+        architecture = model_params['architecture']
+        phi_knots = model_params['phi_knots']
+        Phi_knots = model_params['Phi_knots']
+    else:
+        # Fall back to command-line arguments for old checkpoints
+        print("WARNING: Old checkpoint format. Using command-line arguments for model configuration.")
+        print("Make sure to use the same flags as during training!")
+        
+        # Determine effective normalization
+        if CONFIG.get('use_normalization', True) and not args.no_norm:
+            if args.norm_type == "none":
+                effective_norm_type = "none"
+            elif args.norm_type is not None:
+                effective_norm_type = args.norm_type
+            else:
+                effective_norm_type = CONFIG.get('norm_type', 'batch')
+        else:
+            effective_norm_type = "none"
+        
+        # Handle the --norm_first flag
+        if args.norm_first:
+            final_norm_skip_first = False
+        else:
+            final_norm_skip_first = args.norm_skip_first if hasattr(args, 'norm_skip_first') else CONFIG.get('norm_skip_first', True)
+        
+        norm_position = args.norm_position
+    
+    print(f"Using device: {device}")
+    print(f"Architecture: 784 -> {architecture} -> 10")
+    print(f"Normalization: {effective_norm_type} (skip_first: {final_norm_skip_first})")
+    print()
+    
+    # Initialize model with the correct configuration
+    model = MNISTSprecherNet(
+        architecture=architecture,
+        phi_knots=phi_knots,
+        Phi_knots=Phi_knots,
+        norm_type=effective_norm_type,
+        norm_position=norm_position,
+        norm_skip_first=final_norm_skip_first
+    ).to(device)
+    
+    # Load the model state
     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
         # New format with complete checkpoint
         model.load_state_dict(checkpoint['model_state_dict'], strict=False)
@@ -942,31 +1008,6 @@ def infer_mnist(args):
     if args.no_norm:
         CONFIG['use_normalization'] = False
     
-    # Determine effective normalization
-    if CONFIG.get('use_normalization', True) and not args.no_norm:
-        if args.norm_type == "none":
-            effective_norm_type = "none"
-        elif args.norm_type is not None:
-            effective_norm_type = args.norm_type
-        else:
-            effective_norm_type = CONFIG.get('norm_type', 'batch')
-    else:
-        effective_norm_type = "none"
-    
-    print(f"Using device: {device}")
-    print(f"Image file: {args.image}")
-    print()
-    
-    # Initialize model
-    model = MNISTSprecherNet(
-        architecture=architecture,
-        phi_knots=phi_knots,
-        Phi_knots=Phi_knots,
-        norm_type=effective_norm_type,
-        norm_position=args.norm_position,
-        norm_skip_first=args.norm_skip_first
-    ).to(device)
-    
     # Construct model filename to match training convention
     config_suffix = get_config_suffix(args, CONFIG)
     arch_str = "-".join(map(str, architecture))
@@ -985,9 +1026,60 @@ def infer_mnist(args):
         print(f"Error: Model file {model_path} not found. Please train first.")
         return
     
-    # Load checkpoint and handle both old and new formats
-    checkpoint = torch.load(model_path, map_location=device)
+    # Load checkpoint and get model parameters
+    checkpoint, model_params = load_checkpoint_and_get_model_params(model_path, device, args)
+    if checkpoint is None:
+        print(f"Error: Could not load model from {model_path}")
+        return
     
+    # Use checkpoint parameters if available, otherwise fall back to command-line args
+    if model_params is not None:
+        # Use saved parameters
+        effective_norm_type = model_params['norm_type']
+        final_norm_skip_first = model_params['norm_skip_first']
+        norm_position = model_params['norm_position']
+        architecture = model_params['architecture']
+        phi_knots = model_params['phi_knots']
+        Phi_knots = model_params['Phi_knots']
+    else:
+        # Fall back to command-line arguments for old checkpoints
+        print("WARNING: Old checkpoint format. Using command-line arguments for model configuration.")
+        print("Make sure to use the same flags as during training!")
+        
+        # Determine effective normalization
+        if CONFIG.get('use_normalization', True) and not args.no_norm:
+            if args.norm_type == "none":
+                effective_norm_type = "none"
+            elif args.norm_type is not None:
+                effective_norm_type = args.norm_type
+            else:
+                effective_norm_type = CONFIG.get('norm_type', 'batch')
+        else:
+            effective_norm_type = "none"
+        
+        # Handle the --norm_first flag
+        if args.norm_first:
+            final_norm_skip_first = False
+        else:
+            final_norm_skip_first = args.norm_skip_first if hasattr(args, 'norm_skip_first') else CONFIG.get('norm_skip_first', True)
+        
+        norm_position = args.norm_position
+    
+    print(f"Using device: {device}")
+    print(f"Image file: {args.image}")
+    print()
+    
+    # Initialize model with the correct configuration
+    model = MNISTSprecherNet(
+        architecture=architecture,
+        phi_knots=phi_knots,
+        Phi_knots=Phi_knots,
+        norm_type=effective_norm_type,
+        norm_position=norm_position,
+        norm_skip_first=final_norm_skip_first
+    ).to(device)
+    
+    # Load the model state
     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
         # New format with complete checkpoint
         model.load_state_dict(checkpoint['model_state_dict'], strict=False)
@@ -1113,32 +1205,6 @@ def plot_mnist_splines(args):
     if args.no_norm:
         CONFIG['use_normalization'] = False
     
-    # Determine effective normalization
-    if CONFIG.get('use_normalization', True) and not args.no_norm:
-        if args.norm_type == "none":
-            effective_norm_type = "none"
-        elif args.norm_type is not None:
-            effective_norm_type = args.norm_type
-        else:
-            effective_norm_type = CONFIG.get('norm_type', 'batch')
-    else:
-        effective_norm_type = "none"
-    
-    print(f"Using device: {device}")
-    print(f"Architecture: 784 -> {architecture} -> 10")
-    print(f"phi knots: {phi_knots}, Phi knots: {Phi_knots}")
-    print()
-    
-    # Initialize model
-    model = MNISTSprecherNet(
-        architecture=architecture,
-        phi_knots=phi_knots,
-        Phi_knots=Phi_knots,
-        norm_type=effective_norm_type,
-        norm_position=args.norm_position,
-        norm_skip_first=args.norm_skip_first
-    ).to(device)
-    
     # Construct model filename to match training convention
     config_suffix = get_config_suffix(args, CONFIG)
     arch_str = "-".join(map(str, architecture))
@@ -1157,9 +1223,61 @@ def plot_mnist_splines(args):
         print(f"Error: Model file {model_path} not found. Please train first.")
         return
     
-    # Load checkpoint and handle both old and new formats
-    checkpoint = torch.load(model_path, map_location=device)
+    # Load checkpoint and get model parameters
+    checkpoint, model_params = load_checkpoint_and_get_model_params(model_path, device, args)
+    if checkpoint is None:
+        print(f"Error: Could not load model from {model_path}")
+        return
     
+    # Use checkpoint parameters if available, otherwise fall back to command-line args
+    if model_params is not None:
+        # Use saved parameters
+        effective_norm_type = model_params['norm_type']
+        final_norm_skip_first = model_params['norm_skip_first']
+        norm_position = model_params['norm_position']
+        architecture = model_params['architecture']
+        phi_knots = model_params['phi_knots']
+        Phi_knots = model_params['Phi_knots']
+    else:
+        # Fall back to command-line arguments for old checkpoints
+        print("WARNING: Old checkpoint format. Using command-line arguments for model configuration.")
+        print("Make sure to use the same flags as during training!")
+        
+        # Determine effective normalization
+        if CONFIG.get('use_normalization', True) and not args.no_norm:
+            if args.norm_type == "none":
+                effective_norm_type = "none"
+            elif args.norm_type is not None:
+                effective_norm_type = args.norm_type
+            else:
+                effective_norm_type = CONFIG.get('norm_type', 'batch')
+        else:
+            effective_norm_type = "none"
+        
+        # Handle the --norm_first flag
+        if args.norm_first:
+            final_norm_skip_first = False
+        else:
+            final_norm_skip_first = args.norm_skip_first if hasattr(args, 'norm_skip_first') else CONFIG.get('norm_skip_first', True)
+        
+        norm_position = args.norm_position
+    
+    print(f"Using device: {device}")
+    print(f"Architecture: 784 -> {architecture} -> 10")
+    print(f"phi knots: {phi_knots}, Phi knots: {Phi_knots}")
+    print()
+    
+    # Initialize model with the correct configuration
+    model = MNISTSprecherNet(
+        architecture=architecture,
+        phi_knots=phi_knots,
+        Phi_knots=Phi_knots,
+        norm_type=effective_norm_type,
+        norm_position=norm_position,
+        norm_skip_first=final_norm_skip_first
+    ).to(device)
+    
+    # Load the model state
     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
         # New format with complete checkpoint
         model.load_state_dict(checkpoint['model_state_dict'], strict=False)
