@@ -383,7 +383,7 @@ def train_epoch(model, train_loader, optimizer, scheduler, loss_function, device
 def test_model(model, test_loader, device):
     """Evaluate model on test set."""
     # Keep model in training mode for consistency with checkpoint
-    # model.eval()  # Commented out - we maintain the mode from training
+    # model.eval()  # We maintain training mode
     # This ensures BatchNorm uses the same statistics as during training
     correct = 0
     total = 0
@@ -861,7 +861,6 @@ def test_mnist(args):
     # Construct model filename to match training convention
     config_suffix = get_config_suffix(args, CONFIG)
     arch_str = "-".join(map(str, architecture))
-    epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
     model_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
     model_path = os.path.join(os.path.dirname(model_file), model_filename)
     
@@ -1011,7 +1010,6 @@ def infer_mnist(args):
     # Construct model filename to match training convention
     config_suffix = get_config_suffix(args, CONFIG)
     arch_str = "-".join(map(str, architecture))
-    epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
     model_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
     model_path = os.path.join(os.path.dirname(model_file), model_filename)
     
@@ -1208,7 +1206,6 @@ def plot_mnist_splines(args):
     # Construct model filename to match training convention
     config_suffix = get_config_suffix(args, CONFIG)
     arch_str = "-".join(map(str, architecture))
-    epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
     model_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
     model_path = os.path.join(os.path.dirname(model_file), model_filename)
     
@@ -1297,7 +1294,7 @@ def plot_mnist_splines(args):
         model.load_state_dict(checkpoint, strict=False)
     
     # Keep model in training mode for consistency with checkpoint
-    # model.eval()  # Commented out - we maintain the mode from training
+    # model.eval()  # We maintain training mode
     
     # Update domains
     if CONFIG.get('use_theoretical_domains', True):
