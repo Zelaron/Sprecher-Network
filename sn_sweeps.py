@@ -39,13 +39,13 @@ from rich.table import Table, Column
 SWEEPS = {
     # (dataset, arch, phi_knots, Phi_knots, epochs, extra_args)
     "toy_1d_poly": {
-        "dataset": "toy_1d_poly", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000
+        "dataset": "toy_1d_poly", "arch": "15,15,15,15", "phi_knots": 20, "Phi_knots": 20, "epochs": 3000
     },
     "toy_1d_complex": {
-        "dataset": "toy_1d_complex", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000
+        "dataset": "toy_1d_complex", "arch": "10", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000
     },
     "toy_2d": {
-        "dataset": "toy_2d", "arch": "10,10,10,10", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000
+        "dataset": "toy_2d", "arch": "10,10,10", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000
     },
     "toy_2d_vector": {
         "dataset": "toy_2d_vector", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 2000
@@ -55,7 +55,7 @@ SWEEPS = {
         "extra_args": ["--norm_first"]  # Enable normalization on first block for high-dim problem
     },
     "special_bessel": {
-        "dataset": "special_bessel", "arch": "5,5,5", "phi_knots": 50, "Phi_knots": 50, "epochs": 8000
+        "dataset": "special_bessel", "arch": "10,10,10", "phi_knots": 50, "Phi_knots": 50, "epochs": 4000
     },
     "feynman_uv": {
         "dataset": "feynman_uv", "arch": "10,10", "phi_knots": 100, "Phi_knots": 100, "epochs": 3000
@@ -461,7 +461,7 @@ def main():
                 console.print(error_panel)
                 console.print()
     
-    console.print("\n[bold green]✓[/bold green] All sweeps completed!")
+    console.print("\n[bold green][OK][/bold green] All sweeps completed!")
     console.print("[dim]Check the 'plots' directory for generated visualizations.[/dim]")
 
 if __name__ == "__main__":

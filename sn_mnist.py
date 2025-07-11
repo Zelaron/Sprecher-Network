@@ -729,7 +729,7 @@ def train_mnist(args):
         print(f"Std of verifications: {np.std(accuracies_verification):.4f}%")
         
         if np.std(accuracies_verification) < 1e-6:
-            print("✓ Perfect consistency achieved! The snapshot is completely isolated.")
+            print("Perfect consistency achieved! The snapshot is completely isolated.")
     
     # Plot training curves if requested
     if args.save_plots or not args.no_show:

@@ -227,7 +227,7 @@ def main():
     print(f"Max difference from saved: {max_diff:.4e}")
     
     if max_diff < 1e-8:
-        print("✓ Perfect consistency achieved! The snapshot is completely isolated.")
+        print("[OK] Perfect consistency achieved! The snapshot is completely isolated.")
     
     # Keep model in training mode for consistency with checkpoint
     # model.eval()  # Commented out - we maintain the mode from training
