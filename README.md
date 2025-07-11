@@ -59,7 +59,7 @@ A single-layer network with architecture 784→[100]→10 achieves ~92% accuracy
 
 ### Batch Experiments
 
-The modernized `sn_sweeps.py` script can run a comprehensive suite of experiments in parallel.
+The `sn_sweeps.py` script can run a comprehensive suite of experiments in parallel.
 
 ```
 # List all available sweeps
