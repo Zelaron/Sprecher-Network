@@ -37,7 +37,7 @@ from rich.table import Table, Column
 # --- Sweep Configurations ---
 # Using a dictionary for named, readable, and selectable sweeps.
 SWEEPS = {
-    # (dataset, arch, phi_knots, Phi_knots, epochs)
+    # (dataset, arch, phi_knots, Phi_knots, epochs, extra_args)
     "toy_1d_poly": {
         "dataset": "toy_1d_poly", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000
     },
@@ -51,7 +51,8 @@ SWEEPS = {
         "dataset": "toy_2d_vector", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 2000
     },
     "toy_100d": {
-        "dataset": "toy_100d", "arch": "100", "phi_knots": 15, "Phi_knots": 15, "epochs": 100
+        "dataset": "toy_100d", "arch": "100", "phi_knots": 15, "Phi_knots": 15, "epochs": 100,
+        "extra_args": ["--norm_first"]  # Enable normalization on first block for high-dim problem
     },
     "special_bessel": {
         "dataset": "special_bessel", "arch": "5,5,5", "phi_knots": 50, "Phi_knots": 50, "epochs": 8000
@@ -156,6 +157,10 @@ def run_experiment_with_progress(sweep_name, config, progress_dict, debug=False)
         "--save_plots",
         "--no_show"
     ]
+    
+    # Add any extra arguments for this sweep
+    if "extra_args" in config:
+        cmd.extend(config["extra_args"])
     
     # Set debug flag in progress dict
     if debug:
