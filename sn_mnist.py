@@ -33,6 +33,10 @@ def parse_args():
                         choices=["train", "test", "infer", "plot"],
                         help="Operation mode: train, test, infer, or plot")
     
+    # Model selection for test/infer/plot modes
+    parser.add_argument("--model-index", type=int, default=None,
+                        help="Select model by index when multiple models are found (1-based)")
+    
     # Architecture and model settings
     parser.add_argument("--arch", type=str, default=None,
                         help="Architecture as comma-separated values (default: from MNIST_CONFIG)")
@@ -118,97 +122,370 @@ def get_config_suffix(args, CONFIG):
     if CONFIG.get('use_advanced_scheduler', False):
         parts.append("AdvScheduler")
     
+    # Add norm position if not default
+    if hasattr(args, 'norm_position') and args.norm_position != 'after':
+        parts.append(f"Norm{args.norm_position.capitalize()}")
+    
+    # Add norm_skip_first info if not default
+    if hasattr(args, 'norm_first') and args.norm_first:
+        parts.append("NormFirst")
+    elif hasattr(args, 'norm_skip_first') and not args.norm_skip_first:
+        parts.append("NormAll")
+    
+    # Add knots info if not default
+    phi_knots = args.phi_knots if hasattr(args, 'phi_knots') and args.phi_knots else MNIST_CONFIG['phi_knots']
+    Phi_knots = args.Phi_knots if hasattr(args, 'Phi_knots') and args.Phi_knots else MNIST_CONFIG['Phi_knots']
+    
+    if phi_knots != MNIST_CONFIG['phi_knots']:
+        parts.append(f"phi{phi_knots}")
+    if Phi_knots != MNIST_CONFIG['Phi_knots']:
+        parts.append(f"Phi{Phi_knots}")
+    
     # Join with dashes
     return "-" + "-".join(parts) if parts else ""
 
 
-def discover_models(model_dir="."):
-    """Discover trained MNIST models and extract their architectures.
+def parse_model_filename(filename):
+    """Parse a model filename to extract architecture, epochs, and config flags.
     
     Returns:
-        dict: A dictionary mapping architectures to model info:
-              {
-                  "40-40-40-40": {
-                      "epochs": 3,
-                      "files": ["sn_mnist_model-40-40-40-40-3epochs.pth", 
-                               "sn_mnist_model-40-40-40-40-3epochs_best.pth"]
-                  }
-              }
+        dict: Contains 'architecture', 'epochs', 'config_flags', etc. or None if parsing fails
     """
-    import glob
     import re
     
+    # Pattern: sn_mnist_model-{arch}-{epochs}epochs{config_suffix}.pth
+    # Where config_suffix might be -NoNorm-NoResidual etc.
+    match = re.match(r"sn_mnist_model-([\d-]+)-(\d+)epochs(.*?)(?:_best)?\.pth", filename)
+    if not match:
+        return None
+    
+    arch_str = match.group(1)
+    epochs = int(match.group(2))
+    config_suffix = match.group(3)
+    
+    # Parse architecture
+    architecture = [int(x) for x in arch_str.split("-")]
+    
+    # Parse config flags from suffix
+    config_flags = {
+        'no_norm': False,
+        'no_residual': False,
+        'use_advanced_scheduler': False,
+        'norm_type': None,
+        'norm_position': 'after',  # default
+        'norm_first': False,
+        'norm_skip_first': True,  # default
+        'phi_knots': MNIST_CONFIG['phi_knots'],  # default
+        'Phi_knots': MNIST_CONFIG['Phi_knots'],  # default
+    }
+    
+    if config_suffix:
+        # Parse suffixes like -NoNorm-NoResidual-AdvScheduler-NormBefore-phi20
+        parts = config_suffix.strip('-').split('-')
+        for part in parts:
+            if part == 'NoNorm':
+                config_flags['no_norm'] = True
+            elif part == 'NoResidual':
+                config_flags['no_residual'] = True
+            elif part == 'AdvScheduler':
+                config_flags['use_advanced_scheduler'] = True
+            elif part.startswith('Norm') and part not in ['NoNorm', 'NormFirst', 'NormAll']:
+                # Handle NormLayer, NormBefore, NormAfter
+                if part == 'NormLayer':
+                    config_flags['norm_type'] = 'layer'
+                elif part == 'NormBefore':
+                    config_flags['norm_position'] = 'before'
+                elif part == 'NormAfter':
+                    config_flags['norm_position'] = 'after'
+            elif part == 'NormFirst':
+                config_flags['norm_first'] = True
+                config_flags['norm_skip_first'] = False
+            elif part == 'NormAll':
+                config_flags['norm_skip_first'] = False
+            elif part.startswith('phi') and part[3:].isdigit():
+                config_flags['phi_knots'] = int(part[3:])
+            elif part.startswith('Phi') and part[3:].isdigit():
+                config_flags['Phi_knots'] = int(part[3:])
+    
+    return {
+        'architecture': architecture,
+        'epochs': epochs,
+        'config_flags': config_flags,
+        'arch_str': arch_str,
+        'config_suffix': config_suffix
+    }
+
+
+def discover_models(model_dir="."):
+    """Discover trained MNIST models and extract their configurations.
+    
+    Returns:
+        dict: A dictionary mapping full configurations to model info
+    """
+    import glob
+    
     models = {}
-    pattern = os.path.join(model_dir, "sn_mnist_model-*-*epochs*.pth")
+    pattern = os.path.join(model_dir, "sn_mnist_model-*.pth")
     
     for filepath in glob.glob(pattern):
         filename = os.path.basename(filepath)
-        # Extract architecture and epochs from filename
-        # Pattern: sn_mnist_model-{arch}-{epochs}epochs[_best].pth
-        match = re.match(r"sn_mnist_model-([\d-]+)-(\d+)epochs(_best)?\.pth", filename)
-        if match:
-            arch_str = match.group(1)
-            epochs = int(match.group(2))
+        parsed = parse_model_filename(filename)
+        
+        if parsed:
+            # Create a unique key based on architecture and config
+            config_key = f"{parsed['arch_str']}{parsed['config_suffix']}"
             
-            if arch_str not in models:
-                models[arch_str] = {
-                    "epochs": epochs,
-                    "files": []
+            if config_key not in models:
+                models[config_key] = {
+                    'architecture': parsed['architecture'],
+                    'epochs': parsed['epochs'],
+                    'config_flags': parsed['config_flags'],
+                    'files': [],
+                    'arch_str': parsed['arch_str'],
+                    'config_suffix': parsed['config_suffix']
                 }
-            models[arch_str]["files"].append(filename)
-            # Update epochs if we find a different value (shouldn't happen normally)
-            if models[arch_str]["epochs"] != epochs:
-                print(f"Warning: Found models with same architecture but different epochs: {epochs} vs {models[arch_str]['epochs']}")
+            
+            models[config_key]['files'].append(filename)
     
     return models
 
 
-def auto_discover_architecture(args, mode_name):
-    """Auto-discover model architecture if not specified.
+def load_checkpoint_and_extract_config(model_path, device):
+    """Load checkpoint and extract both model parameters and configuration.
     
-    Args:
-        args: Command line arguments
-        mode_name: Name of the mode (test/infer/plot) for messages
-        
     Returns:
-        tuple: (architecture, epochs) or (None, None) if discovery fails
+        tuple: (checkpoint, model_config_dict)
     """
-    if args.arch is not None:
-        # User specified architecture, use it
-        architecture = [int(x) for x in args.arch.split(",")]
-        epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
-        return architecture, epochs
+    if not os.path.exists(model_path):
+        return None, None
     
-    # Try to discover models
-    print(f"No architecture specified, searching for trained models...")
+    checkpoint = torch.load(model_path, map_location=device)
+    
+    # Initialize config dict with defaults
+    model_config = {
+        'architecture': None,
+        'phi_knots': MNIST_CONFIG['phi_knots'],
+        'Phi_knots': MNIST_CONFIG['Phi_knots'],
+        'norm_type': 'batch',
+        'norm_position': 'after',
+        'norm_skip_first': True,
+        'use_residual': True,
+        'use_advanced_scheduler': False,
+    }
+    
+    # First priority: Use saved training_args if available (most complete)
+    if isinstance(checkpoint, dict) and 'training_args' in checkpoint:
+        training_args = checkpoint['training_args']
+        model_config.update({
+            'norm_type': 'none' if training_args.get('no_norm', False) else training_args.get('norm_type', 'batch'),
+            'norm_position': training_args.get('norm_position', 'after'),
+            'norm_skip_first': not training_args.get('norm_first', False) if 'norm_first' in training_args else training_args.get('norm_skip_first', True),
+            'use_residual': not training_args.get('no_residual', False),
+            'use_advanced_scheduler': training_args.get('use_advanced_scheduler', False),
+            'phi_knots': training_args.get('phi_knots') or MNIST_CONFIG['phi_knots'],
+            'Phi_knots': training_args.get('Phi_knots') or MNIST_CONFIG['Phi_knots'],
+        })
+        print("Using complete training configuration from checkpoint")
+    
+    # Second priority: Use model_params if available
+    if isinstance(checkpoint, dict) and 'model_params' in checkpoint:
+        params = checkpoint['model_params']
+        model_config.update({
+            'architecture': params['architecture'],
+            'phi_knots': params.get('phi_knots', model_config['phi_knots']),
+            'Phi_knots': params.get('Phi_knots', model_config['Phi_knots']),
+            'norm_type': params.get('norm_type', model_config['norm_type']),
+            'norm_position': params.get('norm_position', model_config['norm_position']),
+            'norm_skip_first': params.get('norm_skip_first', model_config['norm_skip_first']),
+        })
+        
+        # If training_args wasn't available, try to infer residual from state dict
+        if 'training_args' not in checkpoint:
+            state_dict = checkpoint.get('model_state_dict', {})
+            has_residual = any('residual_weight' in k or 'residual_projection' in k for k in state_dict.keys())
+            model_config['use_residual'] = has_residual
+        
+        if 'training_args' not in checkpoint:
+            print("Using model parameters from checkpoint (partial configuration)")
+        
+    else:
+        # Old format - try to infer from filename
+        filename = os.path.basename(model_path)
+        parsed = parse_model_filename(filename)
+        
+        if parsed:
+            model_config['architecture'] = parsed['architecture']
+            config_flags = parsed['config_flags']
+            
+            # Apply config flags
+            if config_flags['no_norm']:
+                model_config['norm_type'] = 'none'
+            elif config_flags['norm_type']:
+                model_config['norm_type'] = config_flags['norm_type']
+                
+            model_config['norm_position'] = config_flags['norm_position']
+            model_config['norm_skip_first'] = config_flags['norm_skip_first']
+            model_config['use_residual'] = not config_flags['no_residual']
+            model_config['use_advanced_scheduler'] = config_flags['use_advanced_scheduler']
+            model_config['phi_knots'] = config_flags['phi_knots']
+            model_config['Phi_knots'] = config_flags['Phi_knots']
+            
+            print("WARNING: Old checkpoint format - configuration inferred from filename")
+            print("Some settings may be incorrect. Consider retraining with latest code.")
+        else:
+            print("ERROR: Could not determine model configuration!")
+            return None, None
+    
+    return checkpoint, model_config
+
+
+def auto_discover_and_select_model(args, mode_name):
+    """Auto-discover models and select the best one for the given mode.
+    
+    Returns:
+        tuple: (model_path, model_config) or (None, None) if no suitable model found
+    """
+    print(f"Searching for trained models...")
     models = discover_models()
     
     if not models:
         print("No trained models found in current directory.")
-        print(f"Will use default architecture: {MNIST_CONFIG['architecture']}")
+        print(f"Please train a model first using: python sn_mnist.py --mode train")
         return None, None
     
-    if len(models) == 1:
-        # Only one architecture found, use it
-        arch_str = list(models.keys())[0]
-        model_info = models[arch_str]
-        architecture = [int(x) for x in arch_str.split("-")]
-        epochs = model_info["epochs"]
+    # If user specified architecture, filter to matching models
+    if args.arch:
+        arch_str = args.arch
+        matching_models = {k: v for k, v in models.items() if v['arch_str'] == arch_str}
         
-        print(f"Auto-detected model: architecture={architecture}, epochs={epochs}")
-        print(f"Found files: {', '.join(model_info['files'])}")
-        return architecture, epochs
+        if not matching_models:
+            print(f"No models found with architecture {arch_str}")
+            print(f"Available architectures: {[v['arch_str'] for v in models.values()]}")
+            return None, None
+        
+        models = matching_models
+    
+    # If only one model configuration exists, use it
+    if len(models) == 1:
+        config_key = list(models.keys())[0]
+        model_info = models[config_key]
+        
+        print(f"\nAuto-detected model configuration:")
+        print(f"  Architecture: {model_info['architecture']}")
+        print(f"  Epochs: {model_info['epochs']}")
+        if model_info['config_suffix']:
+            print(f"  Config suffix: '{model_info['config_suffix']}'")
+        else:
+            print(f"  Config: default")
+        print(f"  Files: {', '.join(model_info['files'])}")
+        
+        # Construct the filename
+        arch_str = model_info['arch_str']
+        epochs = model_info['epochs']
+        config_suffix = model_info['config_suffix']
+        
+        # Try _best variant first
+        best_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}_best.pth"
+        regular_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
+        
+        if os.path.exists(best_filename):
+            model_path = best_filename
+            print(f"Using best checkpoint: {best_filename}")
+        elif os.path.exists(regular_filename):
+            model_path = regular_filename
+            print(f"Using checkpoint: {regular_filename}")
+        else:
+            print(f"ERROR: Expected model files not found!")
+            return None, None
+            
+        # Load and extract full configuration
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        checkpoint, model_config = load_checkpoint_and_extract_config(model_path, device)
+        
+        if checkpoint is None:
+            print(f"ERROR: Could not load model from {model_path}")
+            return None, None
+            
+        return model_path, model_config
     
     else:
-        # Multiple architectures found
-        print(f"\nFound {len(models)} different model architectures:")
-        for arch_str, info in sorted(models.items()):
-            arch_list = [int(x) for x in arch_str.split("-")]
-            print(f"  - Architecture: 784 -> {arch_list} -> 10 (epochs={info['epochs']})")
-            print(f"    Files: {', '.join(info['files'])}")
+        # Multiple models found
+        print(f"\nFound {len(models)} different model configurations:")
         
-        print(f"\nPlease specify which architecture to use with --arch")
-        print(f"Example: python sn_mnist.py --mode {mode_name} --arch {list(models.keys())[0]}")
+        # Sort by architecture string for consistent ordering
+        sorted_models = sorted(models.items(), key=lambda x: x[0])
+        
+        for i, (config_key, info) in enumerate(sorted_models, 1):
+            config_desc = []
+            flags = info['config_flags']
+            
+            if flags.get('no_residual'):
+                config_desc.append("no residual")
+            if flags.get('no_norm'):
+                config_desc.append("no normalization")
+            elif flags.get('norm_type') and flags['norm_type'] != 'batch':
+                config_desc.append(f"{flags['norm_type']} norm")
+            if flags.get('norm_position') != 'after':
+                config_desc.append(f"norm {flags['norm_position']}")
+            if flags.get('norm_first'):
+                config_desc.append("norm first block")
+            elif not flags.get('norm_skip_first', True):
+                config_desc.append("norm all blocks")
+            if flags.get('use_advanced_scheduler'):
+                config_desc.append("advanced scheduler")
+            if flags.get('phi_knots') != MNIST_CONFIG['phi_knots']:
+                config_desc.append(f"phi_knots={flags['phi_knots']}")
+            if flags.get('Phi_knots') != MNIST_CONFIG['Phi_knots']:
+                config_desc.append(f"Phi_knots={flags['Phi_knots']}")
+            
+            config_str = f" ({', '.join(config_desc)})" if config_desc else " (default config)"
+            
+            print(f"  {i}. Architecture: 784 -> {info['architecture']} -> 10")
+            print(f"     Epochs: {info['epochs']}{config_str}")
+            print(f"     Files: {', '.join(info['files'])}")
+            print()
+        
+        # Check if user provided a model index
+        if hasattr(args, 'model_index') and args.model_index:
+            idx = args.model_index - 1
+            if 0 <= idx < len(sorted_models):
+                config_key, info = sorted_models[idx]
+                print(f"Using model #{args.model_index} as requested")
+                
+                # Continue with this model (similar code as single model case)
+                arch_str = info['arch_str']
+                epochs = info['epochs']
+                config_suffix = info['config_suffix']
+                
+                best_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}_best.pth"
+                regular_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
+                
+                if os.path.exists(best_filename):
+                    model_path = best_filename
+                elif os.path.exists(regular_filename):
+                    model_path = regular_filename
+                else:
+                    print(f"ERROR: Expected model files not found!")
+                    return None, None
+                    
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                checkpoint, model_config = load_checkpoint_and_extract_config(model_path, device)
+                
+                if checkpoint is None:
+                    print(f"ERROR: Could not load model from {model_path}")
+                    return None, None
+                    
+                return model_path, model_config
+            else:
+                print(f"\nERROR: Invalid model index {args.model_index} (must be 1-{len(sorted_models)})")
+                return None, None
+        
+        print("Multiple model configurations found!")
+        print("Please select a model by:")
+        print(f"  1. Specifying architecture: python sn_mnist.py --mode {mode_name} --arch {sorted_models[0][1]['arch_str']}")
+        print(f"  2. Using model index: python sn_mnist.py --mode {mode_name} --model-index 1")
+        print("  3. Removing unwanted model files to leave only one configuration")
+        
         return None, None
 
 
@@ -418,7 +695,8 @@ def test_model(model, test_loader, device):
     return accuracy
 
 
-def print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_size, lr, final_norm_skip_first):
+def print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_size, lr, 
+                        effective_norm_type, norm_position, final_norm_skip_first, use_residual):
     """Print configuration summary."""
     print(f"Using device: {args.device if args.device != 'auto' else 'cuda' if torch.cuda.is_available() else 'cpu'}")
     print(f"Mode: {args.mode}")
@@ -430,50 +708,15 @@ def print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_
     print(f"Seed: {args.seed}")
     print(f"Theoretical domains: {CONFIG.get('use_theoretical_domains', True)}")
     print(f"Domain safety margin: {CONFIG.get('domain_safety_margin', 0.0)}")
-    print(f"Residual connections: {'enabled' if CONFIG.get('use_residual_weights', True) else 'disabled'}")
+    print(f"Residual connections: {'enabled' if use_residual else 'disabled'}")
     
-    # Determine effective normalization
-    if args.no_norm:
+    if effective_norm_type == 'none':
         print("Normalization: disabled")
-    elif args.norm_type:
-        print(f"Normalization: {args.norm_type} (position: {args.norm_position}, skip_first: {final_norm_skip_first})")
     else:
-        print(f"Normalization: {CONFIG.get('norm_type', 'batch')} (position: {args.norm_position}, skip_first: {final_norm_skip_first})")
+        print(f"Normalization: {effective_norm_type} (position: {norm_position}, skip_first: {final_norm_skip_first})")
     
     print(f"Scheduler: {'PlateauAwareCosineAnnealingLR' if CONFIG.get('use_advanced_scheduler', False) else 'Adam (fixed LR)'}")
     print()
-
-
-def load_checkpoint_and_get_model_params(model_path, device, args):
-    """Load checkpoint and extract model parameters.
-    
-    Returns:
-        tuple: (checkpoint, model_params_dict)
-    """
-    if not os.path.exists(model_path):
-        return None, None
-    
-    checkpoint = torch.load(model_path, map_location=device)
-    
-    # For new format checkpoints with model_params
-    if isinstance(checkpoint, dict) and 'model_params' in checkpoint:
-        model_params = checkpoint['model_params'].copy()
-        
-        # Override with command-line args if explicitly provided
-        # But preserve critical architecture parameters from checkpoint
-        if args.phi_knots is not None:
-            model_params['phi_knots'] = args.phi_knots
-        if args.Phi_knots is not None:
-            model_params['Phi_knots'] = args.Phi_knots
-            
-        print("Using model configuration from checkpoint:")
-        print(f"  Architecture: {model_params['architecture']}")
-        print(f"  Normalization: {model_params['norm_type']} (skip_first: {model_params['norm_skip_first']})")
-        
-        return checkpoint, model_params
-    else:
-        # Old format - return None for model_params
-        return checkpoint, None
 
 
 def train_mnist(args):
@@ -529,7 +772,9 @@ def train_mnist(args):
         final_norm_skip_first = args.norm_skip_first if hasattr(args, 'norm_skip_first') else CONFIG.get('norm_skip_first', True)
     
     # Print configuration
-    print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_size, lr, final_norm_skip_first)
+    print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_size, lr,
+                       effective_norm_type, args.norm_position, final_norm_skip_first,
+                       CONFIG.get('use_residual_weights', True))
     
     # Initialize model
     model = MNISTSprecherNet(
@@ -564,6 +809,11 @@ def train_mnist(args):
     if os.path.exists(model_path) and args.retrain:
         os.remove(model_path)
         print(f"Deleted existing model file: {model_path}")
+        # Also remove _best variant if it exists
+        best_path = model_path.replace('.pth', '_best.pth')
+        if os.path.exists(best_path):
+            os.remove(best_path)
+            print(f"Deleted existing best model file: {best_path}")
         if os.path.exists(data_dir):
             shutil.rmtree(data_dir)
             print(f"Deleted existing data directory: {data_dir}")
@@ -691,6 +941,22 @@ def train_mnist(args):
                     'norm_type': effective_norm_type,
                     'norm_position': args.norm_position,
                     'norm_skip_first': final_norm_skip_first
+                },
+                # SAVE COMPLETE TRAINING ARGS FOR ROBUSTNESS
+                'training_args': {
+                    'no_residual': args.no_residual,
+                    'no_norm': args.no_norm,
+                    'norm_type': args.norm_type,
+                    'norm_position': args.norm_position,
+                    'norm_first': args.norm_first if hasattr(args, 'norm_first') else False,
+                    'norm_skip_first': args.norm_skip_first if hasattr(args, 'norm_skip_first') else True,
+                    'use_advanced_scheduler': args.use_advanced_scheduler,
+                    'phi_knots': args.phi_knots,
+                    'Phi_knots': args.Phi_knots,
+                    'epochs': epochs,
+                    'seed': args.seed,
+                    'batch_size': batch_size,
+                    'lr': lr
                 }
             }
             
@@ -815,32 +1081,30 @@ def train_mnist(args):
 
 def test_mnist(args):
     """Testing mode."""
-    # Try to auto-discover architecture if not specified
-    discovered_arch, discovered_epochs = auto_discover_architecture(args, "test")
+    # Auto-discover and select model
+    model_path, model_config = auto_discover_and_select_model(args, "test")
     
-    # Get configuration values
-    if discovered_arch is not None:
-        architecture = discovered_arch
-        epochs = discovered_epochs
-    else:
-        # Use defaults or exit if discovery failed with multiple architectures
-        if args.arch is None and discovered_arch is None:
-            # Either no models found or multiple architectures found
-            architecture = MNIST_CONFIG['architecture']
-            epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
-            # If we're using defaults because of multiple architectures, exit
-            models = discover_models()
-            if len(models) > 1:
-                return
-        else:
-            architecture = [int(x) for x in args.arch.split(",")]
-            epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+    if model_path is None or model_config is None:
+        # User needs to make a selection or no models found
+        return
     
-    phi_knots = args.phi_knots if args.phi_knots else MNIST_CONFIG['phi_knots']
-    Phi_knots = args.Phi_knots if args.Phi_knots else MNIST_CONFIG['Phi_knots']
+    # Extract configuration
+    architecture = model_config['architecture']
+    phi_knots = model_config.get('phi_knots', MNIST_CONFIG['phi_knots'])
+    Phi_knots = model_config.get('Phi_knots', MNIST_CONFIG['Phi_knots'])
+    norm_type = model_config.get('norm_type', 'batch')
+    norm_position = model_config.get('norm_position', 'after')
+    norm_skip_first = model_config.get('norm_skip_first', True)
+    use_residual = model_config.get('use_residual', True)
     batch_size = args.batch_size if args.batch_size else MNIST_CONFIG['batch_size']
-    model_file = args.model_file if args.model_file else MNIST_CONFIG['model_file']
     data_dir = args.data_dir if args.data_dir else MNIST_CONFIG['data_directory']
+    
+    # Update CONFIG based on discovered settings
+    CONFIG['use_residual_weights'] = use_residual
+    if args.debug_domains:
+        CONFIG['debug_domains'] = True
+    if args.track_violations:
+        CONFIG['track_domain_violations'] = True
     
     # Determine device
     if args.device == "auto":
@@ -848,85 +1112,24 @@ def test_mnist(args):
     else:
         device = torch.device(args.device)
     
-    # Handle configuration
-    if args.debug_domains:
-        CONFIG['debug_domains'] = True
-    if args.track_violations:
-        CONFIG['track_domain_violations'] = True
-    if args.no_residual:
-        CONFIG['use_residual_weights'] = False
-    if args.no_norm:
-        CONFIG['use_normalization'] = False
-    
-    # Construct model filename to match training convention
-    config_suffix = get_config_suffix(args, CONFIG)
-    arch_str = "-".join(map(str, architecture))
-    model_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
-    model_path = os.path.join(os.path.dirname(model_file), model_filename)
-    
-    # Try to find the model file (check for _best variant first)
-    best_model_path = model_path.replace('.pth', '_best.pth')
-    if os.path.exists(best_model_path):
-        model_path = best_model_path
-        print(f"Loading best model from {model_path}")
-    elif os.path.exists(model_path):
-        print(f"Loading model from {model_path}")
-    else:
-        print(f"Error: Model file {model_path} not found. Please train first.")
-        return
-    
-    # Load checkpoint and get model parameters
-    checkpoint, model_params = load_checkpoint_and_get_model_params(model_path, device, args)
-    if checkpoint is None:
-        print(f"Error: Could not load model from {model_path}")
-        return
-    
-    # Use checkpoint parameters if available, otherwise fall back to command-line args
-    if model_params is not None:
-        # Use saved parameters
-        effective_norm_type = model_params['norm_type']
-        final_norm_skip_first = model_params['norm_skip_first']
-        norm_position = model_params['norm_position']
-        architecture = model_params['architecture']
-        phi_knots = model_params['phi_knots']
-        Phi_knots = model_params['Phi_knots']
-    else:
-        # Fall back to command-line arguments for old checkpoints
-        print("WARNING: Old checkpoint format. Using command-line arguments for model configuration.")
-        print("Make sure to use the same flags as during training!")
-        
-        # Determine effective normalization
-        if CONFIG.get('use_normalization', True) and not args.no_norm:
-            if args.norm_type == "none":
-                effective_norm_type = "none"
-            elif args.norm_type is not None:
-                effective_norm_type = args.norm_type
-            else:
-                effective_norm_type = CONFIG.get('norm_type', 'batch')
-        else:
-            effective_norm_type = "none"
-        
-        # Handle the --norm_first flag
-        if args.norm_first:
-            final_norm_skip_first = False
-        else:
-            final_norm_skip_first = args.norm_skip_first if hasattr(args, 'norm_skip_first') else CONFIG.get('norm_skip_first', True)
-        
-        norm_position = args.norm_position
-    
+    print(f"\nLoading model from: {model_path}")
     print(f"Using device: {device}")
     print(f"Architecture: 784 -> {architecture} -> 10")
-    print(f"Normalization: {effective_norm_type} (skip_first: {final_norm_skip_first})")
+    print(f"Normalization: {norm_type} (position: {norm_position}, skip_first: {norm_skip_first})")
+    print(f"Residual connections: {'enabled' if use_residual else 'disabled'}")
     print()
+    
+    # Load checkpoint
+    checkpoint = torch.load(model_path, map_location=device)
     
     # Initialize model with the correct configuration
     model = MNISTSprecherNet(
         architecture=architecture,
         phi_knots=phi_knots,
         Phi_knots=Phi_knots,
-        norm_type=effective_norm_type,
+        norm_type=norm_type,
         norm_position=norm_position,
-        norm_skip_first=final_norm_skip_first
+        norm_skip_first=norm_skip_first
     ).to(device)
     
     # Load the model state
@@ -970,30 +1173,24 @@ def test_mnist(args):
 
 def infer_mnist(args):
     """Inference mode."""
-    # Try to auto-discover architecture if not specified
-    discovered_arch, discovered_epochs = auto_discover_architecture(args, "infer")
+    # Auto-discover and select model
+    model_path, model_config = auto_discover_and_select_model(args, "infer")
     
-    # Get configuration values
-    if discovered_arch is not None:
-        architecture = discovered_arch
-        epochs = discovered_epochs
-    else:
-        # Use defaults or exit if discovery failed with multiple architectures
-        if args.arch is None and discovered_arch is None:
-            # Either no models found or multiple architectures found
-            architecture = MNIST_CONFIG['architecture']
-            epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
-            # If we're using defaults because of multiple architectures, exit
-            models = discover_models()
-            if len(models) > 1:
-                return
-        else:
-            architecture = [int(x) for x in args.arch.split(",")]
-            epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+    if model_path is None or model_config is None:
+        # User needs to make a selection or no models found
+        return
     
-    phi_knots = args.phi_knots if args.phi_knots else MNIST_CONFIG['phi_knots']
-    Phi_knots = args.Phi_knots if args.Phi_knots else MNIST_CONFIG['Phi_knots']
-    model_file = args.model_file if args.model_file else MNIST_CONFIG['model_file']
+    # Extract configuration
+    architecture = model_config['architecture']
+    phi_knots = model_config.get('phi_knots', MNIST_CONFIG['phi_knots'])
+    Phi_knots = model_config.get('Phi_knots', MNIST_CONFIG['Phi_knots'])
+    norm_type = model_config.get('norm_type', 'batch')
+    norm_position = model_config.get('norm_position', 'after')
+    norm_skip_first = model_config.get('norm_skip_first', True)
+    use_residual = model_config.get('use_residual', True)
+    
+    # Update CONFIG based on discovered settings
+    CONFIG['use_residual_weights'] = use_residual
     
     # Determine device
     if args.device == "auto":
@@ -1001,80 +1198,22 @@ def infer_mnist(args):
     else:
         device = torch.device(args.device)
     
-    # Handle configuration
-    if args.no_residual:
-        CONFIG['use_residual_weights'] = False
-    if args.no_norm:
-        CONFIG['use_normalization'] = False
-    
-    # Construct model filename to match training convention
-    config_suffix = get_config_suffix(args, CONFIG)
-    arch_str = "-".join(map(str, architecture))
-    model_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
-    model_path = os.path.join(os.path.dirname(model_file), model_filename)
-    
-    # Try to find the model file (check for _best variant first)
-    best_model_path = model_path.replace('.pth', '_best.pth')
-    if os.path.exists(best_model_path):
-        model_path = best_model_path
-        print(f"Loading best model from {model_path}")
-    elif os.path.exists(model_path):
-        print(f"Loading model from {model_path}")
-    else:
-        print(f"Error: Model file {model_path} not found. Please train first.")
-        return
-    
-    # Load checkpoint and get model parameters
-    checkpoint, model_params = load_checkpoint_and_get_model_params(model_path, device, args)
-    if checkpoint is None:
-        print(f"Error: Could not load model from {model_path}")
-        return
-    
-    # Use checkpoint parameters if available, otherwise fall back to command-line args
-    if model_params is not None:
-        # Use saved parameters
-        effective_norm_type = model_params['norm_type']
-        final_norm_skip_first = model_params['norm_skip_first']
-        norm_position = model_params['norm_position']
-        architecture = model_params['architecture']
-        phi_knots = model_params['phi_knots']
-        Phi_knots = model_params['Phi_knots']
-    else:
-        # Fall back to command-line arguments for old checkpoints
-        print("WARNING: Old checkpoint format. Using command-line arguments for model configuration.")
-        print("Make sure to use the same flags as during training!")
-        
-        # Determine effective normalization
-        if CONFIG.get('use_normalization', True) and not args.no_norm:
-            if args.norm_type == "none":
-                effective_norm_type = "none"
-            elif args.norm_type is not None:
-                effective_norm_type = args.norm_type
-            else:
-                effective_norm_type = CONFIG.get('norm_type', 'batch')
-        else:
-            effective_norm_type = "none"
-        
-        # Handle the --norm_first flag
-        if args.norm_first:
-            final_norm_skip_first = False
-        else:
-            final_norm_skip_first = args.norm_skip_first if hasattr(args, 'norm_skip_first') else CONFIG.get('norm_skip_first', True)
-        
-        norm_position = args.norm_position
-    
+    print(f"\nLoading model from: {model_path}")
     print(f"Using device: {device}")
     print(f"Image file: {args.image}")
     print()
+    
+    # Load checkpoint
+    checkpoint = torch.load(model_path, map_location=device)
     
     # Initialize model with the correct configuration
     model = MNISTSprecherNet(
         architecture=architecture,
         phi_knots=phi_knots,
         Phi_knots=Phi_knots,
-        norm_type=effective_norm_type,
+        norm_type=norm_type,
         norm_position=norm_position,
-        norm_skip_first=final_norm_skip_first
+        norm_skip_first=norm_skip_first
     ).to(device)
     
     # Load the model state
@@ -1113,7 +1252,7 @@ def infer_mnist(args):
     image_tensor = torch.from_numpy(image_data).float().unsqueeze(0).to(device)
     
     # For BatchNorm in training mode, we need a diverse batch
-    if effective_norm_type in ['batch', 'layer']:
+    if norm_type in ['batch', 'layer']:
         # Try to use saved batch from checkpoint for diversity
         if isinstance(checkpoint, dict) and 'x_train' in checkpoint:
             # Use saved batch from checkpoint
@@ -1143,13 +1282,13 @@ def infer_mnist(args):
                     batch_list.append(noisy_image)
             
             image_tensor = torch.stack(batch_list)
-        
+    
     # Inference
     with torch.no_grad():
         output = model(image_tensor)
         
         # Take only the first result (our target image)
-        if effective_norm_type in ['batch', 'layer']:
+        if norm_type in ['batch', 'layer']:
             output = output[0:1]  # Take first sample
             
         probabilities = torch.softmax(output, dim=1)
@@ -1166,30 +1305,24 @@ def infer_mnist(args):
 
 def plot_mnist_splines(args):
     """Plot splines mode."""
-    # Try to auto-discover architecture if not specified
-    discovered_arch, discovered_epochs = auto_discover_architecture(args, "plot")
+    # Auto-discover and select model
+    model_path, model_config = auto_discover_and_select_model(args, "plot")
     
-    # Get configuration values
-    if discovered_arch is not None:
-        architecture = discovered_arch
-        epochs = discovered_epochs
-    else:
-        # Use defaults or exit if discovery failed with multiple architectures
-        if args.arch is None and discovered_arch is None:
-            # Either no models found or multiple architectures found
-            architecture = MNIST_CONFIG['architecture']
-            epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
-            # If we're using defaults because of multiple architectures, exit
-            models = discover_models()
-            if len(models) > 1:
-                return
-        else:
-            architecture = [int(x) for x in args.arch.split(",")]
-            epochs = args.epochs if args.epochs else MNIST_CONFIG['epochs']
+    if model_path is None or model_config is None:
+        # User needs to make a selection or no models found
+        return
     
-    phi_knots = args.phi_knots if args.phi_knots else MNIST_CONFIG['phi_knots']
-    Phi_knots = args.Phi_knots if args.Phi_knots else MNIST_CONFIG['Phi_knots']
-    model_file = args.model_file if args.model_file else MNIST_CONFIG['model_file']
+    # Extract configuration
+    architecture = model_config['architecture']
+    phi_knots = model_config.get('phi_knots', MNIST_CONFIG['phi_knots'])
+    Phi_knots = model_config.get('Phi_knots', MNIST_CONFIG['Phi_knots'])
+    norm_type = model_config.get('norm_type', 'batch')
+    norm_position = model_config.get('norm_position', 'after')
+    norm_skip_first = model_config.get('norm_skip_first', True)
+    use_residual = model_config.get('use_residual', True)
+    
+    # Update CONFIG based on discovered settings
+    CONFIG['use_residual_weights'] = use_residual
     
     # Determine device
     if args.device == "auto":
@@ -1197,81 +1330,23 @@ def plot_mnist_splines(args):
     else:
         device = torch.device(args.device)
     
-    # Handle configuration
-    if args.no_residual:
-        CONFIG['use_residual_weights'] = False
-    if args.no_norm:
-        CONFIG['use_normalization'] = False
-    
-    # Construct model filename to match training convention
-    config_suffix = get_config_suffix(args, CONFIG)
-    arch_str = "-".join(map(str, architecture))
-    model_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
-    model_path = os.path.join(os.path.dirname(model_file), model_filename)
-    
-    # Try to find the model file (check for _best variant first)
-    best_model_path = model_path.replace('.pth', '_best.pth')
-    if os.path.exists(best_model_path):
-        model_path = best_model_path
-        print(f"Loading best model from {model_path}")
-    elif os.path.exists(model_path):
-        print(f"Loading model from {model_path}")
-    else:
-        print(f"Error: Model file {model_path} not found. Please train first.")
-        return
-    
-    # Load checkpoint and get model parameters
-    checkpoint, model_params = load_checkpoint_and_get_model_params(model_path, device, args)
-    if checkpoint is None:
-        print(f"Error: Could not load model from {model_path}")
-        return
-    
-    # Use checkpoint parameters if available, otherwise fall back to command-line args
-    if model_params is not None:
-        # Use saved parameters
-        effective_norm_type = model_params['norm_type']
-        final_norm_skip_first = model_params['norm_skip_first']
-        norm_position = model_params['norm_position']
-        architecture = model_params['architecture']
-        phi_knots = model_params['phi_knots']
-        Phi_knots = model_params['Phi_knots']
-    else:
-        # Fall back to command-line arguments for old checkpoints
-        print("WARNING: Old checkpoint format. Using command-line arguments for model configuration.")
-        print("Make sure to use the same flags as during training!")
-        
-        # Determine effective normalization
-        if CONFIG.get('use_normalization', True) and not args.no_norm:
-            if args.norm_type == "none":
-                effective_norm_type = "none"
-            elif args.norm_type is not None:
-                effective_norm_type = args.norm_type
-            else:
-                effective_norm_type = CONFIG.get('norm_type', 'batch')
-        else:
-            effective_norm_type = "none"
-        
-        # Handle the --norm_first flag
-        if args.norm_first:
-            final_norm_skip_first = False
-        else:
-            final_norm_skip_first = args.norm_skip_first if hasattr(args, 'norm_skip_first') else CONFIG.get('norm_skip_first', True)
-        
-        norm_position = args.norm_position
-    
+    print(f"\nLoading model from: {model_path}")
     print(f"Using device: {device}")
     print(f"Architecture: 784 -> {architecture} -> 10")
     print(f"phi knots: {phi_knots}, Phi knots: {Phi_knots}")
     print()
+    
+    # Load checkpoint
+    checkpoint = torch.load(model_path, map_location=device)
     
     # Initialize model with the correct configuration
     model = MNISTSprecherNet(
         architecture=architecture,
         phi_knots=phi_knots,
         Phi_knots=Phi_knots,
-        norm_type=effective_norm_type,
+        norm_type=norm_type,
         norm_position=norm_position,
-        norm_skip_first=final_norm_skip_first
+        norm_skip_first=norm_skip_first
     ).to(device)
     
     # Load the model state
@@ -1311,9 +1386,24 @@ def plot_mnist_splines(args):
     # Create save path
     if args.save_plots:
         os.makedirs("plots", exist_ok=True)
-        config_suffix = get_config_suffix(args, CONFIG)
-        arch_str = "-".join(map(str, architecture))
-        save_path = f"plots/mnist_splines-{arch_str}{config_suffix}.png"
+        # Extract config suffix from model path
+        filename = os.path.basename(model_path)
+        if '_best.pth' in filename:
+            base_filename = filename.replace('_best.pth', '')
+        else:
+            base_filename = filename.replace('.pth', '')
+        # Extract arch and config from base filename
+        parts = base_filename.split('-', 2)  # Split into at most 3 parts
+        if len(parts) >= 3:
+            arch_part = parts[1]  # Architecture part
+            config_part = parts[2].replace('epochs', '')  # Remove 'epochs' suffix
+            if config_part.endswith(str(model_config.get('epochs', ''))):
+                config_part = config_part[:-len(str(model_config.get('epochs', '')))]
+        else:
+            arch_part = "-".join(map(str, architecture))
+            config_part = ""
+        
+        save_path = f"plots/mnist_splines-{arch_part}{config_part}.png"
     else:
         save_path = None
     
@@ -1358,9 +1448,22 @@ def plot_mnist_splines(args):
             
         # Re-create save path since we're now saving
         os.makedirs("plots", exist_ok=True)
-        config_suffix = get_config_suffix(args, CONFIG)
-        arch_str = "-".join(map(str, architecture))
-        save_path = f"plots/mnist_splines-{arch_str}{config_suffix}.png"
+        if not save_path:
+            filename = os.path.basename(model_path)
+            if '_best.pth' in filename:
+                base_filename = filename.replace('_best.pth', '')
+            else:
+                base_filename = filename.replace('.pth', '')
+            parts = base_filename.split('-', 2)
+            if len(parts) >= 3:
+                arch_part = parts[1]
+                config_part = parts[2].replace('epochs', '')
+                if config_part.endswith(str(model_config.get('epochs', ''))):
+                    config_part = config_part[:-len(str(model_config.get('epochs', '')))]
+            else:
+                arch_part = "-".join(map(str, architecture))
+                config_part = ""
+            save_path = f"plots/mnist_splines-{arch_part}{config_part}.png"
         
         # Re-run plotting logic with the safe backend
         fig = plot_results(
