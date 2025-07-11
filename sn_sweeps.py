@@ -39,10 +39,10 @@ from rich.table import Table, Column
 SWEEPS = {
     # (dataset, arch, phi_knots, Phi_knots, epochs, extra_args)
     "toy_1d_poly": {
-        "dataset": "toy_1d_poly", "arch": "15,15,15,15", "phi_knots": 20, "Phi_knots": 20, "epochs": 3000
+        "dataset": "toy_1d_poly", "arch": "5", "phi_knots": 100, "Phi_knots": 100, "epochs": 3000, "extra_args": ["--norm_first"]
     },
     "toy_1d_complex": {
-        "dataset": "toy_1d_complex", "arch": "10", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000, "extra_args": ["--norm_first"]
+        "dataset": "toy_1d_complex", "arch": "2,2,2,2,2", "phi_knots": 40, "Phi_knots": 40, "epochs": 1000, "extra_args": ["--norm_first"]
     },
     "toy_2d": {
         "dataset": "toy_2d", "arch": "10,10,10", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000
@@ -57,7 +57,7 @@ SWEEPS = {
         "dataset": "special_bessel", "arch": "10,10,10", "phi_knots": 50, "Phi_knots": 50, "epochs": 4000
     },
     "feynman_uv": {
-        "dataset": "feynman_uv", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 8000
+        "dataset": "feynman_uv", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 10000
     },
     "poisson": {
         "dataset": "poisson", "arch": "15,15", "phi_knots": 25, "Phi_knots": 25, "epochs": 4000
