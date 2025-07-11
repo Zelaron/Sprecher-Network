@@ -32,6 +32,9 @@ python sn_experiments.py
 
 # Customize the architecture, save plots, and disable residual connections
 python sn_experiments.py --dataset toy_2d --arch 10,10,10 --epochs 5000 --save_plots --no_residual
+
+# High-dimensional example (100D input) with normalization on first block
+python sn_experiments.py --dataset toy_100d --arch 100 --epochs 100 --norm_first
 ```
 
 ### MNIST Classification
@@ -40,19 +43,19 @@ Sprecher Networks can also handle classification tasks. Use the `sn_mnist.py` sc
 
 ```
 # Train a new model on MNIST for 5 epochs
-python sn_mnist.py --mode train --arch 100 --epochs 5 --save_plots
+python sn_mnist.py --mode train --arch 100 --epochs 5 --save_plots --norm_first
 
-# Test the accuracy of an existing model
-python sn_mnist.py --mode test --arch 100
+# Test the accuracy (automatically uses saved configuration)
+python sn_mnist.py --mode test
 
 # Run inference on a single image
 python sn_mnist.py --mode infer --image digit.png
 
 # Visualize the learned splines from a trained model
-python sn_mnist.py --mode plot --arch 100
+python sn_mnist.py --mode plot
 ```
 
-A single-layer network with architecture 784→[100]→10 achieves ~92% accuracy with only ~45,000 parameters.
+A single-layer network with architecture 784→[100]→10 achieves ~92% accuracy with only ~45,000 parameters. Test/infer/plot modes automatically load the model configuration from the checkpoint.
 
 ### Batch Experiments
 
@@ -132,7 +135,7 @@ These flags control the core model and training for both main scripts.
 - `--no_norm`: A simple flag to disable all normalization.
 - `--norm_type [batch|layer|none]`: Specify the type of normalization to use.
 - `--norm_position [before|after]`: Position normalization relative to Sprecher blocks.
-- `--norm_skip_first`: Apply normalization to the first block (by default it is skipped).
+- `--norm_first`: Enable normalization for the first block (recommended for high-dimensional inputs like MNIST).
 
 **Script-Specific Arguments**
 
