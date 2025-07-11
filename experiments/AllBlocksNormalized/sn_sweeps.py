@@ -48,7 +48,7 @@ SWEEPS = {
         "dataset": "toy_2d", "arch": "10,10,10,10", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000
     },
     "toy_2d_vector": {
-        "dataset": "toy_2d_vector", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 1500
+        "dataset": "toy_2d_vector", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000
     },
     "toy_100d": {
         "dataset": "toy_100d", "arch": "100", "phi_knots": 15, "Phi_knots": 15, "epochs": 100
