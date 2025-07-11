@@ -14,10 +14,6 @@ class TheoreticalRange:
     
     def __repr__(self):
         return f"TheoreticalRange({self.min:.3f}, {self.max:.3f})"
-    
-    def contains(self, value):
-        """Check if a value is within this range."""
-        return self.min <= value <= self.max
 
 
 class PhiCodomainParams(nn.Module):
