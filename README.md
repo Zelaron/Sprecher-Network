@@ -36,7 +36,7 @@ python sn_experiments.py --dataset toy_2d --arch 10,10,10 --epochs 5000 --save_p
 
 ### MNIST Classification
 
-Sprecher Networks can also handle classification tasks. Use the `sn_mnist.py` script with the `--mode` flag:
+Sprecher Networks can also handle classification tasks. Use the `sn_mnist.py` script with the `--mode` flag (with the other flags generally being optional):
 
 ```
 # Train a new model on MNIST for 5 epochs
