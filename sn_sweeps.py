@@ -48,16 +48,16 @@ SWEEPS = {
         "dataset": "toy_2d", "arch": "10,10,10,10", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000
     },
     "toy_2d_vector": {
-        "dataset": "toy_2d_vector", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 1500
+        "dataset": "toy_2d_vector", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 2000
     },
     "toy_100d": {
         "dataset": "toy_100d", "arch": "100", "phi_knots": 15, "Phi_knots": 15, "epochs": 100
     },
     "special_bessel": {
-        "dataset": "special_bessel", "arch": "2,2,2", "phi_knots": 50, "Phi_knots": 50, "epochs": 12000
+        "dataset": "special_bessel", "arch": "5,5,5", "phi_knots": 50, "Phi_knots": 50, "epochs": 8000
     },
     "feynman_uv": {
-        "dataset": "feynman_uv", "arch": "2,2,2", "phi_knots": 100, "Phi_knots": 100, "epochs": 12000
+        "dataset": "feynman_uv", "arch": "10,10", "phi_knots": 100, "Phi_knots": 100, "epochs": 3000
     },
     "poisson": {
         "dataset": "poisson", "arch": "15,15", "phi_knots": 25, "Phi_knots": 25, "epochs": 4000
@@ -325,21 +325,21 @@ def main():
                                 elif info.get('status') == 'success':
                                     progress.update(
                                         task_id,
-                                        description=f"[green]✓[/green] {name}",
+                                        description=f"[green][OK][/green] {name}",
                                         epoch_info="[green]completed[/green]",
                                         completed=100
                                     )
                                 elif info.get('status') == 'failed':
                                     progress.update(
                                         task_id,
-                                        description=f"[red]✗[/red] {name}",
+                                        description=f"[red][FAIL][/red] {name}",
                                         epoch_info="[red]failed[/red]",
                                         completed=100
                                     )
                                 elif info.get('status') == 'crashed':
                                     progress.update(
                                         task_id,
-                                        description=f"[red]⚠[/red] {name}",
+                                        description=f"[red][WARN][/red] {name}",
                                         epoch_info="[red]crashed[/red]",
                                         completed=100
                                     )
@@ -387,21 +387,21 @@ def main():
                         if info.get('status') == 'success':
                             progress.update(
                                 task_id,
-                                description=f"[green]✓[/green] {name}",
+                                description=f"[green][OK][/green] {name}",
                                 epoch_info="[green]completed[/green]",
                                 completed=100
                             )
                         elif info.get('status') == 'failed':
                             progress.update(
                                 task_id,
-                                description=f"[red]✗[/red] {name}",
+                                description=f"[red][FAIL][/red] {name}",
                                 epoch_info="[red]failed[/red]",
                                 completed=100
                             )
                         elif info.get('status') == 'crashed':
                             progress.update(
                                 task_id,
-                                description=f"[red]⚠[/red] {name}",
+                                description=f"[red][WARN][/red] {name}",
                                 epoch_info="[red]crashed[/red]",
                                 completed=100
                             )

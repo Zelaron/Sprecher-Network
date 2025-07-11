@@ -621,7 +621,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
                         print(f"    var changed: {var_changed}")
                         print(f"    tracked changed: {tracked_changed} ({before['tracked'].item()} -> {module.num_batches_tracked.item()})")
                     else:
-                        print(f"  ✓ {name} stats unchanged")
+                        print(f"  [OK] {name} stats unchanged")
                     break
         
         # If we have saved training data, verify the checkpoint
@@ -675,7 +675,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
                     print(f"  Layer {i}: phi coeffs=[{phi_coeffs.min():.6f}, {phi_coeffs.max():.6f}], "
                           f"Phi coeffs=[{Phi_coeffs.min():.6f}, {Phi_coeffs.max():.6f}]")
             else:
-                print("✓ Checkpoint verification passed - outputs match!")
+                print("[OK] Checkpoint verification passed - outputs match!")
             
             # Replace current training data with saved data for consistency
             x_train = saved_x
