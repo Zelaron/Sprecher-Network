@@ -44,6 +44,8 @@ def parse_args():
                       help="Position of normalization relative to blocks (default: after)")
     parser.add_argument("--norm_skip_first", action="store_true", default=True,
                       help="Skip normalization for the first block (default: True)")
+    parser.add_argument("--norm_first", action="store_true",
+                      help="Enable normalization for the first block (overrides norm_skip_first)")
     
     # Debugging/testing arguments
     parser.add_argument("--no_load_best", action="store_true",
@@ -155,7 +157,11 @@ def main():
     print(f"Residual connections: {'enabled' if CONFIG.get('use_residual_weights', True) else 'disabled'}")
     if effective_norm_type != "none":
         norm_position = args.norm_position if args.norm_position else CONFIG.get('norm_position', 'after')
-        norm_skip_first = args.norm_skip_first if hasattr(args, 'norm_skip_first') else CONFIG.get('norm_skip_first', True)
+        # Handle the --norm_first flag
+        if args.norm_first:
+            norm_skip_first = False
+        else:
+            norm_skip_first = args.norm_skip_first if hasattr(args, 'norm_skip_first') else CONFIG.get('norm_skip_first', True)
         print(f"Normalization: {effective_norm_type} (position: {norm_position}, skip_first: {norm_skip_first})")
     else:
         print("Normalization: disabled")
@@ -169,7 +175,11 @@ def main():
     # Determine final normalization parameters
     if effective_norm_type != "none":
         final_norm_position = args.norm_position if args.norm_position else CONFIG.get('norm_position', 'after')
-        final_norm_skip_first = args.norm_skip_first if hasattr(args, 'norm_skip_first') else CONFIG.get('norm_skip_first', True)
+        # Handle the --norm_first flag for final parameters
+        if args.norm_first:
+            final_norm_skip_first = False
+        else:
+            final_norm_skip_first = args.norm_skip_first if hasattr(args, 'norm_skip_first') else CONFIG.get('norm_skip_first', True)
     else:
         final_norm_position = args.norm_position  # Keep for backward compatibility
         final_norm_skip_first = args.norm_skip_first
@@ -217,7 +227,7 @@ def main():
     print(f"Max difference from saved: {max_diff:.4e}")
     
     if max_diff < 1e-8:
-        print("[OK] Perfect consistency achieved! The snapshot is completely isolated.")
+        print("✓ Perfect consistency achieved! The snapshot is completely isolated.")
     
     # Keep model in training mode for consistency with checkpoint
     # model.eval()  # Commented out - we maintain the mode from training
