@@ -30,8 +30,8 @@ Run a single experiment on a toy dataset:
 # Run with default settings (toy_1d_poly dataset)
 python sn_experiments.py
 
-# Customize the architecture and training, then save plots
-python sn_experiments.py --dataset toy_2d --arch 10,10,10 --epochs 5000 --save_plots
+# Customize the architecture, save plots, and disable residual connections
+python sn_experiments.py --dataset toy_2d --arch 10,10,10 --epochs 5000 --save_plots --no_residual
 ```
 
 ### MNIST Classification
@@ -93,20 +93,30 @@ The main configuration options are accessible through `sn_core/config.py`:
 
 ```
 CONFIG = {
-    'train_phi_codomain': True,   # Enable trainable codomain for Φ splines
-    'use_residual_weights': True, # Enable residual connections
-    'seed': 45,                   # Random seed for reproducibility
-    'use_advanced_scheduler': False, # Option for plateau-aware learning rate scheduling
-    'weight_decay': 1e-6,         # L2 regularization
-    'max_grad_norm': 1.0,         # Gradient clipping threshold
+    # Model settings
+    'train_phi_codomain': True,
+    'use_residual_weights': True,
+    'seed': 45,
+
+    # Normalization settings (defaults when not overridden by CLI flags)
+    'use_normalization': True,      # Master switch for normalization
+    'norm_type': 'batch',           # Default type: 'batch' or 'layer'
+    'norm_position': 'after',       # Default position: 'before' or 'after' blocks
+    'norm_skip_first': True,        # Skip normalization for the first block
+
+    # Training settings
+    'use_advanced_scheduler': False,
+    'weight_decay': 1e-6,
+    'max_grad_norm': 1.0,
 }
 ```
 
 ### Command Line Arguments
 
-Arguments are specific to each script.
+**Common Arguments (`sn_experiments.py` & `sn_mnist.py`)**
 
-**`sn_experiments.py` & `sn_mnist.py` (Common arguments):**
+These flags control the core model and training for both main scripts.
+
 - `--arch`: Hidden layer widths as comma-separated values (e.g., `15,15`).
 - `--phi_knots` / `--Phi_knots`: Number of knots for φ and Φ splines.
 - `--epochs`: Number of training epochs.
@@ -114,15 +124,30 @@ Arguments are specific to each script.
 - `--device`: Device selection (`auto`/`cpu`/`cuda`).
 - `--save_plots`: Save visualizations to files in the `plots/` directory.
 - `--no_show`: Suppress interactive plot display (useful for batch runs).
+- `--use_advanced_scheduler`: Use the `PlateauAwareCosineAnnealingLR` scheduler.
 
-**`sn_mnist.py` (Specific arguments):**
-- `--mode [train|test|infer|plot]`: Selects the operation mode.
+**Feature & Normalization Control (Common)**
 
-**`sn_sweeps.py` (Specific arguments):**
-- `--list`: Lists all available sweep names.
-- `--sweeps [NAME ...]`: Specifies which sweeps to run (default: all).
-- `--parallel N`: Number of sweeps to run in parallel.
-- `--fail-fast`: Stops all jobs if a single sweep fails.
+- `--no_residual`: Disables residual connections.
+- `--no_norm`: A simple flag to disable all normalization.
+- `--norm_type [batch|layer|none]`: Specify the type of normalization to use.
+- `--norm_position [before|after]`: Position normalization relative to Sprecher blocks.
+- `--norm_skip_first`: Apply normalization to the first block (by default it is skipped).
+
+**Script-Specific Arguments**
+
+- **For `sn_mnist.py`:**
+    - `--mode [train|test|infer|plot]`: Selects the operation mode.
+    - `--batch_size`: The training and testing batch size.
+    - `--lr`: The learning rate for the Adam optimizer.
+    - `--retrain`: Deletes an existing model file and retrains from scratch.
+    - `--image`: The image file to use for inference mode.
+
+- **For `sn_sweeps.py`:**
+    - `--list`: Lists all available sweep names.
+    - `--sweeps [NAME ...]`: Specifies which sweeps to run (default: all).
+    - `--parallel N`: Number of sweeps to run in parallel.
+    - `--fail-fast`: Stops all jobs if a single sweep fails.
 
 ## Implementation Structure
 
@@ -151,11 +176,12 @@ The monotonic inner splines φ use a log-space parameterization to ensure strict
 ### Training Features
 
 The implementation includes several advanced training techniques:
-- Gradient clipping to handle the challenging optimization landscape created by shared splines.
-- Plateau-aware cosine annealing that increases learning rate when stuck in local minima.
-- Optional residual connections that adapt based on dimensional compatibility.
-- Regularization options for smoother splines and better generalization.
-- Extremely robust checkpointing to ensure plots perfectly reflect the best model state.
+- **Flexible Normalization:** Supports Batch Norm and Layer Norm, which can be strategically placed to stabilize training and improve convergence.
+- **Gradient Clipping:** Handles the challenging optimization landscape created by shared splines.
+- **Plateau-Aware Cosine Annealing:** Increases learning rate when stuck in local minima.
+- **Optional Residual Connections:** Adapt based on dimensional compatibility.
+- **Regularization Options:** For smoother splines and better generalization.
+- **Extremely Robust Checkpointing:** Ensures plots perfectly reflect the best model state.
 
 ## Visualization
 
@@ -195,15 +221,13 @@ DATASETS["my_dataset"] = MyDataset()
 
 ### Modifying Architecture Defaults
 
-While the architecture is flexible through command-line arguments, you can modify default behaviors by editing the configuration in `sn_core/config.py`. This includes training parameters, regularization strengths, and architectural choices like residual connections.
+While the architecture is flexible through command-line arguments, you can modify default behaviors by editing the configuration in `sn_core/config.py`. This includes training parameters, regularization strengths, and architectural choices like residual connections or normalization.
 
 ## Theoretical Background
 
 Sprecher Networks are based on David Sprecher's 1965 constructive proof showing that any continuous multivariate function can be represented as a composition of univariate functions. The key formula for a single Sprecher block is:
 
-```
-y_q = Φ(Σᵢ λᵢ φ(xᵢ + ηq) + q)
-```
+`y_q = Φ(Σᵢ λᵢ φ(xᵢ + ηq) + q)`
 
 where φ is a monotonic function, Φ is a general continuous function, λ are mixing weights (vectors, not matrices), and η is a learnable shift parameter. The index q provides the necessary diversity despite the extreme parameter sharing.
 
