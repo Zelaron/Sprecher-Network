@@ -176,12 +176,12 @@ The monotonic inner splines φ use a log-space parameterization to ensure strict
 ### Training Features
 
 The implementation includes several advanced training techniques:
-- **Flexible Normalization:** Supports Batch Norm and Layer Norm, which can be strategically placed to stabilize training and improve convergence.
-- **Gradient Clipping:** Handles the challenging optimization landscape created by shared splines.
-- **Plateau-Aware Cosine Annealing:** Increases learning rate when stuck in local minima.
-- **Optional Residual Connections:** Adapt based on dimensional compatibility.
-- **Regularization Options:** For smoother splines and better generalization.
-- **Extremely Robust Checkpointing:** Ensures plots perfectly reflect the best model state.
+- **Flexible normalization:** Supports batch norm and layer norm, which can be strategically placed to stabilize training and improve convergence.
+- **Gradient clipping:** Handles the challenging optimization landscape created by shared splines.
+- **Plateau-aware cosine annealing:** Increases learning rate when stuck in local minima.
+- **Optional residual connections:** Adapt based on dimensional compatibility.
+- **Regularization options:** For smoother splines and better generalization.
+- **Robust checkpointing:** Ensures plots perfectly reflect the best model state.
 
 ## Visualization
 
