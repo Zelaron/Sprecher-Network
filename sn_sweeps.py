@@ -58,7 +58,7 @@ SWEEPS = {
         "dataset": "special_bessel", "arch": "10,10,10", "phi_knots": 50, "Phi_knots": 50, "epochs": 4000
     },
     "feynman_uv": {
-        "dataset": "feynman_uv", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 4000
+        "dataset": "feynman_uv", "arch": "15,15", "phi_knots": 100, "Phi_knots": 100, "epochs": 8000
     },
     "poisson": {
         "dataset": "poisson", "arch": "15,15", "phi_knots": 25, "Phi_knots": 25, "epochs": 4000
