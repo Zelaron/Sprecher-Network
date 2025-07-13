@@ -277,6 +277,19 @@ def plot_results(model, layers, dataset=None, save_path=None,
     print(f"DEBUG in plot_results: model.training = {model.training}")
     print(f"DEBUG in plot_results: number of layers = {len(layers)}")
     
+    # --- FIX STARTS HERE ---
+    # Determine the target device for plotting. Use the device of the first parameter.
+    # If the model has no parameters, default to CPU.
+    try:
+        device = next(model.parameters()).device
+    except StopIteration:
+        device = torch.device('cpu') # Fallback if model has no parameters
+    
+    # Explicitly move the entire model (including buffers) to the determined device.
+    # This is the definitive fix for device mismatches caused by `copy.deepcopy`.
+    model.to(device)
+    # --- FIX ENDS HERE ---
+
     # Keep model in its current mode for consistent BatchNorm behavior
     # was_training = model.training
     # model.eval()  # Removed to maintain training mode
@@ -361,10 +374,10 @@ def plot_results(model, layers, dataset=None, save_path=None,
             block_label = f"Block {j}"
             ax_phi.set_title(f"{block_label} $\\phi^{{({j})}}$", fontsize=11)
             with torch.no_grad():
-                device = next(layer.phi.parameters()).device
+                phi_device = next(layer.phi.parameters()).device
                 # Get current domain of phi
                 x_min, x_max = layer.phi.in_min, layer.phi.in_max
-                x_vals = torch.linspace(x_min, x_max, 200).to(device)
+                x_vals = torch.linspace(x_min, x_max, 200).to(phi_device)
                 y_vals = layer.phi(x_vals)
             ax_phi.plot(x_vals.cpu(), y_vals.cpu(), 'c-', linewidth=2)
             ax_phi.grid(True, alpha=0.3)
@@ -383,8 +396,8 @@ def plot_results(model, layers, dataset=None, save_path=None,
             with torch.no_grad():
                 # Get current domain of Phi
                 in_min, in_max = layer.Phi.in_min, layer.Phi.in_max
-                device = next(layer.Phi.parameters()).device
-                x_vals = torch.linspace(in_min, in_max, 200).to(device)
+                Phi_device = next(layer.Phi.parameters()).device
+                x_vals = torch.linspace(in_min, in_max, 200).to(Phi_device)
                 y_vals = layer.Phi(x_vals)
                 
                 # Get codomain info if trainable
@@ -415,12 +428,11 @@ def plot_results(model, layers, dataset=None, save_path=None,
             # Use training data if provided, otherwise create test points
             if x_train is not None and y_train is not None:
                 print("DEBUG: Using provided training data for plotting")
-                device = next(model.parameters()).device
                 x_test = x_train.to(device)
                 y_true = y_train.to(device)
             else:
                 print("DEBUG: Generating new test data for plotting")
-                x_test, y_true = dataset.sample(200, device=next(model.parameters()).device)
+                x_test, y_true = dataset.sample(200, device=device)
             
             print(f"DEBUG: About to evaluate model on test data")
             print(f"DEBUG: Test data shape: {x_test.shape}")
@@ -454,7 +466,7 @@ def plot_results(model, layers, dataset=None, save_path=None,
         elif input_dim == 2:
             # For 2D input, create grid for surface plots
             n = 50
-            points, y_true = dataset.sample(n * n, device=next(model.parameters()).device)
+            points, y_true = dataset.sample(n * n, device=device)
             
             if final_dim == 1:
                 # For scalar output from 2D input, plot target and prediction as surfaces
@@ -501,7 +513,7 @@ def plot_results(model, layers, dataset=None, save_path=None,
             gs_bottom = gridspec.GridSpec(1, 1)
             gs_bottom.update(left=0.05, right=0.95, top=gs_bottom_top, bottom=0.05)
             ax_func = fig.add_subplot(gs_bottom[0, 0])
-            plot_high_dim_function(ax_func, model, dataset, next(model.parameters()).device)
+            plot_high_dim_function(ax_func, model, dataset, device)
     
     if save_path:
         fig.savefig(save_path, dpi=240, bbox_inches='tight')

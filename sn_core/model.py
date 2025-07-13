@@ -587,8 +587,14 @@ class SprecherLayerBlock(nn.Module):
     
     def forward(self, x, x_original=None):
         # Regular forward pass (no domain updates here anymore!)
+
+        # --- FIX STARTS HERE ---
+        # Ensure the q_values buffer is on the same device as the input tensor.
+        # This is a robust fix for device mismatches that can occur after `copy.deepcopy`.
+        q_on_device = self.q_values.to(x.device)
+
         x_expanded = x.unsqueeze(-1)  # shape: (batch_size, d_in, 1)
-        q = self.q_values.view(1, 1, -1)  # shape: (1, 1, d_out)
+        q = q_on_device.view(1, 1, -1)  # shape: (1, 1, d_out)
         
         # Apply translation by η * q (part of Sprecher's construction)
         shifted = x_expanded + self.eta * q
@@ -598,7 +604,9 @@ class SprecherLayerBlock(nn.Module):
         
         # Weight by λ (now a VECTOR) and sum over input dimension
         weighted = phi_out * self.lambdas.view(1, -1, 1)  # Broadcast: (1, d_in, 1)
-        s = weighted.sum(dim=1) + Q_VALUES_FACTOR * self.q_values  # shape: (batch_size, d_out)
+        # Use the device-corrected q_on_device tensor here as well
+        s = weighted.sum(dim=1) + Q_VALUES_FACTOR * q_on_device  # shape: (batch_size, d_out)
+        # --- FIX ENDS HERE ---
         
         # Pass through the general outer spline Φ
         activated = self.Phi(s)
