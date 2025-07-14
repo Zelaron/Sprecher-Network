@@ -63,7 +63,8 @@ def parse_args():
     
     # Lambda initialization method
     parser.add_argument("--lambda_init", type=str, default="baseline",
-                      choices=["baseline", "fixed_variance", "uniform", "sparse", "balanced", "theory_inspired", "adaptive"],
+                      choices=["baseline", "fixed_variance", "uniform", "sparse", "balanced", "theory_inspired", "adaptive",
+                               "opt_uniform", "orthogonal", "golden", "hadamard", "adaptive_uniform", "sobol", "theory_uniform"],
                       help="Lambda initialization method (default: baseline)")
     
     return parser.parse_args()

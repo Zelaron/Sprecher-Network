@@ -502,6 +502,61 @@ class SprecherLayerBlock(nn.Module):
             scale = 1.0 / (1.0 + 0.1 * layer_num)
             return torch.randn(d_in) * scale
         
+        elif method == 'opt_uniform':
+            # Optimized uniform: scale based on input dimension
+            scale = np.sqrt(3.0 / d_in)  # Variance = 1/d_in like baseline, but uniform
+            return torch.zeros(d_in).uniform_(-scale, scale)
+        
+        elif method == 'orthogonal':
+            # Use orthogonal initialization adapted for Sprecher networks
+            if d_in == 1:
+                return torch.ones(1)
+            else:
+                # Create orthogonal matrix and take first row
+                Q = torch.nn.init.orthogonal_(torch.empty(d_in, d_in))
+                lambdas = Q[0, :] * np.sqrt(d_in)  # Scale to maintain magnitude
+                return lambdas
+        
+        elif method == 'golden':
+            # Use golden ratio for irrational spacing
+            phi = (1 + np.sqrt(5)) / 2  # Golden ratio
+            lambdas = torch.tensor([phi**i for i in range(d_in)], dtype=torch.float32)
+            lambdas = (lambdas - lambdas.mean()) / (lambdas.std() + 1e-8)  # Normalize
+            lambdas *= np.sqrt(2.0 / d_in)  # Scale appropriately
+            return lambdas
+        
+        elif method == 'hadamard':
+            # Use Hadamard-like patterns for balanced positive/negative contributions
+            lambdas = torch.tensor([(-1)**i / (i+1) for i in range(d_in)], dtype=torch.float32)
+            lambdas *= np.sqrt(d_in)  # Scale to maintain reasonable range
+            return lambdas
+        
+        elif method == 'adaptive_uniform':
+            # Combine uniform with layer-aware scaling
+            base_scale = np.sqrt(3.0 / d_in)
+            layer_scale = 1.0 / (1.0 + 0.2 * layer_num)  # Decay with depth
+            return torch.zeros(d_in).uniform_(-base_scale * layer_scale, base_scale * layer_scale)
+        
+        elif method == 'sobol':
+            # Use quasi-random Sobol-inspired sequence
+            sobol_vals = torch.tensor([(i * 0.618033988749895) % 1.0 for i in range(d_in)], dtype=torch.float32)
+            lambdas = 2 * sobol_vals - 1  # Map to [-1, 1]
+            lambdas *= np.sqrt(3.0 / d_in)  # Scale appropriately
+            return lambdas
+        
+        elif method == 'theory_uniform':
+            # Combine theoretical insights with uniform distribution
+            if d_in == 2:
+                # Use exact Sprecher values for 2D
+                return torch.tensor([1.0, np.sqrt(2)])
+            else:
+                # Use uniform with theoretically-motivated bounds
+                scale = 1.0 / np.sqrt(d_in)
+                lambdas = torch.zeros(d_in).uniform_(-scale, scale)
+                # Add small linear independence term
+                lambdas += torch.linspace(-0.1, 0.1, d_in) * scale
+                return lambdas
+        
         else:
             raise ValueError(f"Unknown lambda initialization method: {method}")
     
