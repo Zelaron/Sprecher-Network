@@ -435,9 +435,11 @@ class SprecherLayerBlock(nn.Module):
         # Weight VECTOR (not matrix!) - TRUE SPRECHER IMPLEMENTATION
         # Only d_in weights, shared across all d_out outputs
         self.lambdas = nn.Parameter(torch.randn(d_in) * np.sqrt(2.0 / d_in))
+        # self.lambdas = nn.Parameter(torch.empty(d_in).uniform_(-1.0/d_in, 1.0/d_in)) # Works better for >2 blocks?
         
         # Initialize eta to a reasonable value based on d_out
         self.eta = nn.Parameter(torch.tensor(1.0 / (d_out + 10)))
+        # self.eta = nn.Parameter(torch.tensor(1.0 / max(d_out, 5))) # Works better for >2 blocks?
         
         # Q-values for indexing
         self.register_buffer('q_values', torch.arange(d_out, dtype=torch.float32))

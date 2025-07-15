@@ -36,6 +36,10 @@ CONFIG = {
     
     # Checkpoint debugging
     'debug_checkpoint_loading': False,  # Enable detailed logging during checkpoint operations
+    
+    # Parameter export settings
+    'export_params': False,  # Can be False, True/'all', or list of param types
+    'export_params_dir': 'params',  # Directory for parameter exports
 }
 
 # MNIST-specific settings
@@ -53,3 +57,6 @@ MNIST_CONFIG = {
 
 # Mathematical constants (not configuration)
 Q_VALUES_FACTOR = 1.0
+
+# Parameter categories for export
+PARAM_CATEGORIES = ['lambda', 'eta', 'spline', 'residual', 'codomain', 'norm', 'output']

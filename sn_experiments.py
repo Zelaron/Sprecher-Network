@@ -5,7 +5,7 @@ import argparse
 import torch
 import numpy as np
 import matplotlib
-from sn_core import train_network, get_dataset, plot_results, plot_loss_curve
+from sn_core import train_network, get_dataset, plot_results, plot_loss_curve, export_parameters, parse_param_types
 
 
 def parse_args():
@@ -60,6 +60,11 @@ def parse_args():
                       help="Disable normalization (default: enabled with batch norm)")
     parser.add_argument("--use_advanced_scheduler", action="store_true",
                       help="Use PlateauAwareCosineAnnealingLR scheduler (default: disabled)")
+    
+    # Parameter export argument
+    parser.add_argument("--export_params", nargs='?', const='all', default=None,
+                      help="Export parameters to text file. Options: all, or comma-separated: "
+                           "lambda,eta,spline,residual,codomain,norm,output")
     
     return parser.parse_args()
 
@@ -130,6 +135,10 @@ def main():
     if args.use_advanced_scheduler:
         CONFIG['use_advanced_scheduler'] = True
     
+    # Handle parameter export configuration
+    if args.export_params is not None:
+        CONFIG['export_params'] = args.export_params
+    
     # Determine effective normalization settings
     if CONFIG.get('use_normalization', True) and not args.no_norm:
         # Use CONFIG defaults or argparser overrides
@@ -166,6 +175,15 @@ def main():
     else:
         print("Normalization: disabled")
     print(f"Scheduler: {'PlateauAwareCosineAnnealingLR' if CONFIG.get('use_advanced_scheduler', False) else 'Adam (fixed LR)'}")
+    
+    # Print parameter export configuration
+    if CONFIG.get('export_params'):
+        if CONFIG['export_params'] == 'all' or CONFIG['export_params'] is True:
+            print("Parameter export: all parameters")
+        else:
+            param_types = parse_param_types(CONFIG['export_params'])
+            print(f"Parameter export: {', '.join(param_types)}")
+    
     if args.no_load_best:
         print("WARNING: Best model loading disabled (--no_load_best)")
     if args.bn_recalc_on_load:
@@ -277,6 +295,37 @@ def main():
         print(f"Output on training points: {output_debug.cpu().numpy().flatten()[:5]}")
     
     print("=" * 60)
+    
+    # Export parameters if requested
+    if CONFIG.get('export_params'):
+        # Create params directory if saving
+        os.makedirs(CONFIG.get('export_params_dir', 'params'), exist_ok=True)
+        
+        # Build filename similar to plots
+        prefix = "OneVar" if dataset.input_dim == 1 else f"{dataset.input_dim}Vars"
+        arch_str = "-".join(map(str, architecture)) if len(architecture) > 0 else "None"
+        config_suffix = get_config_suffix(args, CONFIG)
+        params_filename = f"{prefix}-{args.dataset}-{arch_str}-{args.epochs}-epochs-outdim{dataset.output_dim}{config_suffix}-params.txt"
+        params_path = os.path.join(CONFIG.get('export_params_dir', 'params'), params_filename)
+        
+        # Prepare dataset info
+        dataset_info = {
+            'name': args.dataset,
+            'architecture': architecture,
+            'input_dim': dataset.input_dim,
+            'output_dim': dataset.output_dim,
+            'epochs': args.epochs
+        }
+        
+        # Prepare checkpoint info
+        checkpoint_info = {
+            'epoch': plotting_snapshot.get('epoch', 'Unknown'),
+            'loss': plotting_snapshot.get('loss', 'Unknown')
+        }
+        
+        # Export parameters
+        export_parameters(model, CONFIG['export_params'], params_path, 
+                         dataset_info=dataset_info, checkpoint_info=checkpoint_info)
     
     # --- Graceful Fallback Plotting Logic ---
     try:
