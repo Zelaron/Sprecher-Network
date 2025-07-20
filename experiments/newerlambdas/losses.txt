@@ -1,7 +1,0 @@
-lambda_init,dataset,architecture,epochs,final_loss
-baseline,toy_2d,10-10-10,5000,6.6233e+00fixed_variance,toy_2d,10-10-10,5000,1.6489e+00
-uniform,toy_2d,10-10-10,5000,6.7313e-01
-sparse,toy_2d,10-10-10,5000,4.6651e+00
-balanced,toy_2d,10-10-10,5000,5.1677e+00
-theory_inspired,toy_2d,10-10-10,5000,3.6985e-01
-adaptive,toy_2d,10-10-10,5000,4.7820e+00
