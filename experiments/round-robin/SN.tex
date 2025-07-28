@@ -118,7 +118,7 @@ Several optional components can enhance the basic Sprecher block:
     w_q^{\text{bcast}} \cdot x_{q \bmod d_{\mathrm{in}}} & \text{if } d_{\mathrm{in}} < d_{\mathrm{out}}\\
     \sum_{i: i \bmod d_{\mathrm{out}} = q} w_i^{\text{pool}} \cdot x_i & \text{if } d_{\mathrm{in}} > d_{\mathrm{out}}
     \end{cases}$$
-    where $w^{\text{bcast}} \in \mathbb{R}^{d_{\mathrm{out}}}$ and $w^{\text{pool}} \in \mathbb{R}^{d_{\mathrm{in}}}$ are learnable weight vectors. Remarkably, empirical evidence suggests these constrained connections often perform as well as or better than full projections, despite using orders of magnitude fewer parameters.
+    where $w^{\text{bcast}} \in \mathbb{R}^{d_{\mathrm{out}}}$ and $w^{\text{pool}} \in \mathbb{R}^{d_{\mathrm{in}}}$ are learnable weight vectors. Remarkably, empirical evidence suggests these constrained connections in many cases perform as well as or better than full projections, despite using orders of magnitude fewer parameters.
     
     \item \textbf{Normalization:} Batch or layer normalization can be applied to block outputs to improve training stability, particularly in deeper networks. See Section \ref{sec:normalization} for details.
     
