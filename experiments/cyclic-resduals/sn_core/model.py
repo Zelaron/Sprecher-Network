@@ -466,7 +466,7 @@ class SprecherLayerBlock(nn.Module):
                 # Use a balanced assignment to ensure each output gets similar number of inputs
                 assignments = []
                 for i in range(d_in):
-                    # Round-robin assignment
+                    # Cyclic assignment
                     assignments.append(i % d_out)
                 self.register_buffer('pooling_assignment', torch.tensor(assignments, dtype=torch.long))
                 
