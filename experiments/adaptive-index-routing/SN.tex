@@ -117,7 +117,7 @@ Several optional components can enhance the basic Sprecher block:
     $$s_i = \frac{i}{\max(d_{\mathrm{in}}, d_{\mathrm{out}}) - 1} + \epsilon_i, \quad i = 0, \ldots, \max(d_{\mathrm{in}}, d_{\mathrm{out}})-1$$
     where $\epsilon_i \sim \mathcal{N}(0, \sigma^2)$ with small $\sigma$ (e.g., 0.01) for symmetry breaking.
     
-    For the pooling case ($d_{\mathrm{in}} > d_{\mathrm{out}}$), the routing matrix $R \in \mathbb{R}^{d_{\mathrm{in}} \times d_{\mathrm{out}}}$ is computed as:
+    For the pooling case ($d_{\mathrm{in}} > d_{\mathrm{out}}$), the routing matrix $R \in \mathbb{R}^{d_{\mathrm{in}} \times d_{\mathrm{out}}}$ is computed from these soft indices as:
     $$R_{ij} = \frac{\exp(-\tau \cdot (s_i \cdot (d_{\mathrm{out}}-1) - j)^2)}{\sum_{k=0}^{d_{\mathrm{out}}-1} \exp(-\tau \cdot (s_i \cdot (d_{\mathrm{out}}-1) - k)^2)}$$
     where $\tau > 0$ is the temperature parameter controlling the sharpness of assignments. The residual contribution becomes:
     $$[B^{(\ell)}_{\text{res}}(\mathbf{x})]_q = [B^{(\ell)}(\mathbf{x})]_q + \begin{cases}
