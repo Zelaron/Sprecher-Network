@@ -106,7 +106,7 @@ In a network with multiple layers, each Sprecher block (indexed by $\ell=1, \dot
 Several optional components can enhance the basic Sprecher block:
 
 \begin{itemize}
-    \item \textbf{Residual connections (Learnable Soft Routing):} When enabled, residual connections adapt to dimensional mismatches through a learnable routing mechanism that maintains architectural coherence while providing gradient highways. The implementation varies based on dimensional relationships:
+    \item \textbf{Residual connections (Learnable soft routing):} When enabled, residual connections adapt to dimensional mismatches through a learnable routing mechanism that maintains architectural coherence while providing gradient highways. The implementation varies based on dimensional relationships:
     \begin{itemize}
         \item \textbf{Identity} ($d_{\mathrm{in}} = d_{\mathrm{out}}$): Uses a single learnable scalar weight $w_{\text{res}}$:
         $$[B^{(\ell)}_{\text{res}}(\mathbf{x})]_q = [B^{(\ell)}(\mathbf{x})]_q + w_{\text{res}} \cdot x_q$$

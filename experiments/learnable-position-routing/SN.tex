@@ -106,7 +106,7 @@ In a network with multiple layers, each Sprecher block (indexed by $\ell=1, \dot
 Several optional components can enhance the basic Sprecher block:
 
 \begin{itemize}
-    \item \textbf{Residual connections (Learnable Routing):} When enabled, residual connections are implemented using a learnable soft routing mechanism that adapts to dimensional mismatches while maintaining parameter efficiency. This approach uses learnable position parameters that define soft assignments between input and output dimensions:
+    \item \textbf{Residual connections (Learnable routing):} When enabled, residual connections are implemented using a learnable soft routing mechanism that adapts to dimensional mismatches while maintaining parameter efficiency. This approach uses learnable position parameters that define soft assignments between input and output dimensions:
     \begin{itemize}
         \item \textbf{Identity} ($d_{\mathrm{in}} = d_{\mathrm{out}}$): Uses a single learnable scalar weight $w_{\text{res}}$
         \item \textbf{Broadcasting} ($d_{\mathrm{in}} < d_{\mathrm{out}}$): Each output dimension learns a position in the input space, with soft selection via Gaussian kernels
