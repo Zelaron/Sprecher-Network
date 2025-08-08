@@ -61,10 +61,17 @@ def parse_args():
     parser.add_argument("--use_advanced_scheduler", action="store_true",
                       help="Use PlateauAwareCosineAnnealingLR scheduler (default: disabled)")
     
+    # Lateral mixing arguments
+    parser.add_argument("--no_lateral", action="store_true",
+                      help="Disable lateral mixing connections (default: enabled)")
+    parser.add_argument("--lateral_type", type=str, default=None,
+                      choices=["cyclic", "bidirectional"],
+                      help="Type of lateral mixing (default: from CONFIG)")
+    
     # Parameter export argument
     parser.add_argument("--export_params", nargs='?', const='all', default=None,
                       help="Export parameters to text file. Options: all, or comma-separated: "
-                           "lambda,eta,spline,residual,codomain,norm,output")
+                           "lambda,eta,spline,residual,codomain,norm,output,lateral")
     
     return parser.parse_args()
 
@@ -82,6 +89,12 @@ def get_config_suffix(args, CONFIG):
     # Check residuals (default is enabled)
     if not CONFIG.get('use_residual_weights', True):
         parts.append("NoResidual")
+    
+    # Check lateral mixing (default is enabled)
+    if not CONFIG.get('use_lateral_mixing', True):
+        parts.append("NoLateral")
+    elif CONFIG.get('lateral_mixing_type', 'cyclic') != 'cyclic':
+        parts.append(f"Lateral{CONFIG['lateral_mixing_type'].capitalize()}")
     
     # Check scheduler (default is disabled)
     if CONFIG.get('use_advanced_scheduler', False):
@@ -135,6 +148,12 @@ def main():
     if args.use_advanced_scheduler:
         CONFIG['use_advanced_scheduler'] = True
     
+    # Handle lateral mixing configuration
+    if args.no_lateral:
+        CONFIG['use_lateral_mixing'] = False
+    if args.lateral_type is not None:
+        CONFIG['lateral_mixing_type'] = args.lateral_type
+    
     # Handle parameter export configuration
     if args.export_params is not None:
         CONFIG['export_params'] = args.export_params
@@ -164,6 +183,9 @@ def main():
     print(f"Theoretical domains: {CONFIG.get('use_theoretical_domains', True)}")
     print(f"Domain safety margin: {CONFIG.get('domain_safety_margin', 0.0)}")
     print(f"Residual connections: {'enabled' if CONFIG.get('use_residual_weights', True) else 'disabled'}")
+    print(f"Lateral mixing: {'enabled' if CONFIG.get('use_lateral_mixing', True) else 'disabled'}")
+    if CONFIG.get('use_lateral_mixing', True):
+        print(f"  Type: {CONFIG.get('lateral_mixing_type', 'cyclic')}")
     if effective_norm_type != "none":
         norm_position = args.norm_position if args.norm_position else CONFIG.get('norm_position', 'after')
         # Handle the --norm_first flag

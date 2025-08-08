@@ -162,8 +162,12 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
     eta_params = 0
     spline_params = 0
     residual_params = 0
+    residual_scalar_params = 0
+    residual_pooling_params = 0
+    residual_broadcast_params = 0
     codomain_params = 0
     norm_params = 0
+    lateral_params = 0  # NEW
     
     for name, param in model.named_parameters():
         if not param.requires_grad:
@@ -177,32 +181,57 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
         elif 'coeffs' in name or 'log_increments' in name:
             # Spline parameters
             spline_params += param.numel()
-        elif 'residual_weight' in name or 'residual_projection' in name:
+        elif 'residual_weight' in name:
+            # Scalar residual weight (same dimensions)
             if CONFIG['use_residual_weights']:
+                residual_scalar_params += param.numel()
+                residual_params += param.numel()
+        elif 'residual_pooling_weights' in name:
+            # Pooling weights (d_in > d_out)
+            if CONFIG['use_residual_weights']:
+                residual_pooling_params += param.numel()
+                residual_params += param.numel()
+        elif 'residual_broadcast_weights' in name:
+            # Broadcasting weights (d_in < d_out)
+            if CONFIG['use_residual_weights']:
+                residual_broadcast_params += param.numel()
                 residual_params += param.numel()
         elif 'phi_codomain_params' in name:
             if CONFIG['train_phi_codomain']:
                 codomain_params += param.numel()
         elif 'norm_layers' in name:
             norm_params += param.numel()
+        elif 'lateral' in name:  # NEW - count lateral mixing parameters
+            if CONFIG['use_lateral_mixing']:
+                lateral_params += param.numel()
     
     # Core parameters excluding residual and output params
     output_params = 2  # output_scale and output_bias
     
     if CONFIG['train_phi_codomain']:
-        total_params = lambda_params + eta_params + spline_params + residual_params + output_params + codomain_params + norm_params
+        total_params = lambda_params + eta_params + spline_params + residual_params + output_params + codomain_params + norm_params + lateral_params
     else:
-        total_params = lambda_params + eta_params + spline_params + residual_params + output_params + norm_params
+        total_params = lambda_params + eta_params + spline_params + residual_params + output_params + norm_params + lateral_params
     
     print(f"Dataset: {dataset} (input_dim={dataset.input_dim}, output_dim={dataset.output_dim})")
     print(f"Architecture: {architecture}")
     print(f"Normalization: {norm_type} (position: {norm_position}, skip_first: {norm_skip_first})")
+    if CONFIG['use_lateral_mixing']:  # NEW
+        print(f"Lateral mixing: {CONFIG['lateral_mixing_type']}")
     print(f"Total number of trainable parameters: {total_params}")
     print(f"  - Lambda weight VECTORS: {lambda_params} (TRUE SPRECHER!)")
     print(f"  - Eta shift parameters: {eta_params}")
     print(f"  - Spline parameters: {spline_params}")
     if CONFIG['use_residual_weights'] and residual_params > 0:
         print(f"  - Residual connection weights: {residual_params}")
+        if residual_scalar_params > 0:
+            print(f"    * Scalar weights (same dims): {residual_scalar_params}")
+        if residual_pooling_params > 0:
+            print(f"    * Pooling weights (d_in > d_out): {residual_pooling_params}")
+        if residual_broadcast_params > 0:
+            print(f"    * Broadcast weights (d_in < d_out): {residual_broadcast_params}")
+    if CONFIG['use_lateral_mixing'] and lateral_params > 0:  # NEW
+        print(f"  - Lateral mixing parameters: {lateral_params}")
     print(f"  - Output scale and bias: {output_params}")
     if CONFIG['train_phi_codomain'] and codomain_params > 0:
         print(f"  - Phi codomain parameters (cc, cr per block): {codomain_params}")
@@ -217,7 +246,9 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
              "lr": 0.01, "lr_scale": 1.0},  # Higher base LR for codomain params
             {"params": [p for n, p in model.named_parameters() if "output" in n], 
              "lr": 0.001, "lr_scale": 0.5},  # Medium LR for output params
-            {"params": [p for n, p in model.named_parameters() if "phi_codomain_params" not in n and "output" not in n], 
+            {"params": [p for n, p in model.named_parameters() if "lateral" in n],  # NEW
+             "lr": 0.005, "lr_scale": 0.8},  # Higher LR for lateral params to adapt quickly
+            {"params": [p for n, p in model.named_parameters() if "phi_codomain_params" not in n and "output" not in n and "lateral" not in n], 
              "lr": 0.001, "lr_scale": 0.3}  # Lower LR for spline params
         ]
         optimizer = torch.optim.AdamW(params, weight_decay=CONFIG['weight_decay'], betas=(0.9, 0.999))
@@ -232,11 +263,19 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
         )
     else:
         # Use original simple Adam optimizer setup
-        if CONFIG['train_phi_codomain']:
-            params = [
-                {"params": [p for n, p in model.named_parameters() if "phi_codomain_params" in n], "lr": 0.001},
-                {"params": [p for n, p in model.named_parameters() if "phi_codomain_params" not in n], "lr": 0.0003}
-            ]
+        if CONFIG['train_phi_codomain'] or CONFIG['use_lateral_mixing']:
+            params = []
+            if CONFIG['train_phi_codomain']:
+                params.append({"params": [p for n, p in model.named_parameters() if "phi_codomain_params" in n], "lr": 0.001})
+            if CONFIG['use_lateral_mixing']:  # NEW
+                params.append({"params": [p for n, p in model.named_parameters() if "lateral" in n], "lr": 0.0005})
+            # Add remaining parameters
+            excluded_names = []
+            if CONFIG['train_phi_codomain']:
+                excluded_names.append("phi_codomain_params")
+            if CONFIG['use_lateral_mixing']:
+                excluded_names.append("lateral")
+            params.append({"params": [p for n, p in model.named_parameters() if not any(exc in n for exc in excluded_names)], "lr": 0.0003})
         else:
             params = model.parameters()
         optimizer = torch.optim.Adam(params, weight_decay=1e-7)
@@ -785,8 +824,31 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
         if CONFIG['use_residual_weights']:
             if hasattr(layer, 'residual_weight') and layer.residual_weight is not None:
                 print(f"Block {idx}: residual_weight = {layer.residual_weight.item():.6f}")
-            elif hasattr(layer, 'residual_projection') and layer.residual_projection is not None:
-                print(f"Block {idx}: residual_projection weight shape = {tuple(layer.residual_projection.weight.shape)}")
+            elif hasattr(layer, 'residual_pooling_weights') and layer.residual_pooling_weights is not None:
+                print(f"Block {idx}: residual_pooling_weights shape = {tuple(layer.residual_pooling_weights.shape)}")
+                print(f"Block {idx}: residual_pooling_weights =")
+                print(layer.residual_pooling_weights.detach().cpu().numpy())
+                print(f"Block {idx}: pooling assignment = {layer.pooling_assignment.cpu().numpy()}")
+                print(f"Block {idx}: pooling counts = {layer.pooling_counts.cpu().numpy()}")
+            elif hasattr(layer, 'residual_broadcast_weights') and layer.residual_broadcast_weights is not None:
+                print(f"Block {idx}: residual_broadcast_weights shape = {tuple(layer.residual_broadcast_weights.shape)}")
+                print(f"Block {idx}: residual_broadcast_weights =")
+                print(layer.residual_broadcast_weights.detach().cpu().numpy())
+                print(f"Block {idx}: broadcast sources = {layer.broadcast_sources.cpu().numpy()}")
+        
+        # Print lateral mixing parameters if enabled
+        if CONFIG['use_lateral_mixing']:
+            if hasattr(layer, 'lateral_scale') and layer.lateral_scale is not None:
+                print(f"Block {idx}: lateral_scale = {layer.lateral_scale.item():.6f}")
+                if CONFIG['lateral_mixing_type'] == 'bidirectional':
+                    print(f"Block {idx}: lateral_weights_forward =")
+                    print(layer.lateral_weights_forward.detach().cpu().numpy())
+                    print(f"Block {idx}: lateral_weights_backward =")
+                    print(layer.lateral_weights_backward.detach().cpu().numpy())
+                else:
+                    print(f"Block {idx}: lateral_weights =")
+                    print(layer.lateral_weights.detach().cpu().numpy())
+        
         if CONFIG['train_phi_codomain']:
             if hasattr(layer, 'phi_codomain_params') and layer.phi_codomain_params is not None:
                 print(f"Block {idx}: Phi codomain center = {layer.phi_codomain_params.cc.item():.6f}")

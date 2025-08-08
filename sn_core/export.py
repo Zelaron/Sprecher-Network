@@ -96,6 +96,47 @@ def format_tensor(tensor, name="", indent="  ", max_per_line=8):
     return "\n".join(lines)
 
 
+def format_integer_tensor(tensor, name="", indent="  ", max_per_line=16):
+    """
+    Format an integer tensor for readable text output.
+    
+    Args:
+        tensor: PyTorch tensor with integer values
+        name: Optional name for the tensor
+        indent: Indentation string
+        max_per_line: Maximum values per line
+        
+    Returns:
+        Formatted string representation
+    """
+    if tensor is None:
+        return f"{indent}{name}: None\n" if name else f"{indent}None\n"
+    
+    # Convert to numpy for easier formatting
+    arr = tensor.detach().cpu().numpy()
+    
+    lines = []
+    if name:
+        lines.append(f"{indent}{name}:")
+        indent = indent + "  "
+    
+    # Format 1D integer array
+    lines.append(f"{indent}Shape: {arr.shape}")
+    if len(arr) <= max_per_line:
+        values_str = ", ".join(f"{int(v)}" for v in arr)
+        lines.append(f"{indent}Values: [{values_str}]")
+    else:
+        lines.append(f"{indent}Values: [")
+        for i in range(0, len(arr), max_per_line):
+            chunk = arr[i:i+max_per_line]
+            values_str = ", ".join(f"{int(v)}" for v in chunk)
+            suffix = "," if i + max_per_line < len(arr) else ""
+            lines.append(f"{indent}  {values_str}{suffix}")
+        lines.append(f"{indent}]")
+    
+    return "\n".join(lines)
+
+
 def export_parameters(model, param_types, save_path, dataset_info=None, checkpoint_info=None):
     """
     Export specified parameter types to a formatted text file.
@@ -191,19 +232,35 @@ def export_parameters(model, param_types, save_path, dataset_info=None, checkpoi
             lines.append(format_tensor(layer.Phi.coeffs, "Coefficients", "    "))
         lines.append("")
     
-    # Export Residual parameters
+    # Export Residual parameters (updated for node-centric approach)
     if 'residual' in categories and CONFIG['use_residual_weights']:
-        lines.append("RESIDUAL CONNECTION PARAMETERS")
+        lines.append("RESIDUAL CONNECTION PARAMETERS (Node-Centric)")
         lines.append("-" * 40)
         has_residual = False
         for i, layer in enumerate(model.layers):
+            # Check for scalar residual weight (same dimensions)
             if hasattr(layer, 'residual_weight') and layer.residual_weight is not None:
-                lines.append(f"Layer {i} ({layer.d_in} → {layer.d_out}): residual_weight = {layer.residual_weight.item():.6f}")
+                lines.append(f"Layer {i} ({layer.d_in} → {layer.d_out}): SCALAR residual")
+                lines.append(f"  residual_weight = {layer.residual_weight.item():.6f}")
                 has_residual = True
-            elif hasattr(layer, 'residual_projection') and layer.residual_projection is not None:
-                lines.append(f"Layer {i} ({layer.d_in} → {layer.d_out}): residual_projection")
-                lines.append(format_tensor(layer.residual_projection.weight, "Weight matrix", "  "))
+            
+            # Check for pooling weights (d_in > d_out)
+            elif hasattr(layer, 'residual_pooling_weights') and layer.residual_pooling_weights is not None:
+                lines.append(f"Layer {i} ({layer.d_in} → {layer.d_out}): POOLING residual")
+                lines.append(format_tensor(layer.residual_pooling_weights, "Pooling weights", "  "))
+                lines.append(format_integer_tensor(layer.pooling_assignment, "Pooling assignment", "  "))
+                lines.append(format_tensor(layer.pooling_counts, "Inputs per output", "  "))
+                lines.append("  Note: Input i is weighted by pooling_weights[i] and added to output pooling_assignment[i]")
                 has_residual = True
+            
+            # Check for broadcast weights (d_in < d_out)
+            elif hasattr(layer, 'residual_broadcast_weights') and layer.residual_broadcast_weights is not None:
+                lines.append(f"Layer {i} ({layer.d_in} → {layer.d_out}): BROADCAST residual")
+                lines.append(format_tensor(layer.residual_broadcast_weights, "Broadcast weights", "  "))
+                lines.append(format_integer_tensor(layer.broadcast_sources, "Broadcast sources", "  "))
+                lines.append("  Note: Output i takes input broadcast_sources[i] and scales by broadcast_weights[i]")
+                has_residual = True
+        
         if not has_residual:
             lines.append("  No residual parameters in this model")
         lines.append("")
@@ -235,6 +292,31 @@ def export_parameters(model, param_types, save_path, dataset_info=None, checkpoi
                     lines.append(format_tensor(norm_layer.running_mean, "Running mean", "  "))
                     lines.append(format_tensor(norm_layer.running_var, "Running variance", "  "))
                     lines.append(f"  Num batches tracked: {norm_layer.num_batches_tracked.item()}")
+        lines.append("")
+    
+    # Export Lateral Mixing parameters (NEW)
+    if 'lateral' in categories and CONFIG['use_lateral_mixing']:
+        lines.append("LATERAL MIXING PARAMETERS (Intra-block Communication)")
+        lines.append("-" * 40)
+        has_lateral = False
+        for i, layer in enumerate(model.layers):
+            if hasattr(layer, 'lateral_scale') and layer.lateral_scale is not None:
+                lines.append(f"Layer {i} ({layer.d_in} → {layer.d_out}):")
+                lines.append(f"  Lateral scale: {layer.lateral_scale.item():.6f}")
+                
+                if CONFIG['lateral_mixing_type'] == 'bidirectional':
+                    lines.append("  Type: Bidirectional mixing")
+                    lines.append(format_tensor(layer.lateral_weights_forward, "Forward weights", "  "))
+                    lines.append(format_tensor(layer.lateral_weights_backward, "Backward weights", "  "))
+                    lines.append("  Note: Each output mixes with both cyclic neighbors")
+                else:  # 'cyclic'
+                    lines.append("  Type: Cyclic mixing")
+                    lines.append(format_tensor(layer.lateral_weights, "Lateral weights", "  "))
+                    lines.append("  Note: Output i receives contribution from output (i+1) % d_out")
+                has_lateral = True
+        
+        if not has_lateral:
+            lines.append("  No lateral mixing parameters in this model")
         lines.append("")
     
     # Export Output parameters

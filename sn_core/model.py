@@ -388,6 +388,7 @@ class SprecherLayerBlock(nn.Module):
       - A general spline Φ with dynamically computed domain and optionally trainable codomain
       - A trainable shift (η)
       - A trainable weight VECTOR (λ) - one weight per input dimension
+      - Optional lateral mixing for cross-output communication
     If is_final is True, the block sums its outputs to produce a scalar.
     """
     def __init__(self, d_in, d_out, layer_num=0, is_final=False, phi_knots=100, Phi_knots=100,
@@ -435,31 +436,99 @@ class SprecherLayerBlock(nn.Module):
         # Weight VECTOR (not matrix!) - TRUE SPRECHER IMPLEMENTATION
         # Only d_in weights, shared across all d_out outputs
         self.lambdas = nn.Parameter(torch.randn(d_in) * np.sqrt(2.0 / d_in))
-        # self.lambdas = nn.Parameter(torch.empty(d_in).uniform_(-1.0/d_in, 1.0/d_in)) # Works better for >2 blocks?
         
         # Initialize eta to a reasonable value based on d_out
         self.eta = nn.Parameter(torch.tensor(1.0 / (d_out + 10)))
-        # self.eta = nn.Parameter(torch.tensor(1.0 / max(d_out, 5))) # Works better for >2 blocks?
         
         # Q-values for indexing
         self.register_buffer('q_values', torch.arange(d_out, dtype=torch.float32))
         
-        # Residual connection weight (learnable) - only create if enabled in config
+        # Lateral mixing parameters (new)
+        if CONFIG['use_lateral_mixing'] and d_out > 1:
+            self.lateral_scale = nn.Parameter(torch.tensor(CONFIG['lateral_scale_init']))
+            
+            if CONFIG['lateral_mixing_type'] == 'bidirectional':
+                # Bidirectional mixing - mix with both neighbors
+                self.lateral_weights_forward = nn.Parameter(
+                    torch.ones(d_out) * CONFIG['lateral_weight_init'] * 0.5
+                )
+                self.lateral_weights_backward = nn.Parameter(
+                    torch.ones(d_out) * CONFIG['lateral_weight_init'] * 0.5
+                )
+                # Indices for cyclic neighbors
+                self.register_buffer('lateral_indices_forward', 
+                                   torch.arange(d_out).roll(-1))
+                self.register_buffer('lateral_indices_backward', 
+                                   torch.arange(d_out).roll(1))
+            else:  # 'cyclic' - default
+                # Simple cyclic shift mixing
+                self.lateral_weights = nn.Parameter(
+                    torch.ones(d_out) * CONFIG['lateral_weight_init']
+                )
+                # Each output q receives from (q+1) % d_out
+                self.register_buffer('lateral_indices', 
+                                   torch.arange(d_out).roll(-1))
+        else:
+            # No lateral mixing
+            self.lateral_scale = None
+            self.lateral_weights = None
+            self.lateral_weights_forward = None
+            self.lateral_weights_backward = None
+        
+        # Node-centric residual connection (learnable) - only create if enabled in config
         if CONFIG['use_residual_weights']:
             if d_in == d_out:
                 # When dimensions match, use a simple scalar weight
                 self.residual_weight = nn.Parameter(torch.tensor(0.1))
-                self.residual_projection = None
-            else:
-                # When dimensions don't match, use a projection matrix
+                # No pooling/broadcasting needed
+                self.residual_pooling_weights = None
+                self.residual_broadcast_weights = None
+            elif d_in > d_out:
+                # Pooling case: aggregate multiple inputs per output
                 self.residual_weight = None
-                self.residual_projection = nn.Linear(d_in, d_out, bias=False)
-                # Initialize projection to small values for stability
-                with torch.no_grad():
-                    self.residual_projection.weight.data *= 0.1
+                
+                # Learnable pooling weights for each input dimension
+                # Initialize to uniform contribution
+                init_value = 1.0 / d_in  # Normalized initialization
+                self.residual_pooling_weights = nn.Parameter(
+                    torch.ones(d_in) * init_value
+                )
+                self.residual_broadcast_weights = None
+                
+                # Create assignment pattern: distribute inputs across outputs
+                # Use a balanced assignment to ensure each output gets similar number of inputs
+                assignments = []
+                for i in range(d_in):
+                    # Cyclic assignment
+                    assignments.append(i % d_out)
+                self.register_buffer('pooling_assignment', torch.tensor(assignments, dtype=torch.long))
+                
+                # Track how many inputs contribute to each output for normalization
+                counts = torch.zeros(d_out)
+                for i in range(d_in):
+                    counts[assignments[i]] += 1
+                self.register_buffer('pooling_counts', counts)
+                
+            else:  # d_in < d_out
+                # Broadcasting case: expand inputs to outputs
+                self.residual_weight = None
+                self.residual_pooling_weights = None
+                
+                # Learnable scaling for each output dimension
+                self.residual_broadcast_weights = nn.Parameter(
+                    torch.ones(d_out) * 0.1
+                )
+                
+                # Create source pattern: determine which input feeds which output
+                # Use cyclic repetition for balanced coverage
+                sources = []
+                for i in range(d_out):
+                    sources.append(i % d_in)
+                self.register_buffer('broadcast_sources', torch.tensor(sources, dtype=torch.long))
         else:
             self.residual_weight = None
-            self.residual_projection = None
+            self.residual_pooling_weights = None
+            self.residual_broadcast_weights = None
     
     def update_phi_domain_theoretical(self, input_range, allow_resampling=True, force_resample=False):
         """Update φ domain based on theoretical bounds."""
@@ -549,11 +618,19 @@ class SprecherLayerBlock(nn.Module):
                 else:
                     final_min = phi_range.min + residual_contribution_max
                     final_max = phi_range.max + residual_contribution_min
-            elif self.residual_projection is not None:
-                # For projection, we need to be more conservative
-                # Assume worst-case amplification by projection matrix
-                weight_norm = torch.norm(self.residual_projection.weight, p=2).item()
-                residual_bound = weight_norm * max(abs(self.input_range.min), abs(self.input_range.max))
+            elif self.residual_pooling_weights is not None:
+                # For pooling, we aggregate weighted inputs
+                # Conservative estimate: all weights could be positive or negative
+                weight_sum_max = torch.sum(torch.abs(self.residual_pooling_weights)).item()
+                input_bound = max(abs(self.input_range.min), abs(self.input_range.max))
+                residual_bound = weight_sum_max * input_bound
+                final_min = phi_range.min - residual_bound
+                final_max = phi_range.max + residual_bound
+            elif self.residual_broadcast_weights is not None:
+                # For broadcasting, each output is scaled
+                weight_bound = torch.max(torch.abs(self.residual_broadcast_weights)).item()
+                input_bound = max(abs(self.input_range.min), abs(self.input_range.max))
+                residual_bound = weight_bound * input_bound
                 final_min = phi_range.min - residual_bound
                 final_max = phi_range.max + residual_bound
             else:
@@ -590,7 +667,6 @@ class SprecherLayerBlock(nn.Module):
     def forward(self, x, x_original=None):
         # Regular forward pass (no domain updates here anymore!)
 
-        # --- FIX STARTS HERE ---
         # Ensure the q_values buffer is on the same device as the input tensor.
         # This is a robust fix for device mismatches that can occur after `copy.deepcopy`.
         q_on_device = self.q_values.to(x.device)
@@ -608,19 +684,72 @@ class SprecherLayerBlock(nn.Module):
         weighted = phi_out * self.lambdas.view(1, -1, 1)  # Broadcast: (1, d_in, 1)
         # Use the device-corrected q_on_device tensor here as well
         s = weighted.sum(dim=1) + Q_VALUES_FACTOR * q_on_device  # shape: (batch_size, d_out)
-        # --- FIX ENDS HERE ---
         
-        # Pass through the general outer spline Φ
-        activated = self.Phi(s)
+        # Apply lateral mixing if enabled (NEW)
+        if self.lateral_scale is not None:
+            if CONFIG['lateral_mixing_type'] == 'bidirectional':
+                # Bidirectional mixing
+                s_forward = s[:, self.lateral_indices_forward.to(x.device)]
+                s_backward = s[:, self.lateral_indices_backward.to(x.device)]
+                
+                # Mix with both neighbors
+                s_mixed = s + self.lateral_scale * (
+                    self.lateral_weights_forward * s_forward + 
+                    self.lateral_weights_backward * s_backward
+                )
+            else:  # 'cyclic'
+                # Simple cyclic mixing
+                s_shifted = s[:, self.lateral_indices.to(x.device)]
+                s_mixed = s + self.lateral_scale * (self.lateral_weights * s_shifted)
+            
+            # Pass mixed values through Φ
+            activated = self.Phi(s_mixed)
+        else:
+            # No lateral mixing - standard forward pass
+            activated = self.Phi(s)
         
         # Add residual connection if enabled in config
         if CONFIG['use_residual_weights'] and x_original is not None:
             if self.residual_weight is not None:
-                # Dimensions match, use scalar weight
+                # Same dimension case - simple scalar weight
                 activated = activated + self.residual_weight * x_original
-            elif self.residual_projection is not None:
-                # Dimensions don't match, use projection
-                activated = activated + self.residual_projection(x_original)
+                
+            elif self.residual_pooling_weights is not None:
+                # Pooling case: d_in > d_out
+                # Weight each input dimension
+                weighted_input = x_original * self.residual_pooling_weights.view(1, -1)
+                
+                # Initialize output tensor
+                residual_contribution = torch.zeros(
+                    x_original.shape[0], self.d_out, 
+                    device=x_original.device, dtype=x_original.dtype
+                )
+                
+                # Aggregate according to assignment
+                residual_contribution.scatter_add_(
+                    1, 
+                    self.pooling_assignment.unsqueeze(0).expand(x_original.shape[0], -1),
+                    weighted_input
+                )
+                
+                # Normalize by the number of inputs per output (optional)
+                # This helps maintain scale consistency
+                # residual_contribution = residual_contribution / self.pooling_counts.view(1, -1)
+                
+                activated = activated + residual_contribution
+                
+            elif self.residual_broadcast_weights is not None:
+                # Broadcasting case: d_in < d_out
+                # Gather from source dimensions
+                residual_contribution = torch.gather(
+                    x_original, 1,
+                    self.broadcast_sources.unsqueeze(0).expand(x_original.shape[0], -1)
+                )
+                
+                # Apply output-specific scaling
+                residual_contribution = residual_contribution * self.residual_broadcast_weights.view(1, -1)
+                
+                activated = activated + residual_contribution
         
         if self.is_final:
             # Sum outputs if this is the final block (produces scalar output)

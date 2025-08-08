@@ -40,6 +40,12 @@ CONFIG = {
     # Parameter export settings
     'export_params': False,  # Can be False, True/'all', or list of param types
     'export_params_dir': 'params',  # Directory for parameter exports
+    
+    # Lateral mixing settings (new)
+    'use_lateral_mixing': True,  # Enable intra-block lateral connections
+    'lateral_mixing_type': 'cyclic',  # Options: 'cyclic', 'bidirectional'
+    'lateral_scale_init': 0.1,  # Initial scale for lateral connections
+    'lateral_weight_init': 0.1,  # Initial weight for lateral connections
 }
 
 # MNIST-specific settings
@@ -59,4 +65,4 @@ MNIST_CONFIG = {
 Q_VALUES_FACTOR = 1.0
 
 # Parameter categories for export
-PARAM_CATEGORIES = ['lambda', 'eta', 'spline', 'residual', 'codomain', 'norm', 'output']
+PARAM_CATEGORIES = ['lambda', 'eta', 'spline', 'residual', 'codomain', 'norm', 'output', 'lateral']
