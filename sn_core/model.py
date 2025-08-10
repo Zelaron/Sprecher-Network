@@ -433,7 +433,7 @@ class SprecherLayerBlock(nn.Module):
             codomain_params=self.phi_codomain_params
         )
         
-        # Weight VECTOR (not matrix!) - TRUE SPRECHER IMPLEMENTATION
+        # Weight vector
         # Only d_in weights, shared across all d_out outputs
         self.lambdas = nn.Parameter(torch.randn(d_in) * np.sqrt(2.0 / d_in))
         
@@ -443,7 +443,7 @@ class SprecherLayerBlock(nn.Module):
         # Q-values for indexing
         self.register_buffer('q_values', torch.arange(d_out, dtype=torch.float32))
         
-        # Lateral mixing parameters (new)
+        # Lateral mixing parameters
         if CONFIG['use_lateral_mixing'] and d_out > 1:
             self.lateral_scale = nn.Parameter(torch.tensor(CONFIG['lateral_scale_init']))
             
@@ -665,10 +665,16 @@ class SprecherLayerBlock(nn.Module):
             self.codomain_initialized_from_domain = ranges['codomain_initialized']
     
     def forward(self, x, x_original=None):
-        # Regular forward pass (no domain updates here anymore!)
-
+        """Forward pass with configurable memory mode."""
+        # Check if we should use memory-efficient mode
+        if CONFIG.get('low_memory_mode', False):
+            return self._forward_memory_efficient(x, x_original)
+        else:
+            return self._forward_original(x, x_original)
+    
+    def _forward_original(self, x, x_original=None):
+        """Original forward pass - O(B × d_in × d_out) memory."""
         # Ensure the q_values buffer is on the same device as the input tensor.
-        # This is a robust fix for device mismatches that can occur after `copy.deepcopy`.
         q_on_device = self.q_values.to(x.device)
 
         x_expanded = x.unsqueeze(-1)  # shape: (batch_size, d_in, 1)
@@ -685,77 +691,107 @@ class SprecherLayerBlock(nn.Module):
         # Use the device-corrected q_on_device tensor here as well
         s = weighted.sum(dim=1) + Q_VALUES_FACTOR * q_on_device  # shape: (batch_size, d_out)
         
-        # Apply lateral mixing if enabled (NEW)
+        # Apply lateral mixing if enabled
         if self.lateral_scale is not None:
-            if CONFIG['lateral_mixing_type'] == 'bidirectional':
-                # Bidirectional mixing
-                s_forward = s[:, self.lateral_indices_forward.to(x.device)]
-                s_backward = s[:, self.lateral_indices_backward.to(x.device)]
-                
-                # Mix with both neighbors
-                s_mixed = s + self.lateral_scale * (
-                    self.lateral_weights_forward * s_forward + 
-                    self.lateral_weights_backward * s_backward
-                )
-            else:  # 'cyclic'
-                # Simple cyclic mixing
-                s_shifted = s[:, self.lateral_indices.to(x.device)]
-                s_mixed = s + self.lateral_scale * (self.lateral_weights * s_shifted)
-            
-            # Pass mixed values through Φ
-            activated = self.Phi(s_mixed)
-        else:
-            # No lateral mixing - standard forward pass
-            activated = self.Phi(s)
+            s = self._apply_lateral_mixing_to_s(s, x.device)
         
-        # Add residual connection if enabled in config
-        if CONFIG['use_residual_weights'] and x_original is not None:
-            if self.residual_weight is not None:
-                # Same dimension case - simple scalar weight
-                activated = activated + self.residual_weight * x_original
-                
-            elif self.residual_pooling_weights is not None:
-                # Pooling case: d_in > d_out
-                # Weight each input dimension
-                weighted_input = x_original * self.residual_pooling_weights.view(1, -1)
-                
-                # Initialize output tensor
-                residual_contribution = torch.zeros(
-                    x_original.shape[0], self.d_out, 
-                    device=x_original.device, dtype=x_original.dtype
-                )
-                
-                # Aggregate according to assignment
-                residual_contribution.scatter_add_(
-                    1, 
-                    self.pooling_assignment.unsqueeze(0).expand(x_original.shape[0], -1),
-                    weighted_input
-                )
-                
-                # Normalize by the number of inputs per output (optional)
-                # This helps maintain scale consistency
-                # residual_contribution = residual_contribution / self.pooling_counts.view(1, -1)
-                
-                activated = activated + residual_contribution
-                
-            elif self.residual_broadcast_weights is not None:
-                # Broadcasting case: d_in < d_out
-                # Gather from source dimensions
-                residual_contribution = torch.gather(
-                    x_original, 1,
-                    self.broadcast_sources.unsqueeze(0).expand(x_original.shape[0], -1)
-                )
-                
-                # Apply output-specific scaling
-                residual_contribution = residual_contribution * self.residual_broadcast_weights.view(1, -1)
-                
-                activated = activated + residual_contribution
+        # Apply Phi
+        activated = self.Phi(s)
+        
+        # Add residual connections
+        activated = self._add_residual(activated, x_original)
         
         if self.is_final:
             # Sum outputs if this is the final block (produces scalar output)
             return activated.sum(dim=1, keepdim=True)
         else:
             return activated
+    
+    def _forward_memory_efficient(self, x, x_original=None):
+        """Memory-efficient forward pass - O(B × max(d_in, d_out)) memory."""
+        batch_size = x.shape[0]
+        device = x.device
+        
+        # Pre-allocate output tensor for s values
+        s = torch.zeros(batch_size, self.d_out, device=device, dtype=x.dtype)
+        
+        # Process each output dimension sequentially
+        for q_idx in range(self.d_out):
+            # Get the q value for this output dimension (as scalar to avoid tensor ops)
+            q_val = float(q_idx)
+            
+            # Compute phi for all inputs with this specific q
+            # Memory: O(B × d_in) instead of O(B × d_in × d_out)
+            shifted = x + self.eta * q_val  # (batch_size, d_in)
+            phi_out = self.phi(shifted)     # (batch_size, d_in)
+            
+            # Weight by lambdas and sum over input dimension
+            weighted = phi_out * self.lambdas  # (batch_size, d_in) 
+            s[:, q_idx] = weighted.sum(dim=1) + Q_VALUES_FACTOR * q_val  # (batch_size,)
+        
+        # Apply lateral mixing if enabled (on s before Phi)
+        if self.lateral_scale is not None:
+            s = self._apply_lateral_mixing_to_s(s, device)
+        
+        # Apply Phi to all outputs (this is memory-efficient as it's element-wise)
+        activated = self.Phi(s)  # (batch_size, d_out)
+        
+        # Add residual connections
+        activated = self._add_residual(activated, x_original)
+        
+        # Handle final summing if needed
+        if self.is_final:
+            return activated.sum(dim=1, keepdim=True)
+        else:
+            return activated
+    
+    def _apply_lateral_mixing_to_s(self, s, device):
+        """Apply lateral mixing to the intermediate representation s."""
+        if CONFIG['lateral_mixing_type'] == 'bidirectional':
+            s_forward = s[:, self.lateral_indices_forward.to(device)]
+            s_backward = s[:, self.lateral_indices_backward.to(device)]
+            s_mixed = s + self.lateral_scale * (
+                self.lateral_weights_forward * s_forward + 
+                self.lateral_weights_backward * s_backward
+            )
+        else:  # 'cyclic'
+            s_shifted = s[:, self.lateral_indices.to(device)]
+            s_mixed = s + self.lateral_scale * (self.lateral_weights * s_shifted)
+        return s_mixed
+    
+    def _add_residual(self, activated, x_original):
+        """Add residual connections if enabled."""
+        if not CONFIG['use_residual_weights'] or x_original is None:
+            return activated
+        
+        if self.residual_weight is not None:
+            # Same dimension case - simple scalar weight
+            activated = activated + self.residual_weight * x_original
+            
+        elif self.residual_pooling_weights is not None:
+            # Pooling case: d_in > d_out
+            weighted_input = x_original * self.residual_pooling_weights.view(1, -1)
+            residual_contribution = torch.zeros(
+                x_original.shape[0], self.d_out, 
+                device=x_original.device, dtype=x_original.dtype
+            )
+            residual_contribution.scatter_add_(
+                1, 
+                self.pooling_assignment.unsqueeze(0).expand(x_original.shape[0], -1),
+                weighted_input
+            )
+            activated = activated + residual_contribution
+            
+        elif self.residual_broadcast_weights is not None:
+            # Broadcasting case: d_in < d_out
+            residual_contribution = torch.gather(
+                x_original, 1,
+                self.broadcast_sources.unsqueeze(0).expand(x_original.shape[0], -1)
+            )
+            residual_contribution = residual_contribution * self.residual_broadcast_weights.view(1, -1)
+            activated = activated + residual_contribution
+        
+        return activated
     
     def get_output_range(self):
         """Get the current output range of this block (for the next layer's input)."""

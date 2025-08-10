@@ -73,6 +73,12 @@ def parse_args():
                       help="Export parameters to text file. Options: all, or comma-separated: "
                            "lambda,eta,spline,residual,codomain,norm,output,lateral")
     
+    # Memory optimization arguments
+    parser.add_argument("--low_memory_mode", action="store_true",
+                      help="Use memory-efficient computation (O(N) memory instead of O(N²))")
+    parser.add_argument("--memory_debug", action="store_true",
+                      help="Print memory usage statistics during forward pass")
+    
     return parser.parse_args()
 
 
@@ -100,8 +106,88 @@ def get_config_suffix(args, CONFIG):
     if CONFIG.get('use_advanced_scheduler', False):
         parts.append("AdvScheduler")
     
+    # Check memory mode
+    if CONFIG.get('low_memory_mode', False):
+        parts.append("LowMem")
+    
     # Join with dashes
     return "-" + "-".join(parts) if parts else ""
+
+
+def profile_memory_usage(model, x_sample):
+    """Profile memory usage of forward pass."""
+    import torch.cuda
+    
+    if x_sample.is_cuda:
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.synchronize()
+        start_memory = torch.cuda.memory_allocated()
+        
+        with torch.no_grad():
+            _ = model(x_sample)
+        
+        torch.cuda.synchronize()
+        peak_memory = torch.cuda.max_memory_allocated()
+        end_memory = torch.cuda.memory_allocated()
+        
+        print(f"Memory usage:")
+        print(f"  Start: {start_memory / 1024**2:.2f} MB")
+        print(f"  Peak:  {peak_memory / 1024**2:.2f} MB")
+        print(f"  End:   {end_memory / 1024**2:.2f} MB")
+        print(f"  Delta: {(peak_memory - start_memory) / 1024**2:.2f} MB")
+    else:
+        print("Memory profiling only available for CUDA tensors")
+
+
+def verify_memory_efficient_mode(device='cpu'):
+    """Verify that memory-efficient mode produces identical results."""
+    from sn_core import CONFIG
+    from sn_core.model import SprecherLayerBlock
+    
+    print("\nVerifying memory-efficient mode...")
+    torch.manual_seed(42)
+    
+    # Create a test layer with reasonable dimensions
+    layer = SprecherLayerBlock(d_in=100, d_out=200, layer_num=0).to(device)
+    x = torch.randn(32, 100, device=device)  # batch_size=32, d_in=100
+    
+    # Get output with original method
+    CONFIG['low_memory_mode'] = False
+    with torch.no_grad():
+        output_original = layer._forward_original(x, None)
+    
+    # Get output with memory-efficient method
+    CONFIG['low_memory_mode'] = True
+    with torch.no_grad():
+        output_efficient = layer._forward_memory_efficient(x, None)
+    
+    # Check if outputs are identical (within floating point precision)
+    max_diff = torch.abs(output_original - output_efficient).max().item()
+    mean_diff = torch.abs(output_original - output_efficient).mean().item()
+    
+    print(f"Maximum difference: {max_diff:.2e}")
+    print(f"Mean difference: {mean_diff:.2e}")
+    
+    if max_diff < 1e-6:
+        print("✓ Memory-efficient mode produces mathematically identical results")
+    else:
+        print(f"✗ WARNING: Outputs differ by {max_diff:.2e}")
+    
+    # Profile memory usage if on CUDA
+    if device == 'cuda' and torch.cuda.is_available():
+        print("\nMemory comparison:")
+        CONFIG['low_memory_mode'] = False
+        print("Original mode:")
+        profile_memory_usage(layer, x)
+        
+        CONFIG['low_memory_mode'] = True
+        print("\nMemory-efficient mode:")
+        profile_memory_usage(layer, x)
+    
+    # Reset CONFIG
+    CONFIG['low_memory_mode'] = False
+    
+    return max_diff < 1e-6
 
 
 def main():
@@ -139,6 +225,22 @@ def main():
     if args.track_violations:
         CONFIG['track_domain_violations'] = True
         print("Domain violation tracking enabled.")
+    
+    # Handle memory optimization flags
+    if args.low_memory_mode:
+        CONFIG['low_memory_mode'] = True
+        print("Low memory mode: ENABLED (sequential output computation)")
+        
+        # Run verification test if requested
+        if args.memory_debug:
+            verify_success = verify_memory_efficient_mode(device)
+            if not verify_success:
+                print("WARNING: Memory-efficient mode verification failed!")
+                print("Continuing anyway...")
+    
+    if args.memory_debug:
+        CONFIG['memory_debug'] = True
+        print("Memory debugging: ENABLED")
     
     # Handle new feature control flags
     if args.no_residual:
@@ -186,6 +288,10 @@ def main():
     print(f"Lateral mixing: {'enabled' if CONFIG.get('use_lateral_mixing', True) else 'disabled'}")
     if CONFIG.get('use_lateral_mixing', True):
         print(f"  Type: {CONFIG.get('lateral_mixing_type', 'cyclic')}")
+    if CONFIG.get('low_memory_mode', False):
+        print(f"Memory mode: LOW MEMORY (sequential computation)")
+    else:
+        print(f"Memory mode: STANDARD (parallel computation)")
     if effective_norm_type != "none":
         norm_position = args.norm_position if args.norm_position else CONFIG.get('norm_position', 'after')
         # Handle the --norm_first flag
@@ -282,6 +388,11 @@ def main():
             print(f"  Input range: {layer.input_range}")
         if hasattr(layer, 'output_range') and layer.output_range is not None:
             print(f"  Output range: {layer.output_range}")
+    
+    # Memory usage profiling if requested
+    if CONFIG.get('memory_debug', False) and device == 'cuda':
+        print("\nFinal memory usage profile:")
+        profile_memory_usage(model, x_train)
     
     # DEBUG: Model structure check before plotting
     print("\nDEBUG: Model structure check before plotting:")
