@@ -630,7 +630,7 @@ storing the full tensor before applying $\phi$, requiring $O(B \cdot d_{\mathrm{
 $$s_{b,q} = \sum_{i=1}^{d_{\mathrm{in}}} \lambda_i \phi(x_{b,i} + \eta q) + \alpha q$$
 computed sequentially for $q = 0, \ldots, d_{\mathrm{out}}-1$.
 
-This reformulation reduces peak memory from $O(B \cdot N^2)$ to $O(B \cdot N)$ during computation, while producing mathematically identical results. Combined with SNs' $O(N)$ parameter memory, the total memory complexity becomes $O(N + B \cdot N) = O(N)$ when treating batch size as a constant, compared to MLPs' $O(N^2)$ total memory requirement.
+This reformulation reduces peak memory from $O(B \cdot N^2)$ to $O\!\bigl(B \cdot \max(d_{\mathrm{in}}, d_{\mathrm{out}})\bigr)$ during computation, while producing \emph{mathematically identical} results.Combined with SNs' $O(N)$ parameter memory, the total memory complexity becomes $O(N + B \cdot N) = O(N)$ when treating batch size as a constant, compared to MLPs' $O(N^2)$ total memory requirement.
 
 In practice, this enables training of architectures that would otherwise be infeasible. For example, a network with layers of width 512 might exhaust 32GB of RAM in parallel computation but trains comfortably with sequential processing. Empirically, memory reductions of 30-60\% are observed for wide architectures (layers exceeding 128 units) with computational overhead of only 15-25\%, making this a favorable trade-off when memory is the binding constraint.
 
@@ -677,8 +677,9 @@ where $a^+ = \max(a,0)$ and $a^- = \min(a,0)$. For bidirectional mixing, apply t
 
 \item \textbf{Out-of-domain extension:} When inputs fall outside the spline's domain:
    \begin{itemize}
-   \item $\phi$ (monotonic): Uses constant extension (outputs stay at 0 or 1)
-   \item $\Phi$ (general): Uses linear extrapolation with boundary slopes, applied consistently when trainable codomains are active
+   \item $\phi$ (monotonic): Uses \emph{constant} extension (zero slope) outside its domain: for $x<\min\mathcal{D}_\phi$, set $\phi(x)=0$; for $x>\max\mathcal{D}_\phi$, set $\phi(x)=1$. This preserves the codomain $[0,1]$ and aligns with the monotone-increments parameterization.
+   \item $\Phi$ (general): Uses \emph{linear} extrapolation based on the boundary slopes of the piecewise-linear spline. If $\Phi$'s codomain is parameterized by $(c_c,c_r)$ with $\operatorname{cod}(\Phi)=[c_c-c_r,\,c_c+c_r]$, extrapolation is computed in the unnormalized coefficient space and then mapped by
+   $$t \;\mapsto\; c_c - c_r \;+\; 2c_r \cdot \frac{t - t_{\min}}{t_{\max}-t_{\min}}\,.$$
    \end{itemize}
 \end{enumerate}
 \end{lemma}
