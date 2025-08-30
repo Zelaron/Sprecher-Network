@@ -6,6 +6,63 @@ import numpy as np
 from .config import CONFIG, Q_VALUES_FACTOR
 
 
+class Interval:
+    """Interval arithmetic for optimal domain computation."""
+    def __init__(self, min_val, max_val):
+        self.min = float(min_val)
+        self.max = float(max_val)
+        assert self.min <= self.max, f"Invalid interval: [{self.min}, {self.max}]"
+    
+    def __add__(self, other):
+        if isinstance(other, (int, float)):
+            return Interval(self.min + other, self.max + other)
+        elif isinstance(other, Interval):
+            return Interval(self.min + other.min, self.max + other.max)
+        else:
+            return NotImplemented
+    
+    def __radd__(self, other):
+        return self.__add__(other)
+    
+    def __mul__(self, scalar):
+        if isinstance(scalar, (int, float)):
+            if scalar >= 0:
+                return Interval(self.min * scalar, self.max * scalar)
+            else:
+                return Interval(self.max * scalar, self.min * scalar)
+        else:
+            return NotImplemented
+    
+    def __rmul__(self, scalar):
+        return self.__mul__(scalar)
+    
+    def __sub__(self, other):
+        if isinstance(other, (int, float)):
+            return Interval(self.min - other, self.max - other)
+        elif isinstance(other, Interval):
+            return Interval(self.min - other.max, self.max - other.min)
+        else:
+            return NotImplemented
+    
+    def __truediv__(self, scalar):
+        if isinstance(scalar, (int, float)):
+            if scalar > 0:
+                return Interval(self.min / scalar, self.max / scalar)
+            elif scalar < 0:
+                return Interval(self.max / scalar, self.min / scalar)
+            else:
+                raise ValueError("Division by zero")
+        else:
+            return NotImplemented
+    
+    def union(self, other):
+        """Union of two intervals."""
+        return Interval(min(self.min, other.min), max(self.max, other.max))
+    
+    def __repr__(self):
+        return f"[{self.min:.6f}, {self.max:.6f}]"
+
+
 class TheoreticalRange:
     """Tracks theoretical min/max values for a layer's input/output."""
     def __init__(self, min_val, max_val):
@@ -99,9 +156,6 @@ class SimpleSpline(nn.Module):
                 return
 
             # --- Spline Resampling to Preserve Learned Shape (for Φ splines) ---
-            # This is the core fix for training instability.
-            # It's applied only to the general (non-monotonic) splines after the
-            # first training step has occurred.
             if not self.monotonic and (self.total_evaluations > 0 or force_resample) and allow_resampling:
                 if CONFIG.get('debug_checkpoint_loading', False):
                     print(f"  - RESAMPLING WILL OCCUR (non-monotonic, evaluations={self.total_evaluations}, force={force_resample}, resampling allowed)")
@@ -113,8 +167,6 @@ class SimpleSpline(nn.Module):
                 if CONFIG.get('debug_checkpoint_loading', False):
                     print(f"  - Old coeffs min/max: {old_coeffs.min():.6f}/{old_coeffs.max():.6f}")
                 
-                # Define a helper function to evaluate the OLD spline at any point.
-                # This function captures the learned shape we want to preserve.
                 def old_spline_eval(x_vals):
                     # Clamp inputs to the old domain for robust interpolation.
                     x_clamped = torch.clamp(x_vals, old_knots[0], old_knots[-1])
@@ -164,7 +216,7 @@ class SimpleSpline(nn.Module):
         with torch.no_grad():
             if self.monotonic:
                 # For monotonic splines, keep uniform increments
-                self.log_increments.data = torch.log(torch.ones(self.num_knots) / self.num_knots + 1e-6)
+                self.log_increments.data = torch.log(torch.ones(self.num_knots) / num_knots + 1e-6)
             else:
                 # For general splines, set coefficients to be linear from domain_min to domain_max
                 self.coeffs.data = torch.linspace(domain_min, domain_max, self.num_knots, 
@@ -253,7 +305,7 @@ class SimpleSpline(nn.Module):
         # Linear interpolation
         interpolated = (1 - t) * coeffs[intervals] + t * coeffs[intervals + 1]
         
-        # For monotonic splines, handle out-of-domain linearly based on boundary slopes
+        # For monotonic splines, handle out-of-domain with constant extension (slope 0)
         if self.monotonic:
             # Extend with slope 0 outside domain (keeps values at 0 or 1)
             result = torch.where(below_domain, torch.zeros_like(x), interpolated)
@@ -371,7 +423,7 @@ class SimpleSpline(nn.Module):
             # For non-monotonic splines, restore raw coefficients
             self.coeffs.data = state['raw_coeffs']
             if CONFIG.get('debug_checkpoint_loading', False):
-                print(f"  - Raw coeffs restored: min={state['raw_coeffs'].min():.6f}, max={state['raw_coeffs'].max():.6f}")
+                print(f"  - Raw coeffs restored: min={state['raw_coeffs'].min():.6f}/{state['raw_coeffs'].max():.6f}")
         
         self.domain_violations = state.get('domain_violations', 0)
         self.total_evaluations = state.get('total_evaluations', 0)
@@ -379,6 +431,135 @@ class SimpleSpline(nn.Module):
         if CONFIG.get('debug_checkpoint_loading', False):
             print(f"  - Domain restored successfully")
             print(f"  - Knots updated: {torch.allclose(self.knots, state['knots'])}")
+
+
+def compute_batchnorm_bounds(input_interval, norm_layer, training_mode=True):
+    """
+    Compute output interval after BatchNorm.
+    
+    Args:
+        input_interval: Interval of possible input values
+        norm_layer: BatchNorm1d layer
+        training_mode: Whether in training mode (affects statistics used)
+    
+    Returns:
+        Output interval after BatchNorm
+    """
+    eps = norm_layer.eps
+    
+    if training_mode:
+        # Conservative standardized range during training
+        k = 4.0  # Covers ~99.99% of standard normal
+        standardized = Interval(-k, k)
+        
+        # Apply affine transformation if enabled (conservative across channels)
+        if norm_layer.affine:
+            weight = norm_layer.weight
+            bias = norm_layer.bias
+            
+            weight_min = weight.min().item()
+            weight_max = weight.max().item()
+            bias_min = bias.min().item()
+            bias_max = bias.max().item()
+            
+            corners = []
+            for w in [weight_min, weight_max]:
+                for b in [bias_min, bias_max]:
+                    if w >= 0:
+                        corners.append(Interval(
+                            standardized.min * w + b,
+                            standardized.max * w + b
+                        ))
+                    else:
+                        corners.append(Interval(
+                            standardized.max * w + b,
+                            standardized.min * w + b
+                        ))
+            result = corners[0]
+            for corner in corners[1:]:
+                result = result.union(corner)
+            return result
+        else:
+            return standardized
+    else:
+        # EVAL MODE: per-channel running stats (tight union across channels)
+        running_mean = norm_layer.running_mean
+        running_var = norm_layer.running_var
+        
+        a = input_interval.min
+        b = input_interval.max
+        
+        std = torch.sqrt(running_var + eps)
+        # Standardize per channel, then get per-channel intervals
+        lo = (a - running_mean) / std
+        hi = (b - running_mean) / std
+        std_min = torch.minimum(lo, hi)
+        std_max = torch.maximum(lo, hi)
+        
+        if norm_layer.affine:
+            w = norm_layer.weight
+            b_bias = norm_layer.bias
+            out_min = torch.where(w >= 0, w * std_min + b_bias, w * std_max + b_bias)
+            out_max = torch.where(w >= 0, w * std_max + b_bias, w * std_min + b_bias)
+            return Interval(out_min.min().item(), out_max.max().item())
+        else:
+            return Interval(std_min.min().item(), std_max.max().item())
+
+
+def compute_layernorm_bounds(input_interval, norm_layer, num_features):
+    """
+    Compute output interval after LayerNorm.
+    
+    LayerNorm normalizes across features for each sample independently,
+    making exact bounds intractable. We use conservative bounds.
+    
+    Args:
+        input_interval: Interval of possible input values per feature
+        norm_layer: LayerNorm layer  
+        num_features: Number of features being normalized
+    
+    Returns:
+        Output interval after LayerNorm
+    """
+    eps = norm_layer.eps
+    
+    # Exact worst-case bound for LayerNorm
+    # This occurs when one feature is at the max and all others at min (or vice versa)
+    k = (num_features - 1) ** 0.5  # Exact worst-case bound
+    standardized = Interval(-k, k)
+    
+    # Apply affine transformation
+    if norm_layer.elementwise_affine:
+        weight = norm_layer.weight
+        bias = norm_layer.bias
+        
+        # Get bounds on weight and bias
+        weight_min = weight.min().item()
+        weight_max = weight.max().item()
+        bias_min = bias.min().item()
+        bias_max = bias.max().item()
+        
+        # Compute output bounds
+        corners = []
+        for w in [weight_min, weight_max]:
+            for b in [bias_min, bias_max]:
+                if w >= 0:
+                    corners.append(Interval(
+                        standardized.min * w + b,
+                        standardized.max * w + b
+                    ))
+                else:
+                    corners.append(Interval(
+                        standardized.max * w + b,
+                        standardized.min * w + b
+                    ))
+        
+        result = corners[0]
+        for corner in corners[1:]:
+            result = result.union(corner)
+        return result
+    else:
+        return standardized
 
 
 class SprecherLayerBlock(nn.Module):
@@ -402,6 +583,12 @@ class SprecherLayerBlock(nn.Module):
         # Theoretical range tracking
         self.input_range = TheoreticalRange(0.0, 1.0) if layer_num == 0 else None
         self.output_range = None
+
+        # NEW: per-channel input/output intervals (populated by network during updates)
+        self.input_min_per_dim = None   # tensor[d_in] or None
+        self.input_max_per_dim = None   # tensor[d_in] or None
+        self.output_min_per_q = None    # tensor[d_out] (post-Φ+residual, pre-sum) or None
+        self.output_max_per_q = None    # tensor[d_out] or None
         
         # Track whether codomain has been initialized from domain
         self.codomain_initialized_from_domain = False
@@ -554,27 +741,126 @@ class SprecherLayerBlock(nn.Module):
         
         self.phi.update_domain((phi_min, phi_max), allow_resampling=allow_resampling, force_resample=force_resample)
     
-    def update_Phi_domain_theoretical(self, allow_resampling=True, force_resample=False):
-        """Update Φ domain based on theoretical bounds."""
-        # φ outputs in [0,1], weighted by lambdas, plus q term
-        with torch.no_grad():
-            lambda_sum_pos = torch.sum(torch.clamp(self.lambdas, min=0)).item()
-            lambda_sum_neg = torch.sum(torch.clamp(self.lambdas, max=0)).item()
+    def _apply_lateral_mixing_bounds_per_q(self, s_min_per_q, s_max_per_q):
+        """
+        Apply **sign-aware** lateral mixing bounds to per-q intervals.
+        
+        For cyclic mixing: s'_q = s_q + α * w_q * s_{q+1}
+          min: s_min_q + [ w_q^+ * s_min_{q+1} + w_q^- * s_max_{q+1} ]
+          max: s_max_q + [ w_q^+ * s_max_{q+1} + w_q^- * s_min_{q+1} ]
+        
+        For bidirectional mixing: s'_q = s_q + α * ( w^f_q * s_{q+1} + w^b_q * s_{q-1} )
+          apply the same sign-splitting to each neighbor and sum.
+        
+        This is tight for linear mixing when only intervals are known.
+        """
+        if self.lateral_scale is None:
+            return s_min_per_q, s_max_per_q
+        
+        device = s_min_per_q.device
+        
+        if CONFIG['lateral_mixing_type'] == 'bidirectional':
+            eff_f = (self.lateral_scale * self.lateral_weights_forward).to(device)
+            eff_b = (self.lateral_scale * self.lateral_weights_backward).to(device)
+            idx_f = self.lateral_indices_forward.to(device)
+            idx_b = self.lateral_indices_backward.to(device)
             
-            # φ outputs in [0,1], so weighted sum is in [lambda_sum_neg, lambda_sum_pos]
-            # Plus q term adds [0, Q_VALUES_FACTOR*(d_out-1)]
-            phi_domain_min = lambda_sum_neg
-            phi_domain_max = lambda_sum_pos + Q_VALUES_FACTOR * (self.d_out - 1)
+            efp, efn = torch.clamp(eff_f, min=0), torch.clamp(eff_f, max=0)
+            ebp, ebn = torch.clamp(eff_b, min=0), torch.clamp(eff_b, max=0)
+            
+            neighbor_min = (
+                efp * s_min_per_q[idx_f] + efn * s_max_per_q[idx_f] +
+                ebp * s_min_per_q[idx_b] + ebn * s_max_per_q[idx_b]
+            )
+            neighbor_max = (
+                efp * s_max_per_q[idx_f] + efn * s_min_per_q[idx_f] +
+                ebp * s_max_per_q[idx_b] + ebn * s_min_per_q[idx_b]
+            )
+            
+            mixed_min = s_min_per_q + neighbor_min
+            mixed_max = s_max_per_q + neighbor_max
+        else:  # 'cyclic'
+            eff = (self.lateral_scale * self.lateral_weights).to(device)
+            idx = self.lateral_indices.to(device)
+            ep, en = torch.clamp(eff, min=0), torch.clamp(eff, max=0)
+            
+            mixed_min = s_min_per_q + ep * s_min_per_q[idx] + en * s_max_per_q[idx]
+            mixed_max = s_max_per_q + ep * s_max_per_q[idx] + en * s_min_per_q[idx]
+        
+        return mixed_min, mixed_max
+    
+    def _compute_s_bounds_per_q(self, a_vec, b_vec):
+        """
+        Helper: compute tight s_min/s_max per q using per-dimension intervals.
+        a_vec, b_vec: tensors of shape [d_in] on correct device.
+        Returns: s_min_per_q, s_max_per_q (tensors [d_out])
+        """
+        device = self.phi.knots.device
+        q_values = torch.arange(self.d_out, device=device, dtype=torch.float32)
 
-            # Ensure domain is valid
-            if phi_domain_min >= phi_domain_max:
-                phi_domain_max = phi_domain_min + 1e-4
+        # Broadcast a_i + η q and b_i + η q: shapes (d_in, d_out)
+        eta_val = self.eta.item()
+        a_mat = a_vec.view(-1, 1) + eta_val * q_values.view(1, -1)
+        b_mat = b_vec.view(-1, 1) + eta_val * q_values.view(1, -1)
+
+        # Evaluate φ elementwise on these matrices
+        phi_a = self.phi(a_mat)  # (d_in, d_out)
+        phi_b = self.phi(b_mat)  # (d_in, d_out)
+
+        lambdas_col = self.lambdas.view(-1, 1)  # (d_in, 1)
+
+        # Sign-aware contributions
+        contrib_min = torch.where(lambdas_col >= 0, lambdas_col * phi_a, lambdas_col * phi_b)  # (d_in,d_out)
+        contrib_max = torch.where(lambdas_col >= 0, lambdas_col * phi_b, lambdas_col * phi_a)  # (d_in,d_out)
+
+        s_min_per_q = contrib_min.sum(dim=0) + Q_VALUES_FACTOR * q_values
+        s_max_per_q = contrib_max.sum(dim=0) + Q_VALUES_FACTOR * q_values
+        return s_min_per_q, s_max_per_q
+    
+    def update_Phi_domain_theoretical(self, allow_resampling=True, force_resample=False):
+        """Update Φ domain based on theoretical bounds using per-q tight bounds (uses per-channel intervals when available)."""
+        with torch.no_grad():
+            device = self.phi.knots.device
+            # Use per-channel input intervals if provided, else fall back to global [a,b]
+            if self.input_min_per_dim is not None and self.input_max_per_dim is not None:
+                a_vec = torch.as_tensor(self.input_min_per_dim, device=device, dtype=torch.float32)
+                b_vec = torch.as_tensor(self.input_max_per_dim, device=device, dtype=torch.float32)
+                if a_vec.numel() != self.d_in or b_vec.numel() != self.d_in:
+                    a_vec = torch.full((self.d_in,), self.input_range.min, device=device)
+                    b_vec = torch.full((self.d_in,), self.input_range.max, device=device)
+                s_min_per_q, s_max_per_q = self._compute_s_bounds_per_q(a_vec, b_vec)
+            else:
+                # Fallback: use global bounds with λ+ / λ− trick (original behavior)
+                eta_val = self.eta.item()
+                q_values = torch.arange(self.d_out, device=device, dtype=torch.float32)
+                phi_inputs_min = self.input_range.min + eta_val * q_values
+                phi_inputs_max = self.input_range.max + eta_val * q_values
+                phi_at_min = self.phi(phi_inputs_min)
+                phi_at_max = self.phi(phi_inputs_max)
+                phi_min_per_q = torch.minimum(phi_at_min, phi_at_max)
+                phi_max_per_q = torch.maximum(phi_at_min, phi_at_max)
+                lambda_pos = torch.clamp(self.lambdas, min=0).sum().item()
+                lambda_neg = torch.clamp(self.lambdas, max=0).sum().item()
+                s_min_per_q = lambda_pos * phi_min_per_q + lambda_neg * phi_max_per_q + Q_VALUES_FACTOR * q_values
+                s_max_per_q = lambda_pos * phi_max_per_q + lambda_neg * phi_min_per_q + Q_VALUES_FACTOR * q_values
             
-            self.Phi.update_domain((phi_domain_min, phi_domain_max), allow_resampling=allow_resampling, force_resample=force_resample)
+            # Apply lateral mixing bounds if enabled (now sign-aware)
+            if self.lateral_scale is not None:
+                s_min_per_q, s_max_per_q = self._apply_lateral_mixing_bounds_per_q(s_min_per_q, s_max_per_q)
+            
+            # Union across q to form Φ input domain
+            Phi_domain_min = s_min_per_q.min().item()
+            Phi_domain_max = s_max_per_q.max().item()
+            if Phi_domain_min >= Phi_domain_max:
+                Phi_domain_max = Phi_domain_min + 1e-4
+            
+            self.Phi.update_domain((Phi_domain_min, Phi_domain_max), 
+                                   allow_resampling=allow_resampling,
+                                   force_resample=force_resample)
             
             # Initialize codomain to match domain (one time only)
             if CONFIG['train_phi_codomain'] and not self.codomain_initialized_from_domain:
-                self.initialize_codomain_from_domain(phi_domain_min, phi_domain_max)
+                self.initialize_codomain_from_domain(Phi_domain_min, Phi_domain_max)
                 self.codomain_initialized_from_domain = True
     
     def initialize_codomain_from_domain(self, domain_min, domain_max):
@@ -599,46 +885,215 @@ class SprecherLayerBlock(nn.Module):
                 print(f"Layer {self.layer_num}: Initialized Phi codomain to match domain [{domain_min:.3f}, {domain_max:.3f}]")
                 print(f"  cc = {domain_center:.3f}, cr = {domain_radius:.3f}")
     
-    def compute_output_range_theoretical(self):
-        """Compute theoretical output range of this block."""
-        # Get the actual output range of Φ
-        phi_range = self.Phi.get_actual_output_range()
+    def compute_pooling_residual_bounds(self, input_interval):
+        """
+        Compute tight bounds for pooling residual contributions (union across outputs).
         
-        # If residual connections are used, we need to account for them
-        if CONFIG['use_residual_weights'] and self.input_range is not None:
-            if self.residual_weight is not None:
-                # Scalar residual weight
-                residual_contribution_min = self.residual_weight.item() * self.input_range.min
-                residual_contribution_max = self.residual_weight.item() * self.input_range.max
+        NOTE: Kept for backward compatibility. The per-output variant is used for
+        tighter composition in compute_output_range_theoretical.
+        """
+        if self.residual_pooling_weights is None:
+            return Interval(0, 0)
+        
+        with torch.no_grad():
+            # Initialize bounds for each output
+            output_bounds = []
+            
+            for out_idx in range(self.d_out):
+                # Find which inputs contribute to this output
+                contributing_inputs = (self.pooling_assignment == out_idx).nonzero(as_tuple=True)[0]
                 
-                # Account for both positive and negative weights
-                if self.residual_weight.item() >= 0:
-                    final_min = phi_range.min + residual_contribution_min
-                    final_max = phi_range.max + residual_contribution_max
-                else:
-                    final_min = phi_range.min + residual_contribution_max
-                    final_max = phi_range.max + residual_contribution_min
-            elif self.residual_pooling_weights is not None:
-                # For pooling, we aggregate weighted inputs
-                # Conservative estimate: all weights could be positive or negative
-                weight_sum_max = torch.sum(torch.abs(self.residual_pooling_weights)).item()
-                input_bound = max(abs(self.input_range.min), abs(self.input_range.max))
-                residual_bound = weight_sum_max * input_bound
-                final_min = phi_range.min - residual_bound
-                final_max = phi_range.max + residual_bound
-            elif self.residual_broadcast_weights is not None:
-                # For broadcasting, each output is scaled
-                weight_bound = torch.max(torch.abs(self.residual_broadcast_weights)).item()
-                input_bound = max(abs(self.input_range.min), abs(self.input_range.max))
-                residual_bound = weight_bound * input_bound
-                final_min = phi_range.min - residual_bound
-                final_max = phi_range.max + residual_bound
+                if len(contributing_inputs) == 0:
+                    output_bounds.append(Interval(0, 0))
+                    continue
+                
+                # Compute contribution from each assigned input
+                contribution_min = 0
+                contribution_max = 0
+                
+                for in_idx in contributing_inputs:
+                    weight = self.residual_pooling_weights[in_idx].item()
+                    
+                    if weight >= 0:
+                        contribution_min += weight * input_interval.min
+                        contribution_max += weight * input_interval.max
+                    else:
+                        contribution_min += weight * input_interval.max
+                        contribution_max += weight * input_interval.min
+                
+                output_bounds.append(Interval(contribution_min, contribution_max))
+            
+            # Return the union of all output bounds
+            final_bounds = output_bounds[0]
+            for bounds in output_bounds[1:]:
+                final_bounds = final_bounds.union(bounds)
+            
+            return final_bounds
+
+    def compute_pooling_residual_bounds_per_output(self, input_interval, a_per_dim=None, b_per_dim=None):
+        """
+        NEW (tight): Compute per-output pooling residual intervals for composition.
+        Supports optional per-dimension intervals (a_per_dim, b_per_dim).
+        Returns:
+            r_min_per_q (tensor shape [d_out]), r_max_per_q (tensor shape [d_out])
+        """
+        device = self.phi.knots.device
+        if self.residual_pooling_weights is None:
+            return (torch.zeros(self.d_out, device=device),
+                    torch.zeros(self.d_out, device=device))
+        
+        with torch.no_grad():
+            w = self.residual_pooling_weights.to(device)  # (d_in,)
+            assign = self.pooling_assignment.to(device)   # (d_in,)
+            
+            if a_per_dim is not None and b_per_dim is not None:
+                a_vec = torch.as_tensor(a_per_dim, device=device, dtype=torch.float32)
+                b_vec = torch.as_tensor(b_per_dim, device=device, dtype=torch.float32)
+                # Contribution of each input (min/max depending on weight sign) USING per-dim intervals
+                contrib_min = torch.where(w >= 0, w * a_vec, w * b_vec)
+                contrib_max = torch.where(w >= 0, w * b_vec, w * a_vec)
             else:
-                final_min = phi_range.min
-                final_max = phi_range.max
-        else:
-            final_min = phi_range.min
-            final_max = phi_range.max
+                # Fallback to scalar interval
+                a, b = input_interval.min, input_interval.max
+                contrib_min = torch.where(w >= 0, w * a, w * b)
+                contrib_max = torch.where(w >= 0, w * b, w * a)
+            
+            # Sum contributions per assigned output using scatter_add
+            r_min_per_q = torch.zeros(self.d_out, device=device)
+            r_max_per_q = torch.zeros(self.d_out, device=device)
+            r_min_per_q.scatter_add_(0, assign, contrib_min)
+            r_max_per_q.scatter_add_(0, assign, contrib_max)
+            
+            return r_min_per_q, r_max_per_q
+    
+    def compute_output_range_theoretical(self):
+        """Compute theoretical output range of this block using per-q tight composition (uses per-channel intervals when available)."""
+        with torch.no_grad():
+            device = self.phi.knots.device
+            q_values = torch.arange(self.d_out, device=device, dtype=torch.float32)
+            
+            # Prepare per-dimension input intervals if provided
+            if self.input_min_per_dim is not None and self.input_max_per_dim is not None:
+                a_vec = torch.as_tensor(self.input_min_per_dim, device=device, dtype=torch.float32)
+                b_vec = torch.as_tensor(self.input_max_per_dim, device=device, dtype=torch.float32)
+                if a_vec.numel() != self.d_in or b_vec.numel() != self.d_in:
+                    a_vec = torch.full((self.d_in,), self.input_range.min, device=device)
+                    b_vec = torch.full((self.d_in,), self.input_range.max, device=device)
+                # Tight s-bounds using per-dim intervals
+                s_min_per_q, s_max_per_q = self._compute_s_bounds_per_q(a_vec, b_vec)
+            else:
+                # Fallback: use global bounds with λ+ / λ− trick (original behavior)
+                eta_val = self.eta.item()
+                phi_inputs_min = self.input_range.min + eta_val * q_values
+                phi_inputs_max = self.input_range.max + eta_val * q_values
+                phi_at_min = self.phi(phi_inputs_min)
+                phi_at_max = self.phi(phi_inputs_max)
+                phi_min_per_q = torch.minimum(phi_at_min, phi_at_max)
+                phi_max_per_q = torch.maximum(phi_at_min, phi_at_max)
+                lambda_pos = torch.clamp(self.lambdas, min=0).sum().item()
+                lambda_neg = torch.clamp(self.lambdas, max=0).sum().item()
+                s_min_per_q = lambda_pos * phi_min_per_q + lambda_neg * phi_max_per_q + Q_VALUES_FACTOR * q_values
+                s_max_per_q = lambda_pos * phi_max_per_q + lambda_neg * phi_min_per_q + Q_VALUES_FACTOR * q_values
+            
+            # Lateral mixing (now sign-aware endpoint bounds)
+            if self.lateral_scale is not None:
+                s_min_per_q, s_max_per_q = self._apply_lateral_mixing_bounds_per_q(s_min_per_q, s_max_per_q)
+            
+            # Per-q Φ output ranges (evaluate endpoints + interior knots)
+            Phi_at_smin = self.Phi(s_min_per_q)
+            Phi_at_smax = self.Phi(s_max_per_q)
+            y_min_per_q = torch.minimum(Phi_at_smin, Phi_at_smax)
+            y_max_per_q = torch.maximum(Phi_at_smin, Phi_at_smax)
+            
+            # Check interior knots per q
+            knots = self.Phi.knots  # (K,)
+            Phi_at_knots = self.Phi(knots)  # (K,)
+            K = knots.shape[0]
+            mask = (knots.unsqueeze(0) >= s_min_per_q.unsqueeze(1)) & (knots.unsqueeze(0) <= s_max_per_q.unsqueeze(1))
+            if mask.any():
+                Yk = Phi_at_knots.unsqueeze(0).expand(self.d_out, K)
+                Yk_min = torch.where(mask, Yk, torch.full_like(Yk, float('inf'))).min(dim=1).values
+                Yk_max = torch.where(mask, Yk, torch.full_like(Yk, float('-inf'))).max(dim=1).values
+                has_knots = mask.any(dim=1)
+                y_min_per_q = torch.where(has_knots, torch.minimum(y_min_per_q, Yk_min), y_min_per_q)
+                y_max_per_q = torch.where(has_knots, torch.maximum(y_max_per_q, Yk_max), y_max_per_q)
+            
+            # Residuals per q using per-dimension intervals when available
+            if CONFIG['use_residual_weights'] and self.input_range is not None:
+                if self.residual_weight is not None:
+                    # Scalar residual per output (d_in == d_out): per-q bounds via per-dim intervals
+                    w = self.residual_weight.to(device)
+                    if self.input_min_per_dim is not None and self.input_max_per_dim is not None:
+                        a_vec = torch.as_tensor(self.input_min_per_dim, device=device, dtype=torch.float32)
+                        b_vec = torch.as_tensor(self.input_max_per_dim, device=device, dtype=torch.float32)
+                        # Ensure correct length
+                        if a_vec.numel() != self.d_in or b_vec.numel() != self.d_in:
+                            a_vec = torch.full((self.d_in,), self.input_range.min, device=device)
+                            b_vec = torch.full((self.d_in,), self.input_range.max, device=device)
+                        r_min_per_q = torch.where(w >= 0, w * a_vec, w * b_vec)
+                        r_max_per_q = torch.where(w >= 0, w * b_vec, w * a_vec)
+                    else:
+                        # Fallback to global interval
+                        a, b = self.input_range.min, self.input_range.max
+                        r_lo, r_hi = (w * a, w * b) if w.item() >= 0 else (w * b, w * a)
+                        r_min_per_q = torch.full((self.d_out,), r_lo.item(), device=device)
+                        r_max_per_q = torch.full((self.d_out,), r_hi.item(), device=device)
+                elif self.residual_pooling_weights is not None:
+                    if self.input_min_per_dim is not None and self.input_max_per_dim is not None:
+                        a_vec = torch.as_tensor(self.input_min_per_dim, device=device, dtype=torch.float32)
+                        b_vec = torch.as_tensor(self.input_max_per_dim, device=device, dtype=torch.float32)
+                        r_min_per_q, r_max_per_q = self.compute_pooling_residual_bounds_per_output(
+                            Interval(self.input_range.min, self.input_range.max),
+                            a_per_dim=a_vec, b_per_dim=b_vec
+                        )
+                    else:
+                        # Fallback to global interval
+                        a, b = self.input_range.min, self.input_range.max
+                        r_min_per_q, r_max_per_q = self.compute_pooling_residual_bounds_per_output(Interval(a, b))
+                        r_min_per_q = r_min_per_q.to(device)
+                        r_max_per_q = r_max_per_q.to(device)
+                elif self.residual_broadcast_weights is not None:
+                    # Broadcasting case: per-q via per-dim intervals if available
+                    w = self.residual_broadcast_weights.to(device)  # (d_out,)
+                    src = self.broadcast_sources.to(device)         # (d_out,)
+                    if self.input_min_per_dim is not None and self.input_max_per_dim is not None:
+                        a_vec = torch.as_tensor(self.input_min_per_dim, device=device, dtype=torch.float32)
+                        b_vec = torch.as_tensor(self.input_max_per_dim, device=device, dtype=torch.float32)
+                        if a_vec.numel() != self.d_in or b_vec.numel() != self.d_in:
+                            a_vec = torch.full((self.d_in,), self.input_range.min, device=device)
+                            b_vec = torch.full((self.d_in,), self.input_range.max, device=device)
+                        a_src = a_vec[src]  # (d_out,)
+                        b_src = b_vec[src]  # (d_out,)
+                        r_min_per_q = torch.where(w >= 0, w * a_src, w * b_src)
+                        r_max_per_q = torch.where(w >= 0, w * b_src, w * a_src)
+                    else:
+                        a, b = self.input_range.min, self.input_range.max
+                        r_min_per_q = torch.where(w >= 0, w * a, w * b)
+                        r_max_per_q = torch.where(w >= 0, w * b, w * a)
+                else:
+                    r_min_per_q = torch.zeros(self.d_out, device=device)
+                    r_max_per_q = torch.zeros(self.d_out, device=device)
+            else:
+                r_min_per_q = torch.zeros(self.d_out, device=device)
+                r_max_per_q = torch.zeros(self.d_out, device=device)
+            
+            # Compose Φ and residual per-q (safe Minkowski sum)
+            final_min_per_q = y_min_per_q + r_min_per_q
+            final_max_per_q = y_max_per_q + r_max_per_q
+
+            # Store per-q outputs for downstream per-channel propagation
+            self.output_min_per_q = final_min_per_q.detach().clone()
+            self.output_max_per_q = final_max_per_q.detach().clone()
+
+            # Aggregate to layer output_range
+            if self.is_final:
+                # Final block sums its outputs -> use Minkowski sum across q
+                final_min = final_min_per_q.sum().item()
+                final_max = final_max_per_q.sum().item()
+            else:
+                # Vector output: union across components for global min/max
+                final_min = final_min_per_q.min().item()
+                final_max = final_max_per_q.max().item()
         
         self.output_range = TheoreticalRange(final_min, final_max)
         return self.output_range
@@ -921,29 +1376,124 @@ class SprecherMultiLayerNetwork(nn.Module):
     
     def update_all_domains(self, allow_resampling=True, force_resample=False):
         """
-        Update all spline domains based on theoretical bounds.
+        Update all spline domains based on theoretical bounds WITH normalization handling.
         
         Args:
             allow_resampling: If False, prevent spline coefficient resampling during domain updates
             force_resample: If True, force resampling regardless of total_evaluations
         """
-        current_range = TheoreticalRange(0.0, 1.0)  # Input is in [0,1]
+        device = next(self.parameters()).device if any(True for _ in self.parameters()) else torch.device('cpu')
+
+        # Start with input in [0,1]^n
+        current_interval = Interval(0.0, 1.0)
+        # NEW: per-channel intervals for propagation (start uniform)
+        current_min_per_dim = torch.zeros(self.input_dim, device=device)
+        current_max_per_dim = torch.ones(self.input_dim, device=device)
         
-        for layer in self.layers:
+        for layer_idx, layer in enumerate(self.layers):
+            # Handle normalization BEFORE block if configured
+            if self.norm_type != 'none' and self.norm_position == 'before':
+                norm_layer = self.norm_layers[layer_idx]
+                if not isinstance(norm_layer, nn.Identity):
+                    if isinstance(norm_layer, nn.BatchNorm1d):
+                        # Compute global interval (training conservative)
+                        current_interval = compute_batchnorm_bounds(
+                            current_interval, norm_layer, training_mode=self.training
+                        )
+                        # Propagate per-dim as uniform (conservative)
+                        current_min_per_dim = torch.full((layer.d_in,), current_interval.min, device=device)
+                        current_max_per_dim = torch.full((layer.d_in,), current_interval.max, device=device)
+                    elif isinstance(norm_layer, nn.LayerNorm):
+                        current_interval = compute_layernorm_bounds(
+                            current_interval, norm_layer, layer.d_in
+                        )
+                        # Propagate per-dim as uniform (conservative)
+                        current_min_per_dim = torch.full((layer.d_in,), current_interval.min, device=device)
+                        current_max_per_dim = torch.full((layer.d_in,), current_interval.max, device=device)
+            
+            # Update layer's per-channel inputs for tighter computations
+            layer.input_min_per_dim = current_min_per_dim.detach().clone().to(layer.phi.knots.device)
+            layer.input_max_per_dim = current_max_per_dim.detach().clone().to(layer.phi.knots.device)
+
+            # Update layer's input range (global)
+            current_range = TheoreticalRange(current_interval.min, current_interval.max)
+            
             # Update φ domain based on input range
-            layer.update_phi_domain_theoretical(current_range, allow_resampling=allow_resampling, force_resample=force_resample)
+            layer.update_phi_domain_theoretical(current_range, allow_resampling, force_resample)
             
-            # Update Φ domain based on current lambdas
-            layer.update_Phi_domain_theoretical(allow_resampling=allow_resampling, force_resample=force_resample)
+            # Update Φ domain using available per-channel info
+            layer.update_Phi_domain_theoretical(allow_resampling, force_resample)
             
-            # Compute this layer's output range for next layer
-            current_range = layer.compute_output_range_theoretical()
+            # Compute this layer's output range
+            layer.compute_output_range_theoretical()
+            
+            # Prepare per-channel outputs for next layer (pre-normalization)
+            if layer.is_final:
+                # If final (sum) block, output is scalar; next layer doesn't exist in standard arch
+                next_min_per_dim = torch.tensor([layer.output_range.min], device=device)
+                next_max_per_dim = torch.tensor([layer.output_range.max], device=device)
+            else:
+                next_min_per_dim = layer.output_min_per_q.to(device)
+                next_max_per_dim = layer.output_max_per_q.to(device)
+            
+            # Get global output interval (for normalization and logging)
+            output_interval = Interval(layer.output_range.min, layer.output_range.max)
+            
+            # Handle normalization AFTER block if configured
+            if self.norm_type != 'none' and self.norm_position == 'after':
+                norm_layer = self.norm_layers[layer_idx]
+                if not isinstance(norm_layer, nn.Identity):
+                    if isinstance(norm_layer, nn.BatchNorm1d):
+                        # Global (safe) interval for BN (training conservative)
+                        output_interval = compute_batchnorm_bounds(
+                            output_interval, norm_layer, training_mode=self.training
+                        )
+                        # Per-channel: if in EVAL, we can transform per-dim bounds using running stats+affine
+                        if not self.training:
+                            eps = norm_layer.eps
+                            running_mean = norm_layer.running_mean.to(device)
+                            running_var = norm_layer.running_var.to(device)
+                            std = torch.sqrt(running_var + eps)
+                            # Standardize per channel
+                            lo = (next_min_per_dim - running_mean) / std
+                            hi = (next_max_per_dim - running_mean) / std
+                            std_min = torch.minimum(lo, hi)
+                            std_max = torch.maximum(lo, hi)
+                            if norm_layer.affine:
+                                w = norm_layer.weight.to(device)
+                                b = norm_layer.bias.to(device)
+                                next_min_per_dim = torch.where(w >= 0, w * std_min + b, w * std_max + b)
+                                next_max_per_dim = torch.where(w >= 0, w * std_max + b, w * std_min + b)
+                            else:
+                                next_min_per_dim = std_min
+                                next_max_per_dim = std_max
+                        else:
+                            # Training: use uniform conservative range
+                            next_min_per_dim = torch.full_like(next_min_per_dim, output_interval.min)
+                            next_max_per_dim = torch.full_like(next_max_per_dim, output_interval.max)
+                    elif isinstance(norm_layer, nn.LayerNorm):
+                        # Apply conservative global bound (feature-coupled)
+                        num_features = 1 if layer.is_final else layer.d_out
+                        output_interval = compute_layernorm_bounds(
+                            output_interval, norm_layer, num_features
+                        )
+                        # Per-dim arrays become uniform conservative bounds
+                        next_min_per_dim = torch.full_like(next_min_per_dim, output_interval.min)
+                        next_max_per_dim = torch.full_like(next_max_per_dim, output_interval.max)
+            
+            # Update for next layer
+            current_min_per_dim = next_min_per_dim
+            current_max_per_dim = next_max_per_dim
+            # Global interval for next φ update
+            current_interval = Interval(current_min_per_dim.min().item(), current_max_per_dim.max().item())
             
             # Debug output if configured
             if CONFIG.get('debug_domains', False):
                 print(f"Layer {layer.layer_num}: input_range={layer.input_range}, output_range={layer.output_range}")
                 print(f"  phi domain: [{layer.phi.in_min:.3f}, {layer.phi.in_max:.3f}]")
                 print(f"  Phi domain: [{layer.Phi.in_min:.3f}, {layer.Phi.in_max:.3f}]")
+                if layer_idx < len(self.norm_layers) and self.norm_type != 'none':
+                    print(f"  After normalization: [{current_interval.min:.3f}, {current_interval.max:.3f}]")
     
     def forward(self, x):
         x_in = x
@@ -1026,3 +1576,101 @@ class SprecherMultiLayerNetwork(nn.Module):
             # Restore theoretical ranges
             if ranges_key in domain_states:
                 layer.set_theoretical_ranges(domain_states[ranges_key])
+
+
+def test_domain_tightness(model, dataset, n_samples=10000):
+    """Test that computed domains are both safe and tight."""
+    device = next(model.parameters()).device
+    
+    # Generate many samples to test domain coverage
+    x_test = torch.rand(n_samples, dataset.input_dim, device=device)
+    
+    # Track actual min/max values seen at each spline
+    actual_ranges = {}
+    
+    def hook_fn(name):
+        def hook(module, input, output):
+            if hasattr(module, 'in_min'):  # It's a spline
+                actual_min = input[0].min().item()
+                actual_max = input[0].max().item()
+                
+                if name not in actual_ranges:
+                    actual_ranges[name] = Interval(actual_min, actual_max)
+                else:
+                    actual_ranges[name] = actual_ranges[name].union(
+                        Interval(actual_min, actual_max)
+                    )
+                
+                # Check safety: no values outside computed domain
+                if actual_min < module.in_min - 1e-6 or actual_max > module.in_max + 1e-6:
+                    print(f"SAFETY VIOLATION in {name}:")
+                    print(f"  Computed: [{module.in_min:.6f}, {module.in_max:.6f}]")
+                    print(f"  Actual:   [{actual_min:.6f}, {actual_max:.6f}]")
+        return hook
+    
+    # Register hooks
+    handles = []
+    for i, layer in enumerate(model.layers):
+        handles.append(layer.phi.register_forward_hook(hook_fn(f"layer_{i}_phi")))
+        handles.append(layer.Phi.register_forward_hook(hook_fn(f"layer_{i}_Phi")))
+    
+    # Run forward passes
+    with torch.no_grad():
+        for batch_start in range(0, n_samples, 100):
+            batch_end = min(batch_start + 100, n_samples)
+            _ = model(x_test[batch_start:batch_end])
+    
+    # Remove hooks
+    for handle in handles:
+        handle.remove()
+    
+    # Check tightness: how much slack in computed domains?
+    print("\nDomain Tightness Analysis:")
+    print("=" * 60)
+    violations_found = False
+    
+    for i, layer in enumerate(model.layers):
+        phi_name = f"layer_{i}_phi"
+        Phi_name = f"layer_{i}_Phi"
+        
+        if phi_name in actual_ranges:
+            actual = actual_ranges[phi_name]
+            computed = Interval(layer.phi.in_min, layer.phi.in_max)
+            slack_min = actual.min - computed.min
+            slack_max = computed.max - actual.max
+            
+            # Check for violations
+            if actual.min < computed.min - 1e-6 or actual.max > computed.max + 1e-6:
+                violations_found = True
+                print(f"{phi_name}: VIOLATION DETECTED")
+            else:
+                print(f"✓ {phi_name}:")
+            
+            print(f"  Computed: {computed}")
+            print(f"  Actual:   {actual}")
+            print(f"  Slack:    [{slack_min:.6f}, {slack_max:.6f}]")
+        
+        if Phi_name in actual_ranges:
+            actual = actual_ranges[Phi_name]
+            computed = Interval(layer.Phi.in_min, layer.Phi.in_max)
+            slack_min = actual.min - computed.min
+            slack_max = computed.max - actual.max
+            
+            # Check for violations
+            if actual.min < computed.min - 1e-6 or actual.max > computed.max + 1e-6:
+                violations_found = True
+                print(f"{Phi_name}: VIOLATION DETECTED")
+            else:
+                print(f"✓ {Phi_name}:")
+            
+            print(f"  Computed: {computed}")
+            print(f"  Actual:   {actual}")
+            print(f"  Slack:    [{slack_min:.6f}, {slack_max:.6f}]")
+    
+    print("=" * 60)
+    if violations_found:
+        print("DOMAIN VIOLATIONS DETECTED - Computed domains are not safe!")
+    else:
+        print("✓ All domains are safe - no violations detected")
+    
+    return not violations_found
