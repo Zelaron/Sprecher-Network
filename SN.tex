@@ -74,9 +74,10 @@ SNs are built upon the following principles, directly reflecting Sprecher's form
 Our architecture generalizes this classical single-layer shift-and-sum construction to a multi-layer network by composing these functional units, which we term \emph{Sprecher blocks}. The mapping from one hidden layer representation to the next is realized by such a block. Unlike MLPs with fixed node activations, LANs with learnable node activations, or KANs with learnable edge activations, SNs concentrate their learnable non-linearity into the two shared splines per block, applied in a specific structure involving shifts and learnable linear weights. This imposes a strong inductive bias, trading the flexibility of independent weights/splines for extreme parameter sharing. Diversity in the transformation arises from the mixing weights ($\lambda$), the index-dependent shifts ($q$), and when enabled, the lateral mixing connections.
 
 Concretely, each Sprecher block applies the transformation:
-$$ (x_i)_{i=1}^{d_{\mathrm{in}}} \;\mapsto\; \Bigl[\Phi\Bigl(\sum_{i=1}^{d_{\mathrm{in}}}\lambda_{i}\,\phi(x_i+\eta\,q)+\alpha q\Bigr)\Bigr]_{q=0}^{d_{\mathrm{out}}-1}.$$
-Note that $\lambda_i$ depends only on the input index $i$, not on the output index $q$, maintaining fidelity to Sprecher's original 1965 construction. When lateral mixing is enabled, the pre-activation values undergo weighted mixing with neighboring outputs before the $\Phi$ transformation.
-For scalar outputs, the outputs of the final Sprecher block are aggregated (via summation over $q$). For vector outputs, an additional block is used without final summation.
+$$ (x_i)_{i=1}^{d_{\mathrm{in}}} \;\mapsto\; \Bigl[\Phi\Bigl(\sum_{i=1}^{d_{\mathrm{in}}}\lambda_i\,\phi(x_i+\eta\,q)+\alpha q \;+\; \tau^{(\ell)}\!\!\sum_{j\in\mathcal{N}(q)} \omega_{q,j}^{(\ell)}\, s_j^{(\ell)}\Bigr)\Bigr]_{q=0}^{d_{\mathrm{out}}-1},$$
+where $s_q^{(\ell)}=\sum_{i=1}^{d_{\mathrm{in}}}\lambda^{(\ell)}_i\,\phi^{(\ell)}(x_i+\eta^{(\ell)} q)+\alpha q$.
+Lateral mixing (if enabled) modifies the pre-activation $s_q^{(\ell)}$ \emph{before} $\Phi^{(\ell)}$, whereas residual connections (if enabled) are applied \emph{after} $\Phi^{(\ell)}$ and do not introduce lateral coupling across $q$.
+For scalar outputs, the outputs of the final Sprecher block are aggregated (via summation); for vector outputs, no final summation is applied.
 
 In Sprecher's original work, one layer (block) with $d_{\mathrm{out}} = 2n+1$ outputs (where $n=d_{\mathrm{in}}$) was sufficient for universality. Our approach stacks $L$ Sprecher blocks to create a deep network progression:
 $$ d_0 \to d_1 \to \cdots \to d_{L-1} \to d_L, $$
@@ -135,7 +136,7 @@ Several optional components can enhance the basic Sprecher block:
     \end{cases}$$
     where $w^{\text{bcast}} \in \mathbb{R}^{d_{\mathrm{out}}}$ and $w^{\text{pool}} \in \mathbb{R}^{d_{\mathrm{in}}}$ are learnable weight vectors. Remarkably, empirical evidence suggests these constrained connections in many cases perform as well as or better than full projections, despite using orders of magnitude fewer parameters.
     
-    \item \textbf{Lateral mixing connections:} Inspired by the success of attention mechanisms and lateral connections in vision models, we introduce an optional intra-block communication mechanism. Before applying the outer spline $\Phi^{(\ell)}$, each output dimension can incorporate weighted contributions from neighboring outputs:
+    \item \textbf{Lateral mixing connections (distinct from cyclic residuals):} Inspired by the success of attention mechanisms and lateral connections in vision models, we introduce an optional intra-block communication mechanism. Before applying the outer spline $\Phi^{(\ell)}$, each output dimension can incorporate weighted contributions from neighboring outputs:
     $$\tilde{s}_q^{(\ell)} = s_q^{(\ell)} + \tau^{(\ell)} \cdot \begin{cases}
     \omega_q^{(\ell)} \cdot s_{(q+1) \bmod d_{\mathrm{out}}}^{(\ell)} & \text{(cyclic)} \\
     \omega_{q,\text{fwd}}^{(\ell)} \cdot s_{(q+1) \bmod d_{\mathrm{out}}}^{(\ell)} + \omega_{q,\text{bwd}}^{(\ell)} \cdot s_{(q-1) \bmod d_{\mathrm{out}}}^{(\ell)} & \text{(bidirectional)}
@@ -170,10 +171,10 @@ The cyclic residual design can be viewed as implementing a structured sparse pro
 
 The unique structure of Sprecher Networks requires careful consideration when incorporating normalization techniques. While standard neural networks typically normalize individual neuron activations, the shared-spline architecture of SNs suggests a different approach: normalizing the entire vector output $\mathbf{h}^{(\ell)} \in \mathbb{R}^{d_\ell}$ of each Sprecher block as a cohesive unit.
 
-When batch normalization is applied, it can be positioned either before or after each Sprecher block:
+Batch normalization can be placed either \emph{before} or \emph{after} a Sprecher block. In both placements it acts on the vector features $\mathbf{h}$, not on the internal scalars $s^{(\ell)}_q$, so the additive $+\alpha q$ and any lateral mixing remain entirely inside $\Phi^{(\ell)}$.
 \begin{itemize}
-    \item \textbf{After block} (default): Normalization is applied to $\mathbf{h}^{(\ell)} \in \mathbb{R}^{d_\ell}$. For a final block whose outputs are summed to produce a scalar, the normalization effectively applies to a single value (using $\mathrm{num_features}=1$).
-    \item \textbf{Before block}: Normalization is applied to the input $\mathbf{h}^{(\ell-1)} \in \mathbb{R}^{d_{\ell-1}}$ before it enters the block.
+    \item \textbf{After block (default).} Apply BN to the block output $\mathbf{h}^{(\ell)} \in \mathbb{R}^{d_\ell}$. For a final block whose outputs are summed to a scalar, this reduces to normalizing a single feature.
+    \item \textbf{Before block.} Apply BN to the input $\mathbf{h}^{(\ell-1)} \in \mathbb{R}^{d_{\ell-1}}$ before it enters the block.
 \end{itemize}
 
 The transformation takes the familiar form:
@@ -354,7 +355,7 @@ The following proposition uses matrix weights $\lambda_{i,q}^{(\ell)}$ to establ
 \end{remark}
 
 \begin{prop} \label{prop:SNareLAN}
-    An SN with matrix weights (cf. \eqref{eq:defsn}) and without lateral mixing is a LAN, where: 
+    A matrix-weighted variant of a Sprecher Network (i.e., with per-output mixing weights $\lambda^{(\ell)}_{i,q}$ in each block) and with lateral mixing disabled is a LAN, where:
     \begin{itemize}
         \item in odd layers $k = 2\ell - 1$, the weight matrix $W^{(k)} \in \mathbb{R}^{d_\ell d_{\ell-1} \times d_{\ell-1}}$ is fixed to  $[I | \cdots | I]^\top$, where $I$ is the $d_{\ell-1} \times d_{\ell-1}$ identity matrix, the bias vector has only one learnable parameter $\eta^{(\ell)}$ and is structured as $b^{(k)} = \eta^{(\ell)}(0,\ldots,0, 1, \ldots, 1, \ldots, d_{\ell}-1, \ldots, d_{\ell}-1)^\top \in \mathbb{R}^{d_\ell d_{\ell-1}}$, and the activation is $\sigma^{(k)} = \phi^{(\ell)}$, 
         \item in even layers $k = 2\ell $, the learnable weight matrix $W^{(k)} \in \mathbb{R}^{d_\ell \times d_\ell d_{\ell-1}}$ is structured as
@@ -608,9 +609,11 @@ Proving Conjectures \ref{conj:vector} and \ref{conj:deep_universal} rigorously w
 \subsection{Trainable splines}
 For practical implementations, piecewise-linear splines are used for both $\phi^{(\ell)}$ and $\Phi^{(\ell)}$. While these are only $C^0$ continuous (not smooth in the classical sense), they offer excellent computational efficiency and sufficient expressiveness for function approximation. Each piecewise linear spline with $G$ intervals requires $G+1$ parameters (the values at the $G+1$ knot locations). The piecewise linear structure also simplifies domain analysis, as the extrema of such splines occur at knot locations, enabling exact computation of output ranges during forward propagation. Each spline can be defined by a set of knots (x-coordinates) and corresponding coefficients (y-coordinates). A common approach is to use fixed, uniformly spaced knots over the spline's domain, with learnable coefficients. The number of knots is a hyperparameter that affects both expressivity and computational cost.
 
-For the inner spline $\phi^{(\ell)}$, the codomain is typically fixed to $[0, 1]$. Strict monotonicity (strictly increasing) is enforced during training. This can be achieved through various parameterization strategies, such as using a transformation that guarantees positive increments between successive spline values. One effective approach parameterizes the differences between knot values in log-space and applies a positive activation function (e.g., softplus), ensuring that the spline remains strictly increasing throughout training without requiring explicit constraints or projection steps. Specifically, the monotonic spline coefficients can be computed as the cumulative sum of positive increments, normalized to the [0,1] range. The spline should be initialized to provide a reasonable starting point, such as a roughly linear and increasing function within its range.
+For the inner spline $\phi^{(\ell)}$, we fix the codomain to $[0,1]$ and enforce \emph{strict} monotonicity of the knot values by parameterizing positive differences. Concretely, let $(v_k)_k$ be unconstrained parameters and set $\Delta_k=\operatorname{softplus}(v_k)>0$; then the coefficients are
+$$c_k \;=\; \frac{1}{\sum_j \Delta_j}\,\sum_{i\le k}\Delta_i,$$
+which yields a strictly increasing piecewise–linear map on its domain. Outside the domain we use constant extension, so $\phi^{(\ell)}(x)=0$ for inputs below the leftmost knot and $\phi^{(\ell)}(x)=1$ above the rightmost knot. The increments are initialized nearly uniform so that $\phi^{(\ell)}$ starts close to linear.
 
-The outer spline $\Phi^{(\ell)}$ operates on a domain determined by the network structure. Both the domain and codomain can be fixed or made trainable via parameters (e.g., center and radius). Trainable ranges add flexibility but also complexity to the optimization. Monotonicity is not required for $\Phi^{(\ell)}$.
+The outer spline $\Phi^{(\ell)}$ operates on a domain determined by the block’s bounds, and its codomain is parameterized as an interval $[\,c_c^{(\ell)}-c_r^{(\ell)},\,c_c^{(\ell)}+c_r^{(\ell)}\,]$ with trainable center $c_c^{(\ell)}$ and radius $c_r^{(\ell)}$. We initialize $(c_c^{(\ell)},c_r^{(\ell)})$ from the computed input domain so that $\Phi^{(\ell)}$ is near identity at initialization, and the parameters then adapt the output range during training. Monotonicity is not required for $\Phi^{(\ell)}$.
 
 \subsection{Shifts, weights, and optimization}
 Each block includes the learnable scalar shift $\eta^{(\ell)}$ and the learnable mixing weight vector $\lambda^{(\ell)} \in \mathbb{R}^{d_{\ell-1}}$. While Sprecher's original construction requires the shift parameter to be positive ($\eta > 0$), practical implementations can relax this constraint. As shown in Lemma~\ref{lem:domain_prop}, the theoretical domain computation handles both positive and negative values of $\eta^{(\ell)}$, allowing it to be trained as an unconstrained parameter initialized to a small positive value.
@@ -635,11 +638,11 @@ This reformulation reduces peak memory from $O(B \cdot N^2)$ to $O\!\bigl(B \cdo
 In practice, this enables training of architectures that would otherwise be infeasible. For example, a network with layers of width 512 might exhaust 32GB of RAM in parallel computation but trains comfortably with sequential processing. Empirically, memory reductions of 30-60\% are observed for wide architectures (layers exceeding 128 units) with computational overhead of only 15-25\%, making this a favorable trade-off when memory is the binding constraint.
 
 \begin{remark}[Preservation of mathematical structure]
-The sequential computation is a pure implementation optimization that maintains exact mathematical equivalence to the parallel formulation. The Sprecher formula remains unchanged; only the order of operations differs. This contrasts with approximation techniques like gradient checkpointing or reduced precision, which alter the computed values.
+The sequential computation is a pure implementation optimization that is mathematically exact: it produces identical outputs to the naive parallel formulation for any choice of parameters and inputs. It only reduces peak memory by avoiding materialization of the full $(B\times d_{\mathrm{in}}\times d_{\mathrm{out}})$ tensor of shifted inputs; it does not change the function being computed.
 \end{remark}
 
-\begin{remark}[Parallelism vs. memory trade-off]
-The sequential computation sacrifices GPU parallelism for memory efficiency. Modern accelerators with abundant parallelism but limited memory often benefit from this trade-off, especially during experimentation with architecture search where wide layers might be explored. The approach can be viewed as a form of gradient checkpointing applied at the intra-block level rather than between layers.
+\begin{remark}[Parallelism vs.\ memory trade-off]
+Sequential (per-$q$) evaluation reduces peak activation memory from $O(B\,d_{\mathrm{in}} d_{\mathrm{out}})$ to $O\!\bigl(B\,\max\{d_{\mathrm{in}}, d_{\mathrm{out}}\}\bigr)$, at the cost of less intra-layer parallelism. This is often advantageous on accelerators with ample compute but constrained memory. 
 \end{remark}
 
 \subsection{Theoretical domain computation}
@@ -656,7 +659,7 @@ $$\mathcal{D}_\phi = \begin{cases}
 \end{cases}$$
 
 \item Given that $\phi$ maps to $[0,1]$, the domain required for $\Phi$ without lateral mixing is:
-$$\left[\sum_{i: \lambda_i < 0} \lambda_i, \sum_{i: \lambda_i > 0} \lambda_i + \alpha(d_{out}-1)\right]$$
+$$\left[\sum_{i: \lambda_i < 0} \lambda_i,\; \sum_{i: \lambda_i > 0} \lambda_i + \alpha\bigl(d_{\mathrm{out}}-1\bigr)\right]$$
 where $\alpha$ is the scaling factor for the $q$ term (typically $\alpha = 1$).
 
 \item With lateral mixing, for cyclic mixing with scale $\tau$ and weights $\omega$, the domain for $\Phi$ must account for sign-aware neighbor contributions. For each output $q$, the mixed pre-activation bounds are:
@@ -699,13 +702,16 @@ This lemma enables a forward propagation algorithm for computing all spline doma
 \caption{Forward domain propagation with lateral mixing and per-dimension tracking}
 \label{alg:domain_prop}
 \begin{algorithmic}[1]
-    \State \textbf{Input:} Network parameters $\{\lambda^{(\ell)}, \eta^{(\ell)}, \tau^{(\ell)}, \omega^{(\ell)}\}_{\ell=1}^L$, input domain $[0,1]^n$
+    \State \textbf{Input:} Network parameters $\{\lambda^{(\ell)}, \eta^{(\ell)}, \phi^{(\ell)}, \Phi^{(\ell)}, \tau^{(\ell)}, \omega^{(\ell)}\}_{\ell=1}^L$, input domain $[0,1]^n$
     \State \textbf{Output:} Domains and ranges for all splines
     \State Initialize current range $\mathcal{R}_0 \leftarrow [0,1]^n$ (per-dimension when available)
     \For{each block $\ell = 1, \ldots, L$}
-        \State $\mathcal{D}_\phi^{(\ell)} \leftarrow$ apply Lemma \ref{lem:domain_prop} part (1) to $\mathcal{R}_{\ell-1}$
+        \If{normalization is applied \emph{before} block $\ell$}
+            \State Apply normalization bounds to $\mathcal{R}_{\ell-1}$ (training: conservative $[-4,4]$; eval: use running stats and affine), updating per-dimension intervals when available
+        \EndIf
+        \State $\mathcal{D}_\phi^{(\ell)} \leftarrow$ apply Lemma \ref{lem:domain_prop} part (1) to the current input range
         \If{per-dimension intervals available}
-            \State Compute per-$q$ bounds using Corollary
+            \State Compute per-$q$ bounds using the corollary (sign-splitting via $\lambda_i^\pm$ and $\phi(a_i+\eta q),\phi(b_i+\eta q)$)
         \Else
             \State $\mathcal{D}_\Phi^{(\ell)} \leftarrow$ apply Lemma \ref{lem:domain_prop} part (2)
         \EndIf
@@ -716,8 +722,8 @@ This lemma enables a forward propagation algorithm for computing all spline doma
         \If{block $\ell$ has residual connections}
             \State Adjust $\mathcal{R}_\ell$ according to Lemma \ref{lem:domain_prop} part (5)
         \EndIf
-        \If{normalization is applied after block $\ell$}
-            \State Apply normalization bounds (training: conservative $[-4,4]$; eval: use running stats)
+        \If{normalization is applied \emph{after} block $\ell$}
+            \State Apply normalization bounds (training: conservative $[-4,4]$; eval: use running stats and affine), updating per-dimension intervals when available
         \EndIf
     \EndFor
 \end{algorithmic}
