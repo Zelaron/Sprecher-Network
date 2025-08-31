@@ -446,147 +446,201 @@ These calculations illustrate the dramatic parameter reduction possible with SNs
 \section{Theoretical aspects and open questions}\label{sec:universality}
 
 \subsection{Relation to Sprecher (1965) and universality}
-As shown in Section \ref{sec:single_layer}, a single-layer ($L=1$) Sprecher Network with input dimension $d_0=n$ and output dimension $d_1 = 2n+1$, when configured with appropriate (potentially fixed) weights $\lambda^{(1)}_{i} = \lambda_i$ and shift $\eta^{(1)} = \eta$, directly reproduces Sprecher's 1965 formula \eqref{eq:sprecher_original} when lateral mixing is disabled.
-Sprecher proved that for any continuous function $f:[0,1]^n \to \mathbb{R}$, there exist a suitable monotonic $\phi$, a continuous $\Phi$, and constants $\lambda_p, \eta$ such that this representation holds \cite{sprecher1965}. This immediately implies:
+As shown in Section \ref{sec:single_layer}, a single-layer ($L=1$) Sprecher Network (SN) reduces exactly to Sprecher's constructive representation \eqref{eq:sprecher_original} when lateral mixing and residuals are disabled (i.e., $\tau=0$ and no residual connection), with the additive shift implemented by $\alpha q$ (set $\alpha=1$ to match \eqref{eq:sprecher_original}). In his 1965 paper, Sprecher proved that for any continuous function $f:[0,1]^n\to\mathbb{R}$ there exist a \emph{single} nondecreasing univariate function $\phi$, a continuous univariate function $\Phi$, real constants $\lambda_1,\ldots,\lambda_n$ and $\eta$, and an integer upper index $2n$ such that the representation \eqref{eq:sprecher_original} holds \cite{sprecher1965}. This immediately implies:
 
-\begin{theorem}[Universality of single-layer SNs]
-For any dimension $n \ge 1$ and any continuous function $f: [0,1]^n \to \mathbb{R}$, and any $\epsilon > 0$, there exists a single-layer Sprecher Network with architecture $n \to [2n+1] \to 1$, using sufficiently flexible (e.g., high knot count) continuous splines $\phi^{(1)}$ (monotonic) and $\Phi^{(1)}$, and appropriate parameters $\lambda^{(1)}, \eta^{(1)}$, such that the network output $\hat{f}(\mathbf{x})$ satisfies $\sup_{\mathbf{x} \in [0,1]^n} |f(\mathbf{x}) - \hat{f}(\mathbf{x})| < \epsilon$.
+\begin{theorem}[Universality of single-layer SNs]\label{thm:ua_single_layer}
+For any $n\ge 1$ and any $f\in C([0,1]^n)$, there exists a single-layer SN with $\tau=0$ and no residual connection that represents $f$ exactly in the form \eqref{eq:sprecher_original} (taking $d_{\mathrm{out}}=2n+1$ and $\alpha=1$). In particular, for every $\epsilon>0$ there is a single-layer SN (with $\tau=0$ and no residual) such that $\sup_{\mathbf{x}\in[0,1]^n}|f(\mathbf{x})-\hat f(\mathbf{x})|<\epsilon$.
 \end{theorem}
-Thus, single-layer SNs inherit the universal approximation property directly from Sprecher's constructive proof for functions defined on the unit hypercube. Notably, our use of weight vectors $\lambda_i$ rather than matrices $\lambda_{i,q}$ maintains complete fidelity to Sprecher's original formulation, which used constants $\lambda_p$ depending only on the input index. This is more than a historical curiosity: Sprecher's proof demonstrates that this constrained form is sufficient for universal approximation, suggesting that the additional parameters in a full matrix formulation may be redundant. The vector formulation enforces a specific structure where all output dimensions share the same linear combination of transformed inputs, with diversity arising solely from the shifts, a constraint that Sprecher showed does not limit expressivity in the single-layer case. The addition of lateral mixing connections, while not part of Sprecher's original construction, potentially enhances the network's ability to capture complex dependencies without violating the universality guarantee.
 
-While universality guarantees that an approximation exists, it doesn't quantify how the error behaves as the approximating functions (splines) become more refined. The following lemmas and theorem address the approximation rate achievable by replacing the ideal continuous functions in the Sprecher structure with finite-resolution piecewise-linear splines, assuming such an ideal network exists for the target function $f$.
+Thus, single-layer SNs inherit (indeed, contain) the family given by Sprecher's representation. In practice, however, we do not fit arbitrary $C^2$ univariate functions $\phi$ and $\Phi$ exactly; we parameterize them as splines. This motivates the following finite-parameter approximation analysis, which also clarifies how optional \emph{lateral mixing} (controlled by $\tau$ and $\omega$) and cyclic residuals affect constants but not rates.
+
+\medskip
+\noindent\textbf{Notation for a single block.}
+A (possibly mixed) Sprecher block $T:\mathbb{R}^{d_{\mathrm{in}}}\to\mathbb{R}^{d_{\mathrm{out}}}$ acts componentwise as
+\[
+[T(\mathbf{z})]_q \;=\; \Phi\!\Biggl(\,\underbrace{\sum_{i=1}^{d_{\mathrm{in}}}\lambda_i\,\phi(z_i+\eta q)+\alpha q}_{=:s_q}\;+\;\tau\sum_{j\in\mathcal{N}(q)}\omega_{qj}\,s_j\Biggr),
+\quad q=0,\ldots,d_{\mathrm{out}}-1,
+\]
+where $\lambda\in\mathbb{R}^{d_{\mathrm{in}}}$, $\eta,\alpha,\tau\in\mathbb{R}$, $\mathcal{N}(q)$ specifies the (optional) neighborhood used for lateral mixing, and $\omega=(\omega_{qj})$ are the mixing weights. When a cyclic residual connection is present, the block output is $T_{\mathrm{res}}(\mathbf{z})=T(\mathbf{z})+R(\mathbf{z})$; the analysis below applies to $T$ and extends to $T_{\mathrm{res}}$ by adding the Lipschitz constant of $R$ where relevant.
 
 \begin{lemma}[Single block approximation with piecewise-linear splines]\label{lem:single_block}
-Consider a single Sprecher block $T: \mathbb{R}^{d_{in}} \to \mathbb{R}^{d_{out}}$ defined by
-$$T(\mathbf{z})_q = \Phi\left(\sum_{i=1}^{d_{in}} \lambda_{i} \phi(z_i + \eta q) + \alpha q + \tau \sum_{j \in \mathcal{N}(q)} \omega_{q,j} s_j\right), \quad q = 0, \ldots, d_{out}-1$$
-where $\phi \in C^{2}(\mathbb{R})$ is monotonic, $\Phi \in C^{2}(\mathbb{R})$, $|\lambda_{i}| \leq \Lambda$, $\eta \in \mathbb{R}$, and $\tau, \omega_{q,j}$ are the lateral mixing parameters.
-
-Suppose the input satisfies $\mathbf{z} \in \mathcal{B}_{in} := [-B_{in}, B_{in}]^{d_{in}}$. Define:
-\begin{itemize}
-\item $I_\phi := [-B_{in} - |\eta|(d_{out}-1), B_{in} + |\eta|(d_{out}-1)]$ (domain containing all possible arguments to $\phi$)
-\item $I_\Phi := [-R_{out}, R_{out}]$ where $R_{out} := (1 + |\tau| \|\omega\|_\infty |\mathcal{N}|_{max})(\Lambda d_{in} \|\phi\|_{L^\infty(I_\phi)} + \alpha d_{out})$ (domain accounting for lateral mixing)
-\end{itemize}
-
-Let $\hat{\phi}$ be a monotonic piecewise-linear spline with $G_\phi$ uniformly spaced knots on $I_\phi$, and $\hat{\Phi}$ be a piecewise-linear spline with $G_\Phi$ uniformly spaced knots on $I_\Phi$. If
-$$\|\phi - \hat{\phi}\|_{L^\infty(I_\phi)} \leq \frac{\|\phi^{(2)}\|_{L^\infty(I_\phi)}}{8} \left(\frac{|I_\phi|}{G_\phi}\right)^{2}$$
-$$\|\Phi - \hat{\Phi}\|_{L^\infty(I_\Phi)} \leq \frac{\|\Phi^{(2)}\|_{L^\infty(I_\Phi)}}{8} \left(\frac{|I_\Phi|}{G_\Phi}\right)^{2}$$
-then the approximate block $\hat{T}$ using $\hat{\phi}, \hat{\Phi}$ satisfies
-$$\sup_{\mathbf{z} \in \mathcal{B}_{in}} \|T(\mathbf{z}) - \hat{T}(\mathbf{z})\|_\infty \leq K_T \max\left\{\left(\frac{|I_\phi|}{G_\phi}\right)^{2}, \left(\frac{|I_\Phi|}{G_\Phi}\right)^{2}\right\}$$
-where 
-$$K_T := \frac{L_\Phi \Lambda d_{in} (1 + |\tau| \|\omega\|_\infty |\mathcal{N}|_{max}) \|\phi^{(2)}\|_{L^\infty(I_\phi)} + \|\Phi^{(2)}\|_{L^\infty(I_\Phi)}}{8}$$
-and $L_\Phi$ is the Lipschitz constant of $\Phi$ on $I_\Phi$.
+Fix $B_{\mathrm{in}}>0$ and assume $\mathbf{z}\in\mathcal{B}_{\mathrm{in}}:=[-B_{\mathrm{in}},B_{\mathrm{in}}]^{d_{\mathrm{in}}}$. Let
+\[
+I_\phi := \bigl[-B_{\mathrm{in}}-|\eta|(d_{\mathrm{out}}-1),\; B_{\mathrm{in}}+|\eta|(d_{\mathrm{out}}-1)\bigr],
+\quad
+M_\phi := \|\phi\|_{L^\infty(I_\phi)}.
+\]
+Define
+\[
+B_\omega:=\sup_{q}\sum_{j\in\mathcal{N}(q)}|\omega_{qj}|,
+\qquad
+R_{\mathrm{mix}}:=1+|\tau|\,B_\omega,
+\qquad
+M_s := \|\lambda\|_{1}\,M_\phi + |\alpha|\,(d_{\mathrm{out}}-1),
+\]
+and set $I_\Phi := [-R_{\mathrm{mix}}M_s,\; R_{\mathrm{mix}}M_s]$. Assume $\phi,\Phi\in C^2$ on neighborhoods of $I_\phi$ and $I_\Phi$, respectively. Let $\hat\phi$ and $\hat\Phi$ be the (shape-preserving) piecewise-linear interpolants of $\phi$ on a uniform grid of $G_\phi\ge 2$ knots over $I_\phi$ and of $\Phi$ on a uniform grid of $G_\Phi\ge 2$ knots over $I_\Phi$; write
+\[
+h_\phi:=\frac{|I_\phi|}{G_\phi-1},\quad h_\Phi:=\frac{|I_\Phi|}{G_\Phi-1},\quad
+M_{\phi''}:=\|\phi''\|_{L^\infty(I_\phi)},\quad M_{\Phi''}:=\|\Phi''\|_{L^\infty(I_\Phi)}.
+\]
+Define $\hat T$ by replacing $(\phi,\Phi)$ with $(\hat\phi,\hat\Phi)$ in $T$ (keeping the same $\lambda,\eta,\alpha,\tau,\omega,\mathcal{N}$). Then, for all $\mathbf{z}\in\mathcal{B}_{\mathrm{in}}$,
+\begin{equation}\label{eq:single_block_sup}
+\|T(\mathbf{z})-\hat T(\mathbf{z})\|_\infty
+\;\le\;
+L_\Phi\,R_{\mathrm{mix}}\,\|\lambda\|_{1}\,\delta_\phi\;+\;\delta_\Phi,
+\qquad
+\delta_\phi:=\frac{M_{\phi''}}{8}h_\phi^2,\ \ \delta_\Phi:=\frac{M_{\Phi''}}{8}h_\Phi^2,
+\end{equation}
+where $L_\Phi:=\|\Phi'\|_{L^\infty(I_\Phi)}$. Equivalently,
+\[
+\|T(\mathbf{z})-\hat T(\mathbf{z})\|_\infty
+\;\le\;
+K_T\cdot \max\{h_\phi^2,h_\Phi^2\}
+\quad\text{with}\quad
+K_T:=\frac{1}{8}\Bigl(L_\Phi\,R_{\mathrm{mix}}\,\|\lambda\|_{1}\,M_{\phi''}+M_{\Phi''}\Bigr).
+\]
+The same bounds hold for a block with a (shared) cyclic residual $T_{\mathrm{res}}=T+R$, since $R$ cancels when $T$ and $\hat T$ share the same residual path.
 \end{lemma}
 
 \begin{proof}
-Fix $\mathbf{z} \in \mathcal{B}_{in}$ and $q \in \{0, \ldots, d_{out}-1\}$. Define:
-$$s_q := \sum_{i=1}^{d_{in}} \lambda_{i} \phi(z_i + \eta q) + \alpha q, \quad \hat{s}_q := \sum_{i=1}^{d_{in}} \lambda_{i} \hat{\phi}(z_i + \eta q) + \alpha q$$
+On each subinterval of the uniform grid for $I_\phi$ (resp.\ $I_\Phi$) of length $h_\phi$ (resp.\ $h_\Phi$), the classical bound for piecewise-linear interpolation of a $C^2$ function gives
+\[
+\|\phi-\hat\phi\|_{L^\infty(I_\phi)}\le \frac{M_{\phi''}}{8}h_\phi^2=:\delta_\phi,
+\qquad
+\|\Phi-\hat\Phi\|_{L^\infty(I_\Phi)}\le \frac{M_{\Phi''}}{8}h_\Phi^2=:\delta_\Phi.
+\]
+For fixed $\mathbf{z}$ and $q$, write $s_q=\sum_i\lambda_i\,\phi(z_i+\eta q)+\alpha q$ and $\hat s_q$ the analogous quantity with $\hat\phi$. Then
+\[
+|s_q-\hat s_q|\;\le\;\sum_{i=1}^{d_{\mathrm{in}}}|\lambda_i|\,\|\phi-\hat\phi\|_{L^\infty(I_\phi)}
+\;\le\;\|\lambda\|_{1}\,\delta_\phi.
+\]
+Define the pre-mixing scalars $\tilde s_q:=s_q+\tau\sum_{j\in\mathcal{N}(q)}\omega_{qj}s_j$ and $\hat{\tilde s}_q:=\hat s_q+\tau\sum_{j\in\mathcal{N}(q)}\omega_{qj}\hat s_j$. Using the triangle inequality and the definition of $B_\omega$,
+\[
+|\tilde s_q-\hat{\tilde s}_q|
+\;\le\;
+|s_q-\hat s_q| + |\tau| \sum_{j\in\mathcal{N}(q)}|\omega_{qj}|\,|s_j-\hat s_j|
+\;\le\; R_{\mathrm{mix}}\cdot \sup_{j}|s_j-\hat s_j|
+\;\le\; R_{\mathrm{mix}}\,\|\lambda\|_{1}\,\delta_\phi.
+\]
+Next, since a linear interpolant lies in the convex hull of the function values at the grid endpoints, we have
+\[
+\|\hat\phi\|_{L^\infty(I_\phi)} \;\le\; \|\phi\|_{L^\infty(I_\phi)}=M_\phi.
+\]
+Hence $|s_j|\le M_s$ and $|\hat s_j|\le M_s$, which implies $|\tilde s_q|\le R_{\mathrm{mix}}M_s$ and $|\hat{\tilde s}_q|\le R_{\mathrm{mix}}M_s$. Therefore $\tilde s_q,\hat{\tilde s}_q\in I_\Phi$, and
+\[
+|T(\mathbf{z})_q-\hat T(\mathbf{z})_q|
+=\bigl|\Phi(\tilde s_q)-\hat\Phi(\hat{\tilde s}_q)\bigr|
+\le \underbrace{|\Phi(\tilde s_q)-\Phi(\hat{\tilde s}_q)|}_{\le L_\Phi |\tilde s_q-\hat{\tilde s}_q|}
++ \underbrace{|\Phi(\hat{\tilde s}_q)-\hat\Phi(\hat{\tilde s}_q)|}_{\le \delta_\Phi}.
+\]
+Combining the bounds and taking the maximum over $q$ yields \eqref{eq:single_block_sup}. If a residual path $R$ is present and shared between $T$ and $\hat T$, then $T_{\mathrm{res}}-\hat T_{\mathrm{res}}=(T-\hat T)+(R-R)=(T-\hat T)$, so the same inequalities apply.
+\end{proof}
 
-Since $z_i \in [-B_{in}, B_{in}]$ and $\eta q \in [-|\eta|(d_{out}-1), |\eta|(d_{out}-1)]$, we have $z_i + \eta q \in I_\phi$. 
+\begin{lemma}[Lipschitz constant of a Sprecher block]\label{lem:block_lip}
+Assume $\phi$ and $\Phi$ are Lipschitz on $I_\phi$ and $I_\Phi$ with constants $L_\phi:=\|\phi'\|_{L^\infty(I_\phi)}$ and $L_\Phi:=\|\Phi'\|_{L^\infty(I_\Phi)}$, respectively. Then $T$ is $L_T$-Lipschitz on $\mathcal{B}_{\mathrm{in}}$ in the $\ell_\infty$ norm with
+\[
+L_T \;\le\; L_\Phi\,R_{\mathrm{mix}}\,\|\lambda\|_1\,L_\phi,
+\]
+where $R_{\mathrm{mix}}=1+|\tau|\,B_\omega$ as in Lemma~\ref{lem:single_block}. If a residual path $R$ (shared between the exact and approximated networks) is present with Lipschitz constant $L_R$ on $\mathcal{B}_{\mathrm{in}}$, then $T_{\mathrm{res}}=T+R$ is $(L_T+L_R)$-Lipschitz.
+\end{lemma}
 
-For piecewise-linear spline approximation of a $C^2$ function on an interval $I$ with $G$ uniformly spaced knots, the standard approximation bound gives:
-$$\|\phi - \hat{\phi}\|_{L^\infty(I_\phi)} \leq \frac{\|\phi^{(2)}\|_{L^\infty(I_\phi)}}{8} \left(\frac{|I_\phi|}{G_\phi}\right)^{2}$$
-
-This follows from the fact that on each subinterval of length $h = |I_\phi|/G_\phi$, the error of linear interpolation for a $C^2$ function is bounded by $\frac{1}{8}h^2 \max|\phi''|$.
-
-Therefore:
-\begin{align*}
-|s_q - \hat{s}_q| &= \left|\sum_{i=1}^{d_{in}} \lambda_{i} [\phi(z_i + \eta q) - \hat{\phi}(z_i + \eta q)]\right|\\
-&\leq \sum_{i=1}^{d_{in}} |\lambda_{i}| \cdot \|\phi - \hat{\phi}\|_{L^\infty(I_\phi)}\\
-&\leq \Lambda d_{in} \cdot \frac{\|\phi^{(2)}\|_{L^\infty(I_\phi)}}{8} \left(\frac{|I_\phi|}{G_\phi}\right)^{2}
-\end{align*}
-
-Moreover, $|s_q| \leq \Lambda d_{in} \|\phi\|_{L^\infty(I_\phi)} + \alpha |q| \leq \Lambda d_{in} \|\phi\|_{L^\infty(I_\phi)} + \alpha d_{out}$. 
-
-When lateral mixing is present with parameters $\tau, \omega$, the mixed value $\tilde{s}_q$ satisfies:
-$$|\tilde{s}_q| \leq |s_q| + |\tau| \|\omega\|_\infty |\mathcal{N}|_{max} \max_j |s_j| \leq (1 + |\tau| \|\omega\|_\infty |\mathcal{N}|_{max})(\Lambda d_{in} \|\phi\|_{L^\infty(I_\phi)} + \alpha d_{out}) = R_{out}$$
-
-Thus $\tilde{s}_q \in I_\Phi = [-R_{out}, R_{out}]$. Similarly, since $\hat{\phi}$ is bounded on $I_\phi$ (as a continuous function on a compact set), $\hat{\tilde{s}}_q \in I_\Phi$ for sufficiently large $G_\phi$.
-
-Now, for the outer spline:
-\begin{align*}
-|T(\mathbf{z})_q - \hat{T}(\mathbf{z})_q| &= |\Phi(\tilde{s}_q) - \hat{\Phi}(\hat{\tilde{s}}_q)|\\
-&\leq |\Phi(\tilde{s}_q) - \Phi(\hat{\tilde{s}}_q)| + |\Phi(\hat{\tilde{s}}_q) - \hat{\Phi}(\hat{\tilde{s}}_q)|\\
-&\leq L_\Phi |\tilde{s}_q - \hat{\tilde{s}}_q| + \|\Phi - \hat{\Phi}\|_{L^\infty(I_\Phi)}
-\end{align*}
-
-The lateral mixing preserves the error bound up to the factor $(1 + |\tau| \|\omega\|_\infty |\mathcal{N}|_{max})$:
-$$|\tilde{s}_q - \hat{\tilde{s}}_q| \leq (1 + |\tau| \|\omega\|_\infty |\mathcal{N}|_{max}) |s_q - \hat{s}_q|$$
-
-Combining these bounds:
-\begin{align*}
-|T(\mathbf{z})_q - \hat{T}(\mathbf{z})_q| &\leq L_\Phi (1 + |\tau| \|\omega\|_\infty |\mathcal{N}|_{max}) \Lambda d_{in} \frac{\|\phi^{(2)}\|_{L^\infty(I_\phi)}}{8} \left(\frac{|I_\phi|}{G_\phi}\right)^{2} \\
-&\quad + \frac{\|\Phi^{(2)}\|_{L^\infty(I_\Phi)}}{8} \left(\frac{|I_\Phi|}{G_\Phi}\right)^{2}\\
-&\leq K_T \max\left\{\left(\frac{|I_\phi|}{G_\phi}\right)^{2}, \left(\frac{|I_\Phi|}{G_\Phi}\right)^{2}\right\}
-\end{align*}
-
-where $K_T = \frac{L_\Phi \Lambda d_{in} (1 + |\tau| \|\omega\|_\infty |\mathcal{N}|_{max}) \|\phi^{(2)}\|_{L^\infty(I_\phi)} + \|\Phi^{(2)}\|_{L^\infty(I_\Phi)}}{8}$.
-
-Taking the maximum over $q$ and $\mathbf{z}$ gives the result.
+\begin{proof}
+For $\mathbf{z},\mathbf{z}'\in\mathcal{B}_{\mathrm{in}}$ and each $q$,
+\[
+\bigl|s_q(\mathbf{z})-s_q(\mathbf{z}')\bigr|
+\le \sum_i |\lambda_i|\,\bigl|\phi(z_i+\eta q)-\phi(z_i'+\eta q)\bigr|
+\le \|\lambda\|_1\,L_\phi\,\|\mathbf{z}-\mathbf{z}'\|_\infty.
+\]
+Therefore,
+\[
+\bigl|\tilde s_q(\mathbf{z})-\tilde s_q(\mathbf{z}')\bigr|
+\le \Bigl(1+|\tau|\,\sum_{j\in\mathcal{N}(q)}|\omega_{qj}|\Bigr)\,\|\lambda\|_1\,L_\phi\,\|\mathbf{z}-\mathbf{z}'\|_\infty
+\le R_{\mathrm{mix}}\|\lambda\|_1 L_\phi\,\|\mathbf{z}-\mathbf{z}'\|_\infty,
+\]
+and hence
+\[
+|T(\mathbf{z})_q-T(\mathbf{z}')_q|
+\le L_\Phi\,|\tilde s_q(\mathbf{z})-\tilde s_q(\mathbf{z}')|
+\le L_\Phi R_{\mathrm{mix}}\|\lambda\|_1 L_\phi\,\|\mathbf{z}-\mathbf{z}'\|_\infty.
+\]
+Taking the maximum over $q$ gives the claimed bound for $T$, and adding $L_R$ handles $T_{\mathrm{res}}$ by the triangle inequality.
 \end{proof}
 
 \begin{lemma}[Error composition]\label{lem:error_composition}
-Consider an $L$-block Sprecher network where block $\ell$ has approximation constant $K_{T^{(\ell)}}$ and Lipschitz constant $L_{T^{(\ell)}}$ (viewing the block as a function $T^{(\ell)}: \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell}$). Let $E_\ell$ denote the worst-case error after block $\ell$:
-$$E_\ell := \sup_{\mathbf{x} \in [0,1]^n} \|\mathbf{h}^{(\ell)}(\mathbf{x}) - \hat{\mathbf{h}}^{(\ell)}(\mathbf{x})\|_\infty$$
-
-Then:
+Consider an $L$-block SN (with optional lateral mixing and cyclic residuals at each block). Let $T^{(\ell)}:\mathbb{R}^{d_{\ell-1}}\to\mathbb{R}^{d_{\ell}}$ denote the $\ell$-th block map on the exact network and $\hat T^{(\ell)}$ its spline-approximated counterpart (same $\lambda,\eta,\alpha,\tau,\omega$ but $(\phi,\Phi)$ replaced by $(\hat\phi,\hat\Phi)$). Assume there exist bounded sets $\mathcal{B}_{\ell}\subset\mathbb{R}^{d_{\ell}}$ such that for all inputs $\mathbf{x}\in[0,1]^n$,
+\[
+\mathbf{h}^{(\ell)}(\mathbf{x}) := T^{(\ell)}\!\circ\cdots\circ T^{(1)}(\mathbf{x}) \in \mathcal{B}_{\ell}
+\quad\text{and}\quad
+\hat{\mathbf{h}}^{(\ell)}(\mathbf{x}) := \hat T^{(\ell)}\!\circ\cdots\circ \hat T^{(1)}(\mathbf{x}) \in \mathcal{B}_{\ell},
+\]
+and suppose each $T^{(\ell)}$ is $L_{T^{(\ell)}}$-Lipschitz on $\mathcal{B}_{\ell-1}$. If $\varepsilon_\ell:=\sup_{\mathbf{z}\in\mathcal{B}_{\ell-1}}\|T^{(\ell)}(\mathbf{z})-\hat T^{(\ell)}(\mathbf{z})\|_\infty$, then for $E_\ell:=\sup_{\mathbf{x}\in[0,1]^n}\|\mathbf{h}^{(\ell)}(\mathbf{x})-\hat{\mathbf{h}}^{(\ell)}(\mathbf{x})\|_\infty$ we have
 \begin{equation}\label{eq:error_composition_result}
-E_\ell \leq \sum_{j=1}^{\ell} \left(\prod_{m=j+1}^{\ell} L_{T^{(m)}}\right) K_{T^{(j)}} \varepsilon_j
+E_\ell \;\le\; \sum_{j=1}^{\ell}\left(\prod_{m=j+1}^{\ell} L_{T^{(m)}}\right)\varepsilon_j,
 \end{equation}
-where $\varepsilon_j$ is the approximation error bound for block $j$ from Lemma \ref{lem:single_block}, and the empty product equals 1.
+with the empty product equal to $1$.
 \end{lemma}
 
 \begin{proof}
-We proceed by induction. For $\ell = 1$, we have $E_1 \leq K_{T^{(1)}} \varepsilon_1$ directly from Lemma \ref{lem:single_block}.
-
-Assume the result holds for $\ell-1$. For any $\mathbf{x} \in [0,1]^n$:
+The case $\ell=1$ is $E_1\le \varepsilon_1$. Assume the claim for $\ell-1$. Then, for any $\mathbf{x}$,
 \begin{align*}
-\|\mathbf{h}^{(\ell)}(\mathbf{x}) - \hat{\mathbf{h}}^{(\ell)}(\mathbf{x})\|_\infty &= \|T^{(\ell)}(\mathbf{h}^{(\ell-1)}(\mathbf{x})) - \hat{T}^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x}))\|_\infty\\
-&\leq \|T^{(\ell)}(\mathbf{h}^{(\ell-1)}(\mathbf{x})) - T^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x}))\|_\infty \\
-&\quad + \|T^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x})) - \hat{T}^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x}))\|_\infty\\
-&\leq L_{T^{(\ell)}} \|\mathbf{h}^{(\ell-1)}(\mathbf{x}) - \hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x})\|_\infty + K_{T^{(\ell)}} \varepsilon_\ell\\
-&\leq L_{T^{(\ell)}} E_{\ell-1} + K_{T^{(\ell)}} \varepsilon_\ell
+\|\mathbf{h}^{(\ell)}(\mathbf{x})-\hat{\mathbf{h}}^{(\ell)}(\mathbf{x})\|_\infty
+&= \|T^{(\ell)}(\mathbf{h}^{(\ell-1)}(\mathbf{x})) - \hat T^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x}))\|_\infty\\
+&\le \underbrace{\|T^{(\ell)}(\mathbf{h}^{(\ell-1)}(\mathbf{x})) - T^{(\ell)}(\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x}))\|_\infty}_{\le L_{T^{(\ell)}}\,\|\mathbf{h}^{(\ell-1)}(\mathbf{x})-\hat{\mathbf{h}}^{(\ell-1)}(\mathbf{x})\|_\infty}
++ \underbrace{\|T^{(\ell)}-\hat T^{(\ell)}\|_{\infty,\mathcal{B}_{\ell-1}}}_{\le \varepsilon_\ell}\\
+&\le L_{T^{(\ell)}} E_{\ell-1} + \varepsilon_\ell,
 \end{align*}
-Substituting the induction hypothesis completes the proof.
+and the induction hypothesis gives \eqref{eq:error_composition_result}.
 \end{proof}
 
-\begin{theorem}[Spline approximation rate for Sprecher Networks with piecewise-linear splines]\label{thm:sprecher_rate}
-Let $f:[0,1]^n \to \mathbb{R}$ be realized by an ideal $L$-block Sprecher network with scalar output. Assume:
+\begin{corollary}[Global spline approximation rate for SNs with piecewise-linear splines]\label{cor:sprecher_rate}
+Let $f:[0,1]^n\to\mathbb{R}$ be realized by an ideal $L$-block SN (possibly with lateral mixing and cyclic residuals) with scalar output. For each block $\ell=1,\dots,L$, let $B_{\mathrm{in}}^{(\ell)}:=\sup\{\|\mathbf{z}\|_\infty:\mathbf{z}\in\mathcal{B}_{\ell-1}\}$. Assume:
 \begin{enumerate}[label=\textup{(\roman*)}]
-\item Each $\phi^{(\ell)}, \Phi^{(\ell)} \in C^{2}$ on their respective domains.
-\item Each block satisfies $|\lambda_{i}^{(\ell)}| \leq \Lambda$, has shift parameter $\eta^{(\ell)} \in \mathbb{R}$, and if lateral mixing is enabled, $|\tau^{(\ell)}| \leq T$ and $\|\omega^{(\ell)}\|_\infty \leq W$.
-\item The network propagates through bounded sets: $\mathbf{h}^{(\ell)}(\mathbf{x}) \in [-B_\ell, B_\ell]^{d_\ell}$ for all $\mathbf{x} \in [0,1]^n$.
+\item $\phi^{(\ell)},\Phi^{(\ell)}\in C^2$ on neighborhoods of the intervals
+\[
+I_\phi^{(\ell)} := \bigl[-B_{\mathrm{in}}^{(\ell)}-|\eta^{(\ell)}|(d_{\ell}-1),\; B_{\mathrm{in}}^{(\ell)}+|\eta^{(\ell)}|(d_{\ell}-1)\bigr],
+\quad
+I_\Phi^{(\ell)} := \bigl[-R_{\mathrm{mix}}^{(\ell)}M_s^{(\ell)},\; R_{\mathrm{mix}}^{(\ell)}M_s^{(\ell)}\bigr],
+\]
+with $M_s^{(\ell)}:=\|\lambda^{(\ell)}\|_{1}\|\phi^{(\ell)}\|_{L^\infty(I_\phi^{(\ell)})}+|\alpha^{(\ell)}|(d_\ell-1)$ and $R_{\mathrm{mix}}^{(\ell)}:=1+|\tau^{(\ell)}|\,B_\omega^{(\ell)}$, $B_\omega^{(\ell)}:=\sup_q\sum_{j\in\mathcal{N}^{(\ell)}(q)}|\omega^{(\ell)}_{qj}|$;
+\item the structural parameters are bounded: $\|\lambda^{(\ell)}\|_{1}\le \Lambda_1$, $|\eta^{(\ell)}|\le H$, $|\alpha^{(\ell)}|\le A$, $|\tau^{(\ell)}|\le T$, and $B_\omega^{(\ell)}\le \Omega$;
+\item there exist bounded sets $\mathcal{B}_\ell$ such that the exact and approximated forward passes both remain in $\mathcal{B}_\ell$ for all inputs in $[0,1]^n$ (bounded propagation).
 \end{enumerate}
+Construct $\hat\phi^{(\ell)}$ and $\hat\Phi^{(\ell)}$ as the piecewise-linear interpolants on uniform grids with $G_\phi^{(\ell)}\ge2$ and $G_\Phi^{(\ell)}\ge2$ knots on $I_\phi^{(\ell)}$ and $I_\Phi^{(\ell)}$, respectively, and write $h_\phi^{(\ell)}:=|I_\phi^{(\ell)}|/(G_\phi^{(\ell)}-1)$ and $h_\Phi^{(\ell)}:=|I_\Phi^{(\ell)}|/(G_\Phi^{(\ell)}-1)$. Then, with
+\[
+\delta_\phi^{(\ell)}:=\frac{\|\phi^{(\ell)''}\|_{L^\infty(I_\phi^{(\ell)})}}{8}\,\bigl(h_\phi^{(\ell)}\bigr)^2, \qquad
+\delta_\Phi^{(\ell)}:=\frac{\|\Phi^{(\ell)''}\|_{L^\infty(I_\Phi^{(\ell)})}}{8}\,\bigl(h_\Phi^{(\ell)}\bigr)^2,
+\]
+the blockwise error satisfies
+\[
+\varepsilon_\ell
+:=\sup_{\mathbf{z}\in\mathcal{B}_{\ell-1}}\|T^{(\ell)}(\mathbf{z})-\hat T^{(\ell)}(\mathbf{z})\|_\infty
+\ \le\ L_{\Phi}^{(\ell)}\,R_{\mathrm{mix}}^{(\ell)}\,\|\lambda^{(\ell)}\|_{1}\,\delta_\phi^{(\ell)}\;+\;\delta_\Phi^{(\ell)},
+\]
+where $L_{\Phi}^{(\ell)}:=\|\Phi^{(\ell)'}\|_{L^\infty(I_\Phi^{(\ell)})}$. Consequently, by Lemma~\ref{lem:error_composition},
+\[
+\sup_{\mathbf{x}\in[0,1]^n}|f(\mathbf{x})-\hat f(\mathbf{x})|
+\;\le\;
+\sum_{j=1}^{L}\left(\prod_{m=j+1}^{L}L_{T^{(m)}}\right)\Bigl(L_{\Phi}^{(j)}\,R_{\mathrm{mix}}^{(j)}\,\|\lambda^{(j)}\|_{1}\,\delta_\phi^{(j)}+\delta_\Phi^{(j)}\Bigr),
+\]
+with $L_{T^{(m)}}$ any Lipschitz constant of the $m$-th block on $\mathcal{B}_{m-1}$ (e.g.\ from Lemma~\ref{lem:block_lip}, plus the residual-path constant when present). In particular, if $G_\phi^{(\ell)}=G_\Phi^{(\ell)}=G$ for all $\ell$, then with $h:=\max_\ell\{|I_\phi^{(\ell)}|,|I_\Phi^{(\ell)}|\}/(G-1)$ we obtain
+\[
+\sup_{\mathbf{x}\in[0,1]^n}|f(\mathbf{x})-\hat f(\mathbf{x})|
+\;=\; \mathcal{O}\!\left(h^2\right)
+\;=\; \mathcal{O}\!\left(G^{-2}\right),
+\]
+with constants depending on $\{\|\lambda^{(\ell)}\|_{1},L_{\phi^{(\ell)}},L_{\Phi}^{(\ell)},R_{\mathrm{mix}}^{(\ell)},\|\phi^{(\ell)''}\|_\infty,\|\Phi^{(\ell)''}\|_\infty,L_{T^{(\ell)}}\}_{\ell=1}^L$ and on the bounded-propagation sets $\{\mathcal{B}_\ell\}$.
+\end{corollary}
 
-For each block $\ell$, approximate $\phi^{(\ell)}$ and $\Phi^{(\ell)}$ with piecewise-linear splines using $G_\phi^{(\ell)}$ and $G_\Phi^{(\ell)}$ knots respectively. Then:
-$$\sup_{\mathbf{x} \in [0,1]^n} |f(\mathbf{x}) - \hat{f}(\mathbf{x})| \leq d_L \sum_{j=1}^{L} \left(\prod_{m=j+1}^{L} L_{T^{(m)}}\right) K_{T^{(j)}} \varepsilon_j$$
-where the constants account for lateral mixing when present.
-
-If all blocks use the same number of knots $G$ (i.e., $G_\phi^{(\ell)}=G_\Phi^{(\ell)}=G$ for all $\ell$), the error scales as $O(G^{-2})$ with constants that may grow exponentially with depth $L$.
-\end{theorem}
-
-\begin{proof}
-By Lemma \ref{lem:single_block}, each block $\ell$ can be approximated with error bounded by $K_{T^{(\ell)}} \varepsilon_\ell$. By Lemma \ref{lem:error_composition}, the error after $L$ blocks is bounded by the sum given in \eqref{eq:error_composition_result}.
-
-For the scalar output case, we have:
-\begin{align*}
-|f(\mathbf{x}) - \hat{f}(\mathbf{x})| &= \left|\sum_{q=0}^{d_L-1} h_q^{(L)}(\mathbf{x}) - \sum_{q=0}^{d_L-1} \hat{h}_q^{(L)}(\mathbf{x})\right|\\
-&\leq \sum_{q=0}^{d_L-1} |h_q^{(L)}(\mathbf{x}) - \hat{h}_q^{(L)}(\mathbf{x})|\\
-&\leq d_L \|\mathbf{h}^{(L)}(\mathbf{x}) - \hat{\mathbf{h}}^{(L)}(\mathbf{x})\|_\infty\\
-&\leq d_L E_L
-\end{align*}
-Substituting the bound for $E_L$ gives the result.
-\end{proof}
-
-\begin{remark}[Impact of lateral mixing on approximation]
-The presence of lateral mixing introduces additional terms in the error bounds through the factors $(1 + |\tau| \|\omega\|_\infty |\mathcal{N}|_{max})$. While this might suggest worse approximation rates, the enhanced expressivity from lateral mixing may allow for smaller required values of $G$ to achieve the same accuracy, potentially offsetting this theoretical disadvantage. The trade-off between approximation rate constants and required spline resolution remains an empirical question.
+\begin{remark}[Impact of lateral mixing and cyclic residuals]
+Lateral mixing appears only inside the argument of $\Phi$ and inflates constants via $R_{\mathrm{mix}}^{(\ell)}=1+|\tau^{(\ell)}|\,B_\omega^{(\ell)}$ (with $B_\omega^{(\ell)}\le \|\omega^{(\ell)}\|_\infty N_{\max}^{(\ell)}$); it does not change the $G^{-2}$ rate. If a cyclic residual path $R$ is present and shared between $T^{(\ell)}$ and $\hat T^{(\ell)}$, it cancels in the blockwise difference and thus does not affect $\varepsilon_\ell$, but it \emph{does} contribute additively to $L_{T^{(\ell)}}$ in \eqref{eq:error_composition_result}. For example, when $d_{\mathrm{in}}=d_{\mathrm{out}}$ and $R(\mathbf{z})=w_{\mathrm{res}}\mathbf{z}$, we may take $L_{T^{(\ell)}}\le L_{\Phi}^{(\ell)}\,R_{\mathrm{mix}}^{(\ell)}\,\|\lambda^{(\ell)}\|_{1}\,L_{\phi^{(\ell)}} + |w_{\mathrm{res}}|$, with $L_{\phi^{(\ell)}}:=\|\phi^{(\ell)'}\|_{L^\infty(I_\phi^{(\ell)})}$. Analogous bounds hold for broadcast/pooling residuals using the operator norm of the corresponding linear map.
 \end{remark}
 
-\begin{remark}[Monotonic spline approximation]
-The approximation rates in Lemma \ref{lem:single_block} assume we can achieve standard spline approximation rates while maintaining monotonicity for $\phi^{(\ell)}$. Practical implementations use piecewise linear splines with a log-space parameterization that maintains monotonicity by construction.
+\begin{remark}[Monotone spline parameterization]
+Sprecher's construction requires the inner map to be nondecreasing. The piecewise-linear interpolant of a $C^2$ nondecreasing function on a uniform grid is itself nondecreasing (no oscillatory overshoot), and the $O(h^2)$ error bound used above holds unchanged. Hence the analysis is compatible with monotone-spline parameterizations of $\phi$ used in our implementations.
 \end{remark}
 
-\begin{remark}[Dependence on depth]
-The constant in the error bound depends on the layer dimensions $d_\ell$ and the Lipschitz constants $L_\phi^{(\ell)}, L_\Phi^{(\ell)}$ through the factors $L_{T^{(m)}}$. If these factors are consistently greater than 1, the constant can grow exponentially with depth $L$. This highlights a potential challenge for approximation with very deep networks, similar to error bounds seen in other deep learning contexts.
+\begin{remark}[Depth dependence]
+The $\mathcal{O}(G^{-2})$ \emph{rate} is dimension-free, while constants accumulate with depth through $\prod_{m=j+1}^{L}L_{T^{(m)}}$ as in \eqref{eq:error_composition_result}. This mirrors standard error-propagation phenomena in deep models and highlights the practical value of regularizing $\|\lambda^{(\ell)}\|_{1}$, $L_{\phi^{(\ell)}}$, and $L_{\Phi^{(\ell)}}$, and of controlling lateral mixing ($\tau^{(\ell)},\omega^{(\ell)}$).
 \end{remark}
 
 \subsection{Vector-valued functions and deeper extensions}
