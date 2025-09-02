@@ -854,6 +854,80 @@ To empirically validate the importance of the internal shift parameter $\eta^{(\
 \subsection{MNIST classification}
 To demonstrate SNs' applicability beyond function approximation, we tested them on the MNIST digit classification task. The 28×28 grayscale images were flattened to 784-dimensional vectors and normalized to [0,1]. A deeper network with architecture $784 \to [100, 100, 100] \to 10$ with bidirectional lateral mixing achieved over 99.5\% test accuracy after training for several hours on consumer hardware. A shallower network with architecture $784 \to [100] \to 10$ (using Sprecher's theoretical minimum of one hidden layer, but with significantly fewer than the $2n+1 = 1569$ nodes to guarantee universality) achieved approximately 92\% test accuracy. Notably, enabling lateral mixing improved the shallow network's accuracy by about 3\%, bringing it to ~95\%. These results demonstrate that while achieving state-of-the-art performance on image tasks would likely require a convolutional design, SNs can attain competitive results on standard benchmarks. More importantly, they confirm that deeper architectures and lateral mixing provide significant benefits for complex tasks, consistent with observations in traditional deep learning.
 
+\subsection{Synthetic multi-output regression: SN vs.\ KAN}
+
+We report a controlled head-to-head comparison between Sprecher Networks (SNs) and Kolmogorov–Arnold Networks (KANs) on a smooth synthetic mapping
+$f:\mathbb{R}^{4}\!\to\!\mathbb{R}^{5}$ (dataset \texttt{toy\_4d\_to\_5d}).
+The task is multi-output regression with coupled targets; train and test samples are drawn i.i.d.\ from the same distribution, and performance is measured on a large held-out set (20{,}000 points).
+Both models are trained for the same number of epochs under a single harness that ensures identical training inputs are used for SN and KAN.\footnote{Implementation details and the exact experiment harness are in \texttt{compare\_sn\_vs\_kan\_multioutput.py}. In particular, the KAN is trained on the exact same $(x_{\text{train}},y_{\text{train}})$ returned by the SN trainer, and the same evaluation utilities are used for both models. \,:contentReference[oaicite:0]{index=0}}
+
+\paragraph{Metrics.}
+For predicted outputs $\widehat{Y}\in\mathbb{R}^{N\times d}$ and ground truth $Y\in\mathbb{R}^{N\times d}$ on the test set ($N$ points, $d=5$ heads), we report:
+
+$$\mathrm{RMSE}_j \;:=\; \Big(\tfrac{1}{N}\sum_{n=1}^{N}(\widehat{y}_{nj}-y_{nj})^2\Big)^{\!1/2},
+\qquad
+\overline{\mathrm{RMSE}} \;:=\; \tfrac{1}{d}\sum_{j=1}^{d}\mathrm{RMSE}_j,$$
+
+and a \emph{correlation-structure error}
+
+$$\Delta_{\mathrm{corr}}
+\;:=\;
+\big\|\mathrm{Corr}(Y)-\mathrm{Corr}(\widehat{Y})\big\|_{F},$$
+
+i.e., the Frobenius norm of the difference between the empirical Pearson correlation matrices of the true and predicted outputs.\footnote{%
+$\mathrm{Corr}(Y)\in\mathbb{R}^{d\times d}$ is computed by standardizing each output head across the test set and forming the head-by-head correlation matrix; $\|\cdot\|_{F}$ denotes the Frobenius norm. Thus $\Delta_{\mathrm{corr}}$ is scale-invariant and isolates how well a model captures \emph{inter-head} structure. All five heads had non-negligible variance in these runs, so all were included in $\Delta_{\mathrm{corr}}$.}
+
+\paragraph{Architectures, budgets, and caveats.}
+SN uses two hidden blocks of width $15$ (total of $514$ trainable parameters).
+Our KAN baselines vary width and per-edge spline resolution $K$ to be in a similar parameter range.
+To keep the comparison transparent, we used a minimal KAN-style layer with \emph{edge-wise} learned univariate activation
+
+$$\phi(x)\;=\;w_b\,\mathrm{silu}(x)\;+\;w_s\,\text{spline}(x),$$
+
+matching the residual design advocated for KANs,\footnote{KANs place learnable 1D functions on edges, and (in their reference implementation) use a residual base $b(x)=\mathrm{silu}(x)$ plus a B-spline expansion; see Eqs.\ (2.10)–(2.12) and surrounding text. \,:contentReference[oaicite:1]{index=1}}
+but with the following simplifications vs.\ the full \emph{pykan} setup:
+\begin{itemize}
+  \item the spline is a \textbf{1D piecewise-linear} lookup on a \textbf{fixed, uniform grid} (no B-spline basis, no grid-extension or grid-updating during training);
+  \item training uses standard Adam on the full training set (no LBFGS stages);
+  \item no sparsification/pruning or manual symbolification;
+  \item inputs are used as returned by the SN trainer so both models see the same data (no per-edge input normalization or domain adaptation).
+\end{itemize}
+These choices make our KAN baseline easy to audit and reproducible, but they likely \emph{understate} the best achievable KAN performance on some tasks where grid extension or higher-order splines help.\footnote{Grid extension and other KAN implementation details (Sec.\ 2.4) are known to improve accuracy/speed trade-offs on several benchmarks. \,:contentReference[oaicite:2]{index=2}}
+
+\begin{table}[t]
+\centering
+\setlength{\tabcolsep}{7pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{lrrrrr}
+\hline
+Model \& shape & Params & Train MSE & $\overline{\mathrm{RMSE}}$ & $\Delta_{\mathrm{corr}}$ & Train time (s)\\
+\hline
+\multicolumn{6}{l}{\emph{Run 1} (\texttt{--epochs 4000}, CPU)} \\
+SN $[15,15]$ & 514  & 0.02555 & 0.17994 & 0.37600 & 85.87 \\
+KAN $[7,7],\,K{=}2$ & 458  & 0.11152 & 0.33092 & 3.56547 & 66.30 \\
+\hline
+\multicolumn{6}{l}{\emph{Run 2} (\texttt{--epochs 4000}, CPU)} \\
+SN $[15,15]$ & 514  & 0.02162 & 0.16480 & 0.33417 & 81.42 \\
+KAN $[10,10],\,K{=}4$ & 1150 & 0.07975 & 0.28114 & 1.75026 & 105.70 \\
+\hline
+\end{tabular}
+\caption{\textbf{SN vs.\ KAN on a 4$\to$5 smooth synthetic regression.}
+Each row reports a single training run under the same protocol; SN uses $514$ parameters in both runs.
+Across comparable or even larger budgets, SN attains $\approx\!1.84\times$ (Run 1) and $\approx\!1.71\times$ (Run 2) lower mean test RMSE and a $5$--$9.5\times$ smaller correlation-structure error.
+Wall-clock times are broadly comparable in this unoptimized setting.}
+\label{tab:sn-vs-kan-4d5}
+\end{table}
+
+\paragraph{Takeaways.}
+(i) At similar parameter scale, SN reduces the average test RMSE by a factor of $\sim$1.7--1.8 relative to our KAN baseline on this coupled multi-output task.
+(ii) The $5$--$9.5\times$ reduction in $\Delta_{\mathrm{corr}}$ shows that SNs capture \emph{inter-head} dependencies far more faithfully here.
+(iii) Increasing KAN width and $K$ (Run 002) narrows the gap somewhat in $\Delta_{\mathrm{corr}}$ but does not reverse it; the mean RMSE gap also persists.
+(iv) Timing is mixed but similar (SN slower in Run 001, faster in Run 002) and reflects basic, non-optimized PyTorch code for both models; we did not employ KAN-specific speedups such as grid extension or pruning.
+
+\medskip
+\noindent\textbf{Reproducibility.} All numbers in Table~\ref{tab:sn-vs-kan-4d5} were produced by the unified script mentioned above; it prints JSON records per-model and saves them to disk, ensuring both models share the exact training split and evaluation pipeline. \,:contentReference[oaicite:3]{index=3}
+
+
 \section{Limitations and future work}
 The primary limitation of this work is the gap between our theoretically-grounded single-layer model and our empirically-driven deep architecture. While single-layer SNs inherit universal approximation properties directly from Sprecher's theorem, the universality and approximation bounds of deep, compositional SNs remain open theoretical questions (Conjectures \ref{conj:vector} and \ref{conj:deep_universal}). The role of lateral mixing in these theoretical properties is particularly unclear—while it empirically improves performance, its theoretical justification within the Sprecher framework remains elusive.
 
