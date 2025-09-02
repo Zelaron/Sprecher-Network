@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from sn_core import get_dataset, train_network, CONFIG
 
 # -------------------------------
-# Minimal KAN-like implementation
+# Minimal KAN implementation
 # -------------------------------
 
 class PiecewiseLinearSpline1D(nn.Module):
