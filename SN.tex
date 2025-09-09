@@ -800,7 +800,37 @@ The ability to compute exact domains through interval arithmetic provides severa
 \end{remark}
 
 \section{Empirical demonstrations and case studies}
-While comprehensive benchmarking remains future work, we provide initial empirical demonstrations to illustrate the feasibility and characteristics of SNs, including the impact of lateral mixing connections.
+While comprehensive benchmarking remains future work, we provide initial empirical demonstrations to illustrate the feasibility and characteristics of SNs, including the impact of lateral mixing connections. \\
+
+{\color{blue} 
+Possible empirical benchmarks, inspired by the original KAN paper: \\ 
+
+\textbf{Simple regression tasks}  
+\cite[Section 3.1]{liu2024kan}:  the network is trained via supervision on a dataset generated from the following functions:
+\begin{itemize}
+    \item $(x,y) \mapsto e^{\sin(\pi x) + y^2 }$,
+    \item $(x_1, x_2, x_3, x_4) \mapsto e^{(\sin(\pi(x_1^2 + x_2^2)) + \sin(\pi(x_3^2 + x_4^2))) / 2}$,
+    \item $(x_1, \ldots, x_{100}) \mapsto e^{\frac{1}{100}\sum_{i=1}^{100}\sin(\pi x_i / 2)^2 } $. 
+\end{itemize}
+
+
+\textbf{Physics-Informed Neural Networks (PINNs)}:  for a differential operator $D$ on a domain $\Omega$, we want the network $f$ to solve the PDE with Dirichlet boundary conditions:
+$$
+\begin{cases}
+ D(f) = 0 & \textnormal{in } \Omega, \\
+ f = 0 & \textnormal{in } \partial \Omega.  
+\end{cases}
+$$
+This end, the network is trained on the loss 
+$$
+\frac{1}{|S_1|}\sum_{\mathbf{x} \in S_1} | D(f) (\mathbf{x}) |^2 + \frac{1}{|S_2|} \sum_{\mathbf{x} \in S_2} f(\mathbf{x})^2,
+$$
+where $S_1 \subset \Omega$ and $S_2 \subset \partial \Omega$ are datasets. In \cite[Section 3.4]{liu2024kan}, $\Omega = [-1, 1]^2 \subset \mathbb{R}^2$, and $D = \Delta - g $ is the Poisson operator, where $\Delta$ is the Laplacian, and $f=-\pi^2(1 + 4y^2) \sin(\pi x)\sin(\pi y^2) + 2\pi \sin(\pi x) \cos(\pi y^2)$. 
+
+
+
+}
+
 
 \subsection{Basic function approximation}
 We train SNs on datasets sampled from known target functions $f$. The network learns the parameters ($\eta^{(\ell)}$, $\lambda^{(\ell)}$), spline coefficients ($\phi^{(\ell)}$, $\Phi^{(\ell)}$), and when enabled, lateral mixing parameters ($\tau^{(\ell)}$, $\omega^{(\ell)}$) via gradient descent (Adam optimizer, typically $O(10^4-10^5)$ iterations) using MSE loss plus optional regularization.
