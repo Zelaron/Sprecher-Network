@@ -1,4 +1,4 @@
-# benchmarks/sn_vs_kan_fair2.py
+# benchmarks/sn_vs_kan_fair.py
 # Fair SN vs KAN benchmark with:
 #   (a) BN-at-test standardization for BOTH models (--bn_eval_mode),
 #   (b) SN domain warm-up then freeze (--sn_freeze_domains_after),
@@ -860,7 +860,7 @@ def main():
         print(json.dumps(r, indent=2))
 
     os.makedirs(args.outdir, exist_ok=True)
-    out_path = os.path.join(args.outdir, f"sn_vs_kan_fair2_{args.dataset}_seed{args.seed}.json")
+    out_path = os.path.join(args.outdir, f"sn_vs_kan_fair_{args.dataset}_seed{args.seed}.json")
     with open(out_path, "w") as f:
         json.dump([sn_result, kan_result], f, indent=2)
     print(f"\nSaved: {out_path}")
