@@ -1,22 +1,70 @@
-# benchmarks/sn_vs_kan_fair.py
-# Fair SN vs KAN benchmark with:
-#   (a) BN-at-test standardization for BOTH models (--bn_eval_mode),
-#   (b) SN domain warm-up then freeze (--sn_freeze_domains_after),
-#   (c) live PROGRESS for evaluation (BN recalc + test), and
-#   (d) a FAST vectorized KAN implementation (default) for much quicker training/eval.
-#
-# This file is a superset of sn_vs_kan_fair.py with progress + speedups.
-#
-# Usage: identical flags as sn_vs_kan_fair.py, plus:
-#   --eval_batch_size 8192
-#   --kan_impl {fast,slow}     # default 'fast'
-#
-# Notes:
-# - The "fast" KAN keeps the same functional form as the original:
-#     φ_ij(x_i) = wb_ij * SiLU(x_i) + ws_ij * BSpline(x_i)
-#   with degree ∈ {2,3}, clamped uniform knots on [0,1], and outside behavior
-#   'linear' (finite-difference slope) or 'clamp'.
-# - BN re-calc passes and test-time forward are batched with tqdm progress bars.
+# benchmarks/kan_sn_parity_bench.py
+"""
+KAN vs SN — Parameter‑Parity Benchmark (with BN recalc + eval progress)
+
+Usage:
+  python -m benchmarks.kan_sn_parity_bench [FLAGS]
+
+Flags
+  General:
+    --device {auto,cpu,cuda}            (default: auto)
+    --seed INT                           (default: 45)
+    --epochs INT                         (default: 4000)
+    --dataset STR                        (default: toy_4d_to_5d)
+
+  Test / Evaluation:
+    --n_test INT                         (default: 20000)
+    --bn_eval_mode {off,recalc_eval}     (default: recalc_eval)
+    --bn_recalc_passes INT               (default: 10)
+    --eval_batch_size INT                (default: 8192)
+
+  Fairness / Parity:
+    --equalize_params                    Match KAN params to SN param count
+    --prefer_leq                         When equalizing, prefer <= target params
+
+  SN (Sprecher Network):
+    --sn_arch STR                        e.g., "15,15"
+    --sn_phi_knots INT
+    --sn_Phi_knots INT
+    --sn_norm_type {none,batch,layer}    (default: batch)
+    --sn_norm_position {before,after}    (default: after)
+    --sn_norm_skip_first                 (default: True)
+    --sn_norm_first                      Include first norm layer (overrides skip_first)
+    --sn_no_residual                     Disable residual path
+    --sn_no_lateral                      Disable lateral mixing
+    --sn_freeze_domains_after INT        Warm‑up epochs with domain updates, then freeze (0 = never)
+    --sn_domain_margin FLOAT             Safety margin on computed domains during warm‑up (e.g., 0.01)
+
+  KAN:
+    --kan_arch STR                       e.g., "4,4"
+    --kan_degree {2,3}                   (default: 3)
+    --kan_K INT                          Basis count (ignored if --equalize_params)
+    --kan_bn_type {none,batch}           (default: batch)
+    --kan_bn_position {before,after}     (default: after)
+    --kan_bn_skip_first
+    --kan_outside {linear,clamp}         (default: linear)
+    --kan_lr FLOAT                       (default: 1e-3)
+    --kan_wd FLOAT                       (default: 1e-6)
+    --kan_impl {fast,naive}              Implementation switch used in this script
+
+  Output:
+    --outdir PATH                        (default: benchmarks/results)
+
+Examples
+  # CPU, parameter parity, BN recalc, fast KAN, large eval batches:
+  python -m benchmarks.kan_sn_parity_bench \
+    --dataset toy_4d_to_5d --epochs 4000 --device cpu --n_test 20000 \
+    --seed 0 \
+    --sn_arch 15,15 --sn_phi_knots 60 --sn_Phi_knots 60 \
+    --sn_norm_type batch --sn_norm_position after --sn_norm_skip_first \
+    --sn_freeze_domains_after 1500 --sn_domain_margin 0.01 \
+    --kan_arch 4,4 --kan_degree 3 \
+    --kan_bn_type batch --kan_bn_position after --kan_bn_skip_first \
+    --kan_outside linear \
+    --equalize_params --prefer_leq \
+    --bn_eval_mode recalc_eval --bn_recalc_passes 10 \
+    --eval_batch_size 8192 --kan_impl fast
+"""
 
 import argparse, math, time, os, json
 from dataclasses import dataclass
