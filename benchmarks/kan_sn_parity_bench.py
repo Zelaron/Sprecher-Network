@@ -74,7 +74,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 
-# --- Use your SN code directly ---
+# --- Use the SN code directly ---
 from sn_core import (
     get_dataset, train_network, CONFIG, has_batchnorm
 )
