@@ -860,7 +860,7 @@ def main():
         print(json.dumps(r, indent=2))
 
     os.makedirs(args.outdir, exist_ok=True)
-    out_path = os.path.join(args.outdir, f"sn_vs_kan_fair_{args.dataset}_seed{args.seed}.json")
+    out_path = os.path.join(args.outdir, f"kan_sn_parity_{args.dataset}_seed{args.seed}.json")
     with open(out_path, "w") as f:
         json.dump([sn_result, kan_result], f, indent=2)
     print(f"\nSaved: {out_path}")
