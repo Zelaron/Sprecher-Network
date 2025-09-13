@@ -31,6 +31,7 @@ Flags
     --sn_norm_skip_first                 (default: True)
     --sn_norm_first                      Include first norm layer (overrides skip_first)
     --sn_no_residual                     Disable residual path
+    --sn_residual_style {node,linear,standard,matrix}  (default: CONFIG)
     --sn_no_lateral                      Disable lateral mixing
     --sn_freeze_domains_after INT        Warm‑up epochs with domain updates, then freeze (0 = never)
     --sn_domain_margin FLOAT             Safety margin on computed domains during warm‑up (e.g., 0.01)
@@ -43,24 +44,26 @@ Flags
     --kan_bn_position {before,after}     (default: after)
     --kan_bn_skip_first
     --kan_outside {linear,clamp}         (default: linear)
+    --kan_residual_type {silu,linear,none}  (default: silu)
     --kan_lr FLOAT                       (default: 1e-3)
     --kan_wd FLOAT                       (default: 1e-6)
-    --kan_impl {fast,naive}              Implementation switch used in this script
+    --kan_impl {fast,slow}               Implementation switch used in this script
 
   Output:
     --outdir PATH                        (default: benchmarks/results)
 
 Examples
-  # CPU, parameter parity, BN recalc, fast KAN, large eval batches:
+  # CPU, parameter parity, BN recalc, fast KAN, large eval batches, with *linear* residuals on both:
   python -m benchmarks.kan_sn_parity_bench \
     --dataset toy_4d_to_5d --epochs 4000 --device cpu --n_test 20000 \
     --seed 0 \
     --sn_arch 15,15 --sn_phi_knots 60 --sn_Phi_knots 60 \
     --sn_norm_type batch --sn_norm_position after --sn_norm_skip_first \
+    --sn_residual_style linear --sn_no_lateral \
     --sn_freeze_domains_after 1500 --sn_domain_margin 0.01 \
     --kan_arch 4,4 --kan_degree 3 \
     --kan_bn_type batch --kan_bn_position after --kan_bn_skip_first \
-    --kan_outside linear \
+    --kan_residual_type linear --kan_outside linear \
     --equalize_params --prefer_leq \
     --bn_eval_mode recalc_eval --bn_recalc_passes 10 \
     --eval_batch_size 8192 --kan_impl fast
@@ -101,10 +104,8 @@ def rmse_per_head(y_true, y_pred):
     return per_head.cpu().tolist(), float(mean_rmse.cpu())
 
 def corr_frobenius(y_true, y_pred, eps=1e-8):
-    # center
     yt = y_true - y_true.mean(dim=0, keepdim=True)
     yp = y_pred - y_pred.mean(dim=0, keepdim=True)
-    # stds
     std_t = yt.std(dim=0, keepdim=True)
     std_p = yp.std(dim=0, keepdim=True)
     use = ((std_t > eps) & (std_p > eps)).squeeze(0)
@@ -167,7 +168,6 @@ def bspline_basis(x, knots, degree):
     B = []
     for i in range(n_basis):
         t_i, t_ip1 = knots[i], knots[i+1]
-        # include rightmost end for the last interval
         if i == n_basis - 1:
             B0 = ((x >= t_i) & (x <= t_ip1)).to(dtype)
         else:
@@ -178,14 +178,12 @@ def bspline_basis(x, knots, degree):
     for p in range(1, degree + 1):
         Bp = torch.zeros_like(B)
         for i in range(n_basis):
-            # left term
             denom1 = knots[i+p] - knots[i]
             if denom1.abs() > 1e-12:
                 left = (x - knots[i]) / denom1 * (B[:, i] if i < n_basis else 0.0)
             else:
                 left = 0.0
-            # right term
-            denom2 = knots[i+p+1] - knots[i+1] if (i+1) < knots.numel() else torch.tensor(0., device=device)
+            denom2 = knots[i+p+1] - knots[i+1] if (i+1) < knots.numel() else torch.tensor(0., device=device, dtype=dtype)
             if (i+1) < n_basis and denom2.abs() > 1e-12:
                 right = (knots[i+p+1] - x) / denom2 * B[:, i+1]
             else:
@@ -227,7 +225,6 @@ class BSpline1D(nn.Module):
                     y[m_hi] = self._eval_inside(torch.full_like(x[m_hi], self.in_max))
             else:
                 eps = 1e-3 * (self.in_max - self.in_min)
-                # left
                 if m_lo.any():
                     x0 = torch.full_like(x[m_lo], self.in_min)
                     y0 = self._eval_inside(x0)
@@ -235,7 +232,6 @@ class BSpline1D(nn.Module):
                     y1 = self._eval_inside(x1)
                     slope = (y1 - y0) / (x1 - x0 + 1e-12)
                     y[m_lo] = y0 + slope * (x[m_lo] - self.in_min)
-                # right
                 if m_hi.any():
                     x0 = torch.full_like(x[m_hi], self.in_max)
                     y0 = self._eval_inside(x0)
@@ -246,22 +242,34 @@ class BSpline1D(nn.Module):
         return y.view(-1, 1)  # column
 
 class KANUnivariate(nn.Module):
-    def __init__(self, n_basis=10, degree=3, in_min=0.0, in_max=1.0, outside="linear"):
+    def __init__(self, n_basis=10, degree=3, in_min=0.0, in_max=1.0, outside="linear", residual_type="silu"):
         super().__init__()
         self.spline = BSpline1D(n_basis=n_basis, degree=degree, in_min=in_min, in_max=in_max, outside=outside)
-        self.wb = nn.Parameter(torch.tensor(1.0))  # residual basis scale
+        # Per-edge scales
         self.ws = nn.Parameter(torch.tensor(1.0))  # spline scale
+        self.residual_type = residual_type
+        if residual_type in ("silu", "linear"):
+            self.wb = nn.Parameter(torch.tensor(1.0))  # bypass scale
+        else:
+            self.wb = None  # no bypass
 
     def forward(self, x):
         s = self.spline(x).view(-1)  # [B]
-        return self.wb * F.silu(x) + self.ws * s
+        if self.residual_type == "silu":
+            return self.wb * F.silu(x) + self.ws * s
+        elif self.residual_type == "linear":
+            return self.wb * x + self.ws * s
+        else:
+            return self.ws * s
 
 class KANLayerSlow(nn.Module):
-    def __init__(self, d_in, d_out, n_basis=10, degree=3, in_min=0.0, in_max=1.0, outside="linear"):
+    def __init__(self, d_in, d_out, n_basis=10, degree=3, in_min=0.0, in_max=1.0,
+                 outside="linear", residual_type="silu"):
         super().__init__()
         self.d_in = d_in; self.d_out = d_out
         self.phi = nn.ModuleList(
-            [KANUnivariate(n_basis=n_basis, degree=degree, in_min=in_min, in_max=in_max, outside=outside)
+            [KANUnivariate(n_basis=n_basis, degree=degree, in_min=in_min, in_max=in_max,
+                           outside=outside, residual_type=residual_type)
              for _ in range(d_in * d_out)]
         )
 
@@ -282,11 +290,13 @@ class KANLayerSlow(nn.Module):
 class FastKANLayer(nn.Module):
     """
     Vectorized KAN layer mapping d_in -> d_out:
-      y[:, j] = sum_i [ wb[i,j] * SiLU(x[:,i]) + ws[i,j] * S_i,j(x[:,i]) ],
-    where S_i,j is a degree-d clamped-uniform B-spline with n_basis coefficients.
+      y[:, j] = sum_i [ residual_term(x[:,i]) * wb[i,j]  +  ws[i,j] * S_i,j(x[:,i]) ],
+    where residual_term is SiLU(x) if residual_type='silu', x if 'linear', or 0 if 'none'.
+    S_i,j is a degree-d clamped-uniform B-spline with n_basis coefficients.
     Outside behavior 'linear' or 'clamp' matches the slow implementation.
     """
-    def __init__(self, d_in, d_out, n_basis=10, degree=3, in_min=0.0, in_max=1.0, outside="linear"):
+    def __init__(self, d_in, d_out, n_basis=10, degree=3, in_min=0.0, in_max=1.0,
+                 outside="linear", residual_type="silu"):
         super().__init__()
         assert degree in (2, 3)
         self.d_in = int(d_in)
@@ -296,19 +306,23 @@ class FastKANLayer(nn.Module):
         self.in_min = float(in_min)
         self.in_max = float(in_max)
         self.outside = outside
+        self.residual_type = residual_type
 
-        # Shared knot vector per feature (we use same domain for all edges)
+        # Shared knot vector
         self.register_buffer('knots', make_clamped_uniform_knots(self.in_min, self.in_max, self.n_basis, self.degree))
         # Parameters: per-edge coefficients and scales
         self.coeffs = nn.Parameter(torch.zeros(self.d_in, self.d_out, self.n_basis))  # [d_in, d_out, K]
-        self.wb     = nn.Parameter(torch.ones(self.d_in, self.d_out))                # SiLU scale
         self.ws     = nn.Parameter(torch.ones(self.d_in, self.d_out))                # spline scale
 
-        # Precompute basis at boundaries for outside handling
+        if residual_type in ("silu", "linear"):
+            self.wb = nn.Parameter(torch.ones(self.d_in, self.d_out))                # bypass/projection scale
+        else:
+            self.register_parameter("wb", None)
+
+        # Precompute boundary bases
         with torch.no_grad():
-            # These will be moved to device at forward
             self._B_min_cpu = bspline_basis(torch.tensor([self.in_min]), self.knots.cpu(), self.degree)  # [1,K]
-            self._B_max_cpu = bspline_basis(torch.tensor([self.in_max]), self.knots.cpu(), self.degree)  # [1,K]
+            self._B_max_cpu = bspline_basis(torch.tensor([self.in_max]), self.knots.cpu(), self.degree)
             eps = max(1e-3 * (self.in_max - self.in_min), 1e-6)
             self._B_min_eps_cpu = bspline_basis(torch.tensor([min(self.in_min + eps, self.in_max)]),
                                                 self.knots.cpu(), self.degree)
@@ -326,23 +340,29 @@ class FastKANLayer(nn.Module):
         Bsize = x.shape[0]
         out = x.new_zeros(Bsize, self.d_out)
 
-        # Move boundary bases to the right device/dtype
-        Bmin = self._B_min_cpu.to(device=device, dtype=x.dtype)      # [1,K]
-        Bmax = self._B_max_cpu.to(device=device, dtype=x.dtype)      # [1,K]
-        BminE = self._B_min_eps_cpu.to(device=device, dtype=x.dtype) # [1,K]
-        BmaxE = self._B_max_eps_cpu.to(device=device, dtype=x.dtype) # [1,K]
+        Bmin  = self._B_min_cpu.to(device=device, dtype=x.dtype)
+        Bmax  = self._B_max_cpu.to(device=device, dtype=x.dtype)
+        BminE = self._B_min_eps_cpu.to(device=device, dtype=x.dtype)
+        BmaxE = self._B_max_eps_cpu.to(device=device, dtype=x.dtype)
         eps = self._eps
 
         for i in range(self.d_in):
-            xi = x[:, i]                                        # [B]
-            silu_term = F.silu(xi).unsqueeze(1) * self.wb[i]    # [B, d_out]
+            xi = x[:, i]  # [B]
 
-            # Masks
+            # residual / projection term
+            if self.wb is not None:
+                if self.residual_type == "silu":
+                    bypass = F.silu(xi).unsqueeze(1) * self.wb[i]  # [B, d_out]
+                else:  # "linear"
+                    bypass = xi.unsqueeze(1) * self.wb[i]          # [B, d_out]
+            else:
+                bypass = 0.0
+
+            # Spline term
             m_lo = xi < self.in_min
             m_hi = xi > self.in_max
             m_in = (~m_lo) & (~m_hi)
 
-            # Inside: basis once for this feature
             if m_in.any():
                 Bi = bspline_basis(xi[m_in], self.knots.to(device=device, dtype=x.dtype), self.degree)  # [B_in,K]
                 Si = self._eval_inside_all_outputs(Bi, self.coeffs[i])  # [B_in, d_out]
@@ -351,32 +371,29 @@ class FastKANLayer(nn.Module):
             else:
                 spline_term_in = torch.zeros(Bsize, self.d_out, device=device, dtype=x.dtype)
 
-            # Outside handling
             if m_lo.any() or m_hi.any():
                 if self.outside == "clamp":
                     if m_lo.any():
-                        y0 = (Bmin @ self.coeffs[i].t()).squeeze(0)  # [d_out]
+                        y0 = (Bmin @ self.coeffs[i].t()).squeeze(0)
                         spline_term_in[m_lo] = y0
                     if m_hi.any():
-                        y1 = (Bmax @ self.coeffs[i].t()).squeeze(0)  # [d_out]
+                        y1 = (Bmax @ self.coeffs[i].t()).squeeze(0)
                         spline_term_in[m_hi] = y1
                 else:
-                    # linear finite-diff slope near boundaries
                     if m_lo.any():
-                        y0 = (Bmin  @ self.coeffs[i].t()).squeeze(0)  # [d_out]
-                        y1 = (BminE @ self.coeffs[i].t()).squeeze(0)  # [d_out]
-                        slope = (y1 - y0) / (eps + 1e-12)             # [d_out]
-                        dx = (xi[m_lo] - self.in_min).unsqueeze(1)     # [B_lo,1]
+                        y0 = (Bmin  @ self.coeffs[i].t()).squeeze(0)
+                        y1 = (BminE @ self.coeffs[i].t()).squeeze(0)
+                        slope = (y1 - y0) / (eps + 1e-12)
+                        dx = (xi[m_lo] - self.in_min).unsqueeze(1)
                         spline_term_in[m_lo] = y0 + dx * slope
                     if m_hi.any():
-                        y0 = (Bmax  @ self.coeffs[i].t()).squeeze(0)  # [d_out]
-                        y1 = (BmaxE @ self.coeffs[i].t()).squeeze(0)  # [d_out]
-                        slope = (y0 - y1) / (eps + 1e-12)             # [d_out]
-                        dx = (xi[m_hi] - self.in_max).unsqueeze(1)     # [B_hi,1]
+                        y0 = (Bmax  @ self.coeffs[i].t()).squeeze(0)
+                        y1 = (BmaxE @ self.coeffs[i].t()).squeeze(0)
+                        slope = (y0 - y1) / (eps + 1e-12)
+                        dx = (xi[m_hi] - self.in_max).unsqueeze(1)
                         spline_term_in[m_hi] = y0 + dx * slope
 
-            # Apply ws and accumulate
-            out = out + silu_term + (spline_term_in * self.ws[i])
+            out = out + bypass + (spline_term_in * self.ws[i])
 
         return out
 
@@ -386,7 +403,8 @@ class FastKANNet(nn.Module):
     Uses FastKANLayer internally.
     """
     def __init__(self, input_dim, architecture, final_dim, n_basis=10, degree=3,
-                 bn_type="batch", bn_position="after", bn_skip_first=True, outside="linear"):
+                 bn_type="batch", bn_position="after", bn_skip_first=True, outside="linear",
+                 residual_type="silu"):
         super().__init__()
         self.deg = int(degree)
         self.n_basis = int(n_basis)
@@ -394,21 +412,21 @@ class FastKANNet(nn.Module):
         self.bn_position = bn_position
         self.bn_skip_first = bn_skip_first
         self.outside = outside
+        self.residual_type = residual_type
 
         dims = [input_dim] + list(architecture) + [final_dim]
         self.layers = nn.ModuleList()
         self.bn_layers = nn.ModuleList()
 
         for li, (a, b) in enumerate(zip(dims[:-1], dims[1:])):
-            # BN before?
             if bn_type == "batch" and bn_position == "before" and not (bn_skip_first and li == 0):
                 self.bn_layers.append(nn.BatchNorm1d(a))
             else:
                 self.bn_layers.append(nn.Identity())
 
-            self.layers.append(FastKANLayer(a, b, n_basis=self.n_basis, degree=self.deg, outside=self.outside))
+            self.layers.append(FastKANLayer(a, b, n_basis=self.n_basis, degree=self.deg,
+                                            outside=self.outside, residual_type=self.residual_type))
 
-            # BN after?
             if bn_type == "batch" and bn_position == "after" and not (bn_skip_first and li == 0):
                 self.bn_layers.append(nn.BatchNorm1d(b))
             else:
@@ -431,7 +449,8 @@ class FastKANNet(nn.Module):
 
 class KANNetSlow(nn.Module):
     def __init__(self, input_dim, architecture, final_dim, n_basis=10, degree=3,
-                 bn_type="batch", bn_position="after", bn_skip_first=True, outside="linear"):
+                 bn_type="batch", bn_position="after", bn_skip_first=True, outside="linear",
+                 residual_type="silu"):
         super().__init__()
         self.deg = int(degree)
         self.n_basis = int(n_basis)
@@ -439,6 +458,7 @@ class KANNetSlow(nn.Module):
         self.bn_position = bn_position
         self.bn_skip_first = bn_skip_first
         self.outside = outside
+        self.residual_type = residual_type
 
         dims = [input_dim] + list(architecture) + [final_dim]
         self.layers = nn.ModuleList()
@@ -450,7 +470,8 @@ class KANNetSlow(nn.Module):
             else:
                 self.bn_layers.append(nn.Identity())
 
-            self.layers.append(KANLayerSlow(a, b, n_basis=self.n_basis, degree=self.deg, outside=self.outside))
+            self.layers.append(KANLayerSlow(a, b, n_basis=self.n_basis, degree=self.deg,
+                                            outside=self.outside, residual_type=self.residual_type))
 
             if bn_type == "batch" and bn_position == "after" and not (bn_skip_first and li == 0):
                 self.bn_layers.append(nn.BatchNorm1d(b))
@@ -471,30 +492,37 @@ class KANNetSlow(nn.Module):
         return h * self.out_scale + self.out_bias
 
 
-def kan_param_count(arch, input_dim, final_dim, n_basis, degree, bn_type, bn_position, bn_skip_first):
+def kan_param_count(arch, input_dim, final_dim, n_basis, degree,
+                    bn_type, bn_position, bn_skip_first, residual_type):
+    """
+    Count parameters for KAN under the chosen residual_type.
+      - per-edge: n_basis coeffs + ws (+ wb if residual_type!='none')
+      - BN affine params
+      - output affine
+    """
     dims = [input_dim] + list(arch) + [final_dim]
     total = 0
-    # per-edge univariate: (n_basis coeffs + wb + ws)
-    per_edge = n_basis + 2
+    add_wb = (residual_type != "none")
+    per_edge = n_basis + 1 + (1 if add_wb else 0)  # coeffs + ws + (wb?)
     for a, b in zip(dims[:-1], dims[1:]):
         total += per_edge * a * b
-    # per-layer BN affine params
     if bn_type == "batch":
         for li, (a, b) in enumerate(zip(dims[:-1], dims[1:])):
             if bn_position == "before" and not (bn_skip_first and li == 0):
                 total += 2 * a
             if bn_position == "after"  and not (bn_skip_first and li == 0):
                 total += 2 * b
-    # output affine
     total += (final_dim * 2)
     return total
 
 
 def choose_kan_basis_for_parity(target_params, arch, input_dim, final_dim,
-                                degree, bn_type, bn_position, bn_skip_first, prefer_leq=True):
+                                degree, bn_type, bn_position, bn_skip_first,
+                                residual_type, prefer_leq=True):
     best_n = None; best_diff = float('inf'); best_count = None
-    for n in range(2, 200):  # basis count
-        cnt = kan_param_count(arch, input_dim, final_dim, n, degree, bn_type, bn_position, bn_skip_first)
+    for n in range(2, 200):
+        cnt = kan_param_count(arch, input_dim, final_dim, n, degree,
+                              bn_type, bn_position, bn_skip_first, residual_type)
         diff = abs(cnt - target_params)
         if prefer_leq:
             if cnt <= target_params and diff < best_diff:
@@ -504,10 +532,12 @@ def choose_kan_basis_for_parity(target_params, arch, input_dim, final_dim,
                 best_diff = diff; best_n = n; best_count = cnt
     if best_n is None:
         for n in range(2, 200):
-            cnt = kan_param_count(arch, input_dim, final_dim, n, degree, bn_type, bn_position, bn_skip_first)
+            cnt = kan_param_count(arch, input_dim, final_dim, n, degree,
+                                  bn_type, bn_position, bn_skip_first, residual_type)
             if cnt >= target_params:
                 return n, cnt
-        return 199, kan_param_count(arch, input_dim, final_dim, 199, degree, bn_type, bn_position, bn_skip_first)
+        return 199, kan_param_count(arch, input_dim, final_dim, 199, degree,
+                                    bn_type, bn_position, bn_skip_first, residual_type)
     return best_n, best_count
 
 
@@ -535,11 +565,8 @@ def recalc_bn_for_kan_progress(model: nn.Module, x_train: torch.Tensor, passes: 
 
 
 def recalc_bn_for_sn_progress(model: nn.Module, x_train: torch.Tensor, passes: int = 10, desc="SN BN re-calc"):
-    """
-    SN BN recalc that mirrors sn_core.train.recalculate_bn_stats but with progress bars.
-    """
+    """SN BN recalc with progress bars."""
     was_training = model.training
-    # Reset BN stats
     for module in model.modules():
         if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
             module.reset_running_stats()
@@ -560,29 +587,31 @@ def recalc_bn_for_sn_progress(model: nn.Module, x_train: torch.Tensor, passes: i
 # KAN training (fast/slow)
 # -------------------------------
 
-def build_kan(input_dim, final_dim, arch, n_basis, degree, bn_type, bn_position, bn_skip_first, outside, impl="fast"):
+def build_kan(input_dim, final_dim, arch, n_basis, degree, bn_type, bn_position, bn_skip_first,
+              outside, residual_type, impl="fast"):
     if impl == "fast":
         return FastKANNet(
             input_dim=input_dim, architecture=arch, final_dim=final_dim,
             n_basis=n_basis, degree=degree,
             bn_type=bn_type, bn_position=bn_position, bn_skip_first=bn_skip_first,
-            outside=outside
+            outside=outside, residual_type=residual_type
         )
     else:
         return KANNetSlow(
             input_dim=input_dim, architecture=arch, final_dim=final_dim,
             n_basis=n_basis, degree=degree,
             bn_type=bn_type, bn_position=bn_position, bn_skip_first=bn_skip_first,
-            outside=outside
+            outside=outside, residual_type=residual_type
         )
 
 def train_kan(x_train, y_train, input_dim, final_dim, arch, n_basis, degree, device, epochs=4000,
               lr=1e-3, wd=1e-6, seed=0, bn_type="batch", bn_position="after", bn_skip_first=True,
-              outside="linear", impl="fast"):
+              outside="linear", residual_type="silu", impl="fast"):
     set_global_seeds(seed)
     model = build_kan(
         input_dim=input_dim, final_dim=final_dim, arch=arch, n_basis=n_basis, degree=degree,
-        bn_type=bn_type, bn_position=bn_position, bn_skip_first=bn_skip_first, outside=outside, impl=impl
+        bn_type=bn_type, bn_position=bn_position, bn_skip_first=bn_skip_first,
+        outside=outside, residual_type=residual_type, impl=impl
     ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
     loss_fn = nn.MSELoss()
@@ -609,10 +638,6 @@ def train_kan(x_train, y_train, input_dim, final_dim, arch, n_basis, degree, dev
 
 def continue_train_sn_no_domain_updates(model, x_train, y_train, epochs, device, seed,
                                         lr_other=3e-4, lr_codomain=1e-3, wd=1e-7, clip=1.0):
-    """
-    Continue training an already-initialized SN model **without** domain updates.
-    Keeps BN in train mode. Mirrors sn_core defaults.
-    """
     set_global_seeds(seed)
     model = model.to(device)
     model.train()
@@ -654,17 +679,14 @@ def evaluate_with_progress(model, x_test, y_test, *,
     """
     - Optionally re-calc BN stats on training batch, set eval().
     - Evaluate on x_test in batches with tqdm.
-    - Returns per-head RMSE, mean RMSE, correlation Frobenius, heads used.
     """
-    # BN re-calc
     if bn_mode == "recalc_eval" and has_batchnorm(model):
-        if hasattr(model, "layers"):  # heuristic: SN model has .layers (Sprecher blocks)
+        if hasattr(model, "layers"):  # SN heuristic
             recalc_bn_for_sn_progress(model, x_train_for_bn, passes=bn_recalc_passes, desc=f"{name} BN re-calc")
         else:
             recalc_bn_for_kan_progress(model, x_train_for_bn, passes=bn_recalc_passes, desc=f"{name} BN re-calc")
         model.eval()
 
-    # Batched forward with progress
     N = x_test.shape[0]
     out_dim = y_test.shape[1]
     y_pred_cpu = torch.empty(N, out_dim, dtype=y_test.dtype)
@@ -679,7 +701,6 @@ def evaluate_with_progress(model, x_test, y_test, *,
             yb = model(x_test[start:end].to(device))
             y_pred_cpu[start:end] = yb.detach().cpu()
 
-    # Metrics on CPU tensors
     per_head, mean_rmse = rmse_per_head(y_test.cpu(), y_pred_cpu)
     corrF, used = corr_frobenius(y_test.cpu(), y_pred_cpu)
     return per_head, mean_rmse, corrF, used
@@ -707,6 +728,8 @@ def main():
     p.add_argument("--sn_norm_skip_first", action="store_true", default=True)
     p.add_argument("--sn_norm_first", action="store_true")
     p.add_argument("--sn_no_residual", action="store_true")
+    p.add_argument("--sn_residual_style", type=str, default=None,
+                   choices=["node", "linear", "standard", "matrix"])
     p.add_argument("--sn_no_lateral", action="store_true")
     # Domain policy
     p.add_argument("--sn_freeze_domains_after", type=int, default=0)
@@ -720,6 +743,7 @@ def main():
     p.add_argument("--kan_bn_position", type=str, default="after", choices=["before", "after"])
     p.add_argument("--kan_bn_skip_first", action="store_true", default=True)
     p.add_argument("--kan_outside", type=str, default="linear", choices=["linear", "clamp"])
+    p.add_argument("--kan_residual_type", type=str, default="silu", choices=["silu", "linear", "none"])
     p.add_argument("--kan_lr", type=float, default=1e-3)
     p.add_argument("--kan_wd", type=float, default=1e-6)
     p.add_argument("--kan_impl", type=str, default="fast", choices=["fast", "slow"],
@@ -760,6 +784,14 @@ def main():
     # ------------------------------
     if args.sn_no_residual:
         CONFIG['use_residual_weights'] = False
+    else:
+        # residual style override if provided
+        if args.sn_residual_style is not None:
+            style = args.sn_residual_style.lower()
+            if style in ("standard", "matrix"):
+                style = "linear"
+            CONFIG['residual_style'] = style  # used when constructing SN blocks
+
     if args.sn_no_lateral:
         CONFIG['use_lateral_mixing'] = False
 
@@ -777,6 +809,8 @@ def main():
 
     # Phase 1: warm-up WITH domain updates (standard trainer)
     t0_sn = time.time()
+    # residual style to pass explicitly (if residuals enabled)
+    residual_style_override = None if args.sn_no_residual else CONFIG.get('residual_style', 'node')
     plotting_snapshot, _ = train_network(
         dataset=dataset,
         architecture=sn_arch,
@@ -791,6 +825,7 @@ def main():
         norm_skip_first=sn_norm_skip,
         no_load_best=False,
         bn_recalc_on_load=False,
+        residual_style=residual_style_override
     )
     sn_secs = time.time() - t0_sn
 
@@ -798,7 +833,6 @@ def main():
     x_train  = plotting_snapshot["x_train"].to(device)
     y_train  = plotting_snapshot["y_train"].to(device)
 
-    # Optional Phase 2: continue without domain updates (freeze)
     if rest_epochs > 0:
         t1 = time.time()
         sn_model, sn_train_mse, secs2 = continue_train_sn_no_domain_updates(
@@ -820,7 +854,8 @@ def main():
         chosen_K, est_cnt = choose_kan_basis_for_parity(
             target_params=sn_params, arch=kan_arch, input_dim=input_dim, final_dim=final_dim,
             degree=args.kan_degree, bn_type=args.kan_bn_type, bn_position=args.kan_bn_position,
-            bn_skip_first=args.kan_bn_skip_first, prefer_leq=args.prefer_leq
+            bn_skip_first=args.kan_bn_skip_first, residual_type=args.kan_residual_type,
+            prefer_leq=args.prefer_leq
         )
         kan_K = chosen_K
         parity_note = f"[ParamMatch] Target SN params = {sn_params}. Chosen K for KAN = {kan_K} (est. {est_cnt} params)."
@@ -840,21 +875,18 @@ def main():
         device=device, epochs=args.epochs, seed=args.seed,
         lr=args.kan_lr, wd=args.kan_wd,
         bn_type=args.kan_bn_type, bn_position=args.kan_bn_position, bn_skip_first=args.kan_bn_skip_first,
-        outside=args.kan_outside, impl=args.kan_impl
+        outside=args.kan_outside, residual_type=args.kan_residual_type, impl=args.kan_impl
     )
-    # Count
     kan_params = count_params(kan_model)
 
     # ------------------------------
-    # Test evaluation with PROGRESS (BN standardization + batched forward)
+    # Test evaluation with PROGRESS
     # ------------------------------
-    # SN
     sn_per_head, sn_rmse_mean, sn_corrF, sn_corr_used = evaluate_with_progress(
         sn_model, x_test, y_test,
         bn_mode=args.bn_eval_mode, bn_recalc_passes=args.bn_recalc_passes, x_train_for_bn=x_train,
         name="SN", eval_batch_size=args.eval_batch_size
     )
-    # KAN
     kan_per_head, kan_rmse_mean, kan_corrF, kan_corr_used = evaluate_with_progress(
         kan_model, x_test, y_test,
         bn_mode=args.bn_eval_mode, bn_recalc_passes=args.bn_recalc_passes, x_train_for_bn=x_train,
@@ -883,7 +915,7 @@ def main():
         f"SN(arch={sn_arch}, phi_knots={args.sn_phi_knots}, Phi_knots={args.sn_Phi_knots}, "
         f"norm={args.sn_norm_type}/{args.sn_norm_position}/"
         f"{'skip_first' if sn_norm_skip else 'include_first'}, "
-        f"residuals={'off' if args.sn_no_residual else 'on'}, "
+        f"residuals={'off' if args.sn_no_residual else 'on(style='+CONFIG.get('residual_style','node')+')'}, "
         f"lateral={'off' if args.sn_no_lateral else 'on'}, "
         f"domains={'warmup+freeze' if args.sn_freeze_domains_after>0 else 'updated'})"
     )
@@ -891,7 +923,7 @@ def main():
         f"KAN[{args.kan_impl}](arch={kan_arch}, K={kan_K}, degree={args.kan_degree}, "
         f"BN={args.kan_bn_type}/{args.kan_bn_position}/"
         f"{'skip_first' if args.kan_bn_skip_first else 'include_first'}, "
-        f"outside={args.kan_outside})"
+        f"outside={args.kan_outside}, residual={args.kan_residual_type})"
     )
 
     sn_result = pretty(
