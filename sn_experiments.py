@@ -56,6 +56,10 @@ def parse_args():
     # Feature control arguments
     parser.add_argument("--no_residual", action="store_true",
                       help="Disable residual connections (default: enabled)")
+    parser.add_argument("--residual_style", type=str, default=None,
+                      choices=["node", "linear", "standard", "matrix"],
+                      help="Residual style: 'node' (original) or 'linear' (standard). "
+                           "Aliases: 'standard'/'matrix' -> 'linear'.")
     parser.add_argument("--no_norm", action="store_true",
                       help="Disable normalization (default: enabled with batch norm)")
     parser.add_argument("--use_advanced_scheduler", action="store_true",
@@ -95,6 +99,12 @@ def get_config_suffix(args, CONFIG):
     # Check residuals (default is enabled)
     if not CONFIG.get('use_residual_weights', True):
         parts.append("NoResidual")
+    else:
+        # Include style if not default 'node'
+        style = CONFIG.get('residual_style', 'node')
+        if style not in (None, 'node'):
+            # Compact tag
+            parts.append("ResLinear")
     
     # Check lateral mixing (default is enabled)
     if not CONFIG.get('use_lateral_mixing', True):
@@ -242,21 +252,33 @@ def main():
         CONFIG['memory_debug'] = True
         print("Memory debugging: ENABLED")
     
-    # Handle new feature control flags
+    # Handle new/updated feature control flags
+    # Residuals on/off + style
     if args.no_residual:
         CONFIG['use_residual_weights'] = False
+        if args.residual_style is not None:
+            print("NOTE: --residual_style is ignored because residuals are disabled via --no_residual.")
+    else:
+        # Only apply style if residuals are enabled
+        if args.residual_style is not None:
+            style = args.residual_style.lower()
+            # Normalize aliases
+            if style in ("standard", "matrix"):
+                style = "linear"
+            CONFIG['residual_style'] = style  # used by model/train
+    # Normalization on/off
     if args.no_norm:
         CONFIG['use_normalization'] = False
     if args.use_advanced_scheduler:
         CONFIG['use_advanced_scheduler'] = True
     
-    # Handle lateral mixing configuration
+    # Lateral mixing configuration
     if args.no_lateral:
         CONFIG['use_lateral_mixing'] = False
     if args.lateral_type is not None:
         CONFIG['lateral_mixing_type'] = args.lateral_type
     
-    # Handle parameter export configuration
+    # Parameter export configuration
     if args.export_params is not None:
         CONFIG['export_params'] = args.export_params
     
@@ -264,18 +286,16 @@ def main():
     if CONFIG.get('use_normalization', True) and not args.no_norm:
         # Use CONFIG defaults or argparser overrides
         if args.norm_type == "none":
-            # If user explicitly set norm_type to "none", disable normalization
             effective_norm_type = "none"
         elif args.norm_type is not None:
-            # Use the provided norm_type
             effective_norm_type = args.norm_type
         else:
-            # Use CONFIG default
             effective_norm_type = CONFIG.get('norm_type', 'batch')
     else:
         # Normalization is disabled
         effective_norm_type = "none"
     
+    # Summarize run configuration
     print(f"Using device: {device}")
     print(f"Dataset: {args.dataset}")
     print(f"Architecture: {architecture}")
@@ -285,6 +305,8 @@ def main():
     print(f"Theoretical domains: {CONFIG.get('use_theoretical_domains', True)}")
     print(f"Domain safety margin: {CONFIG.get('domain_safety_margin', 0.0)}")
     print(f"Residual connections: {'enabled' if CONFIG.get('use_residual_weights', True) else 'disabled'}")
+    if CONFIG.get('use_residual_weights', True):
+        print(f"  Residual style: {CONFIG.get('residual_style', 'node')}")
     print(f"Lateral mixing: {'enabled' if CONFIG.get('use_lateral_mixing', True) else 'disabled'}")
     if CONFIG.get('use_lateral_mixing', True):
         print(f"  Type: {CONFIG.get('lateral_mixing_type', 'cyclic')}")
@@ -330,12 +352,19 @@ def main():
         final_norm_position = args.norm_position  # Keep for backward compatibility
         final_norm_skip_first = args.norm_skip_first
     
-    # Train network - now returns a snapshot and losses
+    # Determine residual style override to pass to train()
+    residual_style_override = None
+    if not CONFIG.get('use_residual_weights', True):
+        residual_style_override = None  # style irrelevant if residuals disabled
+    else:
+        residual_style_override = CONFIG.get('residual_style', 'node')
+    
+    # Train network - returns a snapshot and losses
     plotting_snapshot, losses = train_network(
         dataset=dataset,
         architecture=architecture,
         total_epochs=args.epochs,
-        print_every=args.epochs // 10,
+        print_every=max(1, args.epochs // 10),
         device=device,
         phi_knots=args.phi_knots,
         Phi_knots=args.Phi_knots,
@@ -344,7 +373,8 @@ def main():
         norm_position=final_norm_position,
         norm_skip_first=final_norm_skip_first,
         no_load_best=args.no_load_best,
-        bn_recalc_on_load=args.bn_recalc_on_load
+        bn_recalc_on_load=args.bn_recalc_on_load,
+        residual_style=residual_style_override
     )
     
     # Extract components from the snapshot
