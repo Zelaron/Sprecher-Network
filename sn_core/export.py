@@ -1,4 +1,9 @@
-"""Parameter export utilities for Sprecher Networks."""
+"""Parameter export utilities for Sprecher Networks.
+
+Fully supports both residual styles:
+- 'node'   : original node-centric residuals (scalar / pooling / broadcast)
+- 'linear' : standard residuals (α·x when d_in == d_out; projection W when d_in != d_out)
+"""
 
 import os
 import torch
@@ -137,6 +142,14 @@ def format_integer_tensor(tensor, name="", indent="  ", max_per_line=16):
     return "\n".join(lines)
 
 
+def _format_loss_for_header(loss_value):
+    """Safely format a loss value in scientific notation, or return as-is if not convertible."""
+    try:
+        return f"{float(loss_value):.6e}"
+    except Exception:
+        return str(loss_value)
+
+
 def export_parameters(model, param_types, save_path, dataset_info=None, checkpoint_info=None):
     """
     Export specified parameter types to a formatted text file.
@@ -172,7 +185,9 @@ def export_parameters(model, param_types, save_path, dataset_info=None, checkpoi
     
     if checkpoint_info:
         lines.append(f"Checkpoint Epoch: {checkpoint_info.get('epoch', 'Unknown')}")
-        lines.append(f"Best Loss: {checkpoint_info.get('loss', 'Unknown'):.6e}")
+        # Safer formatting for loss (avoids crash if 'Unknown')
+        loss_val = _format_loss_for_header(checkpoint_info.get('loss', 'Unknown'))
+        lines.append(f"Best Loss: {loss_val}")
     
     lines.append(f"Export Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"Exported Parameters: {', '.join(categories)}")
@@ -211,20 +226,20 @@ def export_parameters(model, param_types, save_path, dataset_info=None, checkpoi
         for i, layer in enumerate(model.layers):
             lines.append(f"Layer {i} ({layer.d_in} → {layer.d_out}):")
             
-            # Phi spline (monotonic)
-            lines.append("  Phi spline (monotonic):")
+            # phi spline (monotonic)
+            lines.append("  phi spline (monotonic):")
             lines.append(f"    Domain: [{layer.phi.in_min:.6f}, {layer.phi.in_max:.6f}]")
             lines.append(f"    Codomain: [0.0, 1.0] (fixed)")
             lines.append(f"    Number of knots: {layer.phi.num_knots}")
             if hasattr(layer.phi, 'log_increments'):
                 lines.append(format_tensor(layer.phi.log_increments, "Log increments", "    "))
-            coeffs = layer.phi.get_coeffs()
-            lines.append(format_tensor(coeffs, "Coefficients", "    "))
+            coeffs_phi = layer.phi.get_coeffs()
+            lines.append(format_tensor(coeffs_phi, "Coefficients", "    "))
             
             # Phi spline (general)
             lines.append("  Phi spline (general):")
             lines.append(f"    Domain: [{layer.Phi.in_min:.6f}, {layer.Phi.in_max:.6f}]")
-            if CONFIG['train_phi_codomain'] and hasattr(layer, 'phi_codomain_params'):
+            if CONFIG.get('train_phi_codomain', False) and hasattr(layer, 'phi_codomain_params'):
                 cc = layer.phi_codomain_params.cc.item()
                 cr = layer.phi_codomain_params.cr.item()
                 lines.append(f"    Codomain: [{cc-cr:.6f}, {cc+cr:.6f}] (trainable)")
@@ -232,41 +247,60 @@ def export_parameters(model, param_types, save_path, dataset_info=None, checkpoi
             lines.append(format_tensor(layer.Phi.coeffs, "Coefficients", "    "))
         lines.append("")
     
-    # Export Residual parameters (updated for node-centric approach)
-    if 'residual' in categories and CONFIG['use_residual_weights']:
-        lines.append("RESIDUAL CONNECTION PARAMETERS (Node-Centric)")
+    # Export Residual parameters (supports both styles)
+    if 'residual' in categories and CONFIG.get('use_residual_weights', True):
+        style = CONFIG.get('residual_style', 'node')
+        lines.append(f"RESIDUAL CONNECTION PARAMETERS (style: {style})")
         lines.append("-" * 40)
-        has_residual = False
+        has_any_residual = False
+        
         for i, layer in enumerate(model.layers):
-            # Check for scalar residual weight (same dimensions)
-            if hasattr(layer, 'residual_weight') and layer.residual_weight is not None:
-                lines.append(f"Layer {i} ({layer.d_in} → {layer.d_out}): SCALAR residual")
-                lines.append(f"  residual_weight = {layer.residual_weight.item():.6f}")
-                has_residual = True
+            # Prefer explicit attributes; we don't rely only on the style flag
+            # so this works regardless of how the model was constructed.
             
-            # Check for pooling weights (d_in > d_out)
-            elif hasattr(layer, 'residual_pooling_weights') and layer.residual_pooling_weights is not None:
+            # 1) Linear style projection matrix (d_in != d_out) — present only if implemented
+            if hasattr(layer, 'residual_projection') and layer.residual_projection is not None:
+                has_any_residual = True
+                lines.append(f"Layer {i} ({layer.d_in} → {layer.d_out}): PROJECTION residual")
+                lines.append(format_tensor(layer.residual_projection, "Projection matrix W", "  "))
+                lines.append("  Note: residual = x @ W (added pre-sum / per-output)")
+                continue  # Exclusive with other residual types in typical builds
+            
+            # 2) Scalar residual (same dims) — used in both 'node' and 'linear'
+            if hasattr(layer, 'residual_weight') and layer.residual_weight is not None:
+                has_any_residual = True
+                lines.append(f"Layer {i} ({layer.d_in} → {layer.d_out}): SCALAR residual")
+                lines.append(f"  residual_weight (alpha): {layer.residual_weight.item():.6f}")
+                continue
+            
+            # 3) Pooling residual (node-centric; d_in > d_out)
+            if hasattr(layer, 'residual_pooling_weights') and layer.residual_pooling_weights is not None:
+                has_any_residual = True
                 lines.append(f"Layer {i} ({layer.d_in} → {layer.d_out}): POOLING residual")
                 lines.append(format_tensor(layer.residual_pooling_weights, "Pooling weights", "  "))
-                lines.append(format_integer_tensor(layer.pooling_assignment, "Pooling assignment", "  "))
-                lines.append(format_tensor(layer.pooling_counts, "Inputs per output", "  "))
-                lines.append("  Note: Input i is weighted by pooling_weights[i] and added to output pooling_assignment[i]")
-                has_residual = True
+                if hasattr(layer, 'pooling_assignment'):
+                    lines.append(format_integer_tensor(layer.pooling_assignment, "Pooling assignment", "  "))
+                if hasattr(layer, 'pooling_counts'):
+                    lines.append(format_tensor(layer.pooling_counts, "Inputs per output", "  "))
+                lines.append("  Note: input j contributes to output pooling_assignment[j] with its weight")
+                continue
             
-            # Check for broadcast weights (d_in < d_out)
-            elif hasattr(layer, 'residual_broadcast_weights') and layer.residual_broadcast_weights is not None:
+            # 4) Broadcast residual (node-centric; d_in < d_out)
+            if hasattr(layer, 'residual_broadcast_weights') and layer.residual_broadcast_weights is not None:
+                has_any_residual = True
                 lines.append(f"Layer {i} ({layer.d_in} → {layer.d_out}): BROADCAST residual")
                 lines.append(format_tensor(layer.residual_broadcast_weights, "Broadcast weights", "  "))
-                lines.append(format_integer_tensor(layer.broadcast_sources, "Broadcast sources", "  "))
-                lines.append("  Note: Output i takes input broadcast_sources[i] and scales by broadcast_weights[i]")
-                has_residual = True
+                if hasattr(layer, 'broadcast_sources'):
+                    lines.append(format_integer_tensor(layer.broadcast_sources, "Broadcast sources", "  "))
+                lines.append("  Note: output k receives scaled copy of input broadcast_sources[k]")
+                continue
         
-        if not has_residual:
+        if not has_any_residual:
             lines.append("  No residual parameters in this model")
         lines.append("")
     
     # Export Codomain parameters
-    if 'codomain' in categories and CONFIG['train_phi_codomain']:
+    if 'codomain' in categories and CONFIG.get('train_phi_codomain', False):
         lines.append("PHI CODOMAIN PARAMETERS")
         lines.append("-" * 40)
         for i, layer in enumerate(model.layers):
@@ -280,7 +314,7 @@ def export_parameters(model, param_types, save_path, dataset_info=None, checkpoi
         lines.append("")
     
     # Export Normalization parameters
-    if 'norm' in categories and model.norm_type != 'none':
+    if 'norm' in categories and getattr(model, 'norm_type', 'none') != 'none':
         lines.append("NORMALIZATION PARAMETERS")
         lines.append("-" * 40)
         for i, norm_layer in enumerate(model.norm_layers):
@@ -294,17 +328,19 @@ def export_parameters(model, param_types, save_path, dataset_info=None, checkpoi
                     lines.append(f"  Num batches tracked: {norm_layer.num_batches_tracked.item()}")
         lines.append("")
     
-    # Export Lateral Mixing parameters (NEW)
-    if 'lateral' in categories and CONFIG['use_lateral_mixing']:
+    # Export Lateral Mixing parameters
+    if 'lateral' in categories and CONFIG.get('use_lateral_mixing', False):
         lines.append("LATERAL MIXING PARAMETERS (Intra-block Communication)")
         lines.append("-" * 40)
         has_lateral = False
         for i, layer in enumerate(model.layers):
             if hasattr(layer, 'lateral_scale') and layer.lateral_scale is not None:
+                has_lateral = True
                 lines.append(f"Layer {i} ({layer.d_in} → {layer.d_out}):")
                 lines.append(f"  Lateral scale: {layer.lateral_scale.item():.6f}")
                 
-                if CONFIG['lateral_mixing_type'] == 'bidirectional':
+                ltype = CONFIG.get('lateral_mixing_type', 'cyclic')
+                if ltype == 'bidirectional':
                     lines.append("  Type: Bidirectional mixing")
                     lines.append(format_tensor(layer.lateral_weights_forward, "Forward weights", "  "))
                     lines.append(format_tensor(layer.lateral_weights_backward, "Backward weights", "  "))
@@ -312,9 +348,7 @@ def export_parameters(model, param_types, save_path, dataset_info=None, checkpoi
                 else:  # 'cyclic'
                     lines.append("  Type: Cyclic mixing")
                     lines.append(format_tensor(layer.lateral_weights, "Lateral weights", "  "))
-                    lines.append("  Note: Output i receives contribution from output (i+1) % d_out")
-                has_lateral = True
-        
+                    lines.append("  Note: Output q receives contribution from output (q+1) % d_out")
         if not has_lateral:
             lines.append("  No lateral mixing parameters in this model")
         lines.append("")

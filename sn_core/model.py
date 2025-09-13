@@ -216,7 +216,7 @@ class SimpleSpline(nn.Module):
         with torch.no_grad():
             if self.monotonic:
                 # For monotonic splines, keep uniform increments
-                self.log_increments.data = torch.log(torch.ones(self.num_knots) / num_knots + 1e-6)
+                self.log_increments.data = torch.log(torch.ones(self.num_knots) / self.num_knots + 1e-6)
             else:
                 # For general splines, set coefficients to be linear from domain_min to domain_max
                 self.coeffs.data = torch.linspace(domain_min, domain_max, self.num_knots, 
@@ -570,6 +570,9 @@ class SprecherLayerBlock(nn.Module):
       - A trainable shift (η)
       - A trainable weight VECTOR (λ) - one weight per input dimension
       - Optional lateral mixing for cross-output communication
+      - Residual connection (configurable style):
+          * 'node'   (default): node-centric residuals (scalar/pooling/broadcast)
+          * 'linear': standard residuals (scalar if d_in==d_out, else projection matrix)
     If is_final is True, the block sums its outputs to produce a scalar.
     """
     def __init__(self, d_in, d_out, layer_num=0, is_final=False, phi_knots=100, Phi_knots=100,
@@ -620,8 +623,7 @@ class SprecherLayerBlock(nn.Module):
             codomain_params=self.phi_codomain_params
         )
         
-        # Weight vector
-        # Only d_in weights, shared across all d_out outputs
+        # Weight vector (TRUE Sprecher λ: one per input dim)
         self.lambdas = nn.Parameter(torch.randn(d_in) * np.sqrt(2.0 / d_in))
         
         # Initialize eta to a reasonable value based on d_out
@@ -662,60 +664,52 @@ class SprecherLayerBlock(nn.Module):
             self.lateral_weights_forward = None
             self.lateral_weights_backward = None
         
-        # Node-centric residual connection (learnable) - only create if enabled in config
+        # -------------------------------
+        # Residual connection parameters
+        # -------------------------------
+        self.residual_style = str(CONFIG.get('residual_style', 'node')).lower()
+        # Normalize potential synonyms
+        if self.residual_style in ['standard', 'matrix']:
+            self.residual_style = 'linear'
+
+        # Initialize all residual attributes to None (then set as needed)
+        self.residual_weight = None                  # scalar (only when d_in == d_out)
+        self.residual_pooling_weights = None         # node-centric (d_in > d_out)
+        self.residual_broadcast_weights = None       # node-centric (d_in < d_out)
+        self.residual_projection = None              # standard linear projection (d_in != d_out)
+
         if CONFIG['use_residual_weights']:
             if d_in == d_out:
-                # When dimensions match, use a simple scalar weight
+                # When dimensions match, use a simple scalar weight in both styles
                 self.residual_weight = nn.Parameter(torch.tensor(0.1))
-                # No pooling/broadcasting needed
-                self.residual_pooling_weights = None
-                self.residual_broadcast_weights = None
-            elif d_in > d_out:
-                # Pooling case: aggregate multiple inputs per output
-                self.residual_weight = None
-                
-                # Learnable pooling weights for each input dimension
-                # Initialize to uniform contribution
-                init_value = 1.0 / d_in  # Normalized initialization
-                self.residual_pooling_weights = nn.Parameter(
-                    torch.ones(d_in) * init_value
-                )
-                self.residual_broadcast_weights = None
-                
-                # Create assignment pattern: distribute inputs across outputs
-                # Use a balanced assignment to ensure each output gets similar number of inputs
-                assignments = []
-                for i in range(d_in):
-                    # Cyclic assignment
-                    assignments.append(i % d_out)
-                self.register_buffer('pooling_assignment', torch.tensor(assignments, dtype=torch.long))
-                
-                # Track how many inputs contribute to each output for normalization
-                counts = torch.zeros(d_out)
-                for i in range(d_in):
-                    counts[assignments[i]] += 1
-                self.register_buffer('pooling_counts', counts)
-                
-            else:  # d_in < d_out
-                # Broadcasting case: expand inputs to outputs
-                self.residual_weight = None
-                self.residual_pooling_weights = None
-                
-                # Learnable scaling for each output dimension
-                self.residual_broadcast_weights = nn.Parameter(
-                    torch.ones(d_out) * 0.1
-                )
-                
-                # Create source pattern: determine which input feeds which output
-                # Use cyclic repetition for balanced coverage
-                sources = []
-                for i in range(d_out):
-                    sources.append(i % d_in)
-                self.register_buffer('broadcast_sources', torch.tensor(sources, dtype=torch.long))
-        else:
-            self.residual_weight = None
-            self.residual_pooling_weights = None
-            self.residual_broadcast_weights = None
+            else:
+                if self.residual_style == 'linear':
+                    # Standard residual: full projection matrix W (d_in x d_out)
+                    self.residual_projection = nn.Parameter(torch.empty(d_in, d_out))
+                    nn.init.xavier_uniform_(self.residual_projection)
+                else:
+                    # Node-centric (existing) behavior
+                    if d_in > d_out:
+                        # Pooling case: aggregate multiple inputs per output
+                        init_value = 1.0 / d_in  # Normalized initialization
+                        self.residual_pooling_weights = nn.Parameter(
+                            torch.ones(d_in) * init_value
+                        )
+                        # Create balanced cyclic assignment
+                        assignments = [(i % d_out) for i in range(d_in)]
+                        self.register_buffer('pooling_assignment', torch.tensor(assignments, dtype=torch.long))
+                        counts = torch.zeros(d_out)
+                        for i in range(d_in):
+                            counts[assignments[i]] += 1
+                        self.register_buffer('pooling_counts', counts)
+                    else:  # d_in < d_out
+                        # Broadcasting case: expand inputs to outputs
+                        self.residual_broadcast_weights = nn.Parameter(
+                            torch.ones(d_out) * 0.1
+                        )
+                        sources = [(i % d_in) for i in range(d_out)]
+                        self.register_buffer('broadcast_sources', torch.tensor(sources, dtype=torch.long))
+        # else: all residual attributes remain None
     
     def update_phi_domain_theoretical(self, input_range, allow_resampling=True, force_resample=False):
         """Update φ domain based on theoretical bounds."""
@@ -965,6 +959,25 @@ class SprecherLayerBlock(nn.Module):
             r_max_per_q.scatter_add_(0, assign, contrib_max)
             
             return r_min_per_q, r_max_per_q
+
+    def _compute_linear_residual_bounds_per_output(self, a_vec, b_vec):
+        """
+        STANDARD residual bounds for projection matrix W (d_in x d_out):
+            r_q = sum_i x_i * W_{i,q}
+        Per-output tight intervals using per-dimension bounds:
+            min = a·W^+ + b·W^- ,  max = b·W^+ + a·W^-
+        Returns: r_min_per_q, r_max_per_q with shape [d_out].
+        """
+        device = self.phi.knots.device
+        W = self.residual_projection.to(device)  # (d_in, d_out)
+        W_pos = torch.clamp(W, min=0)
+        W_neg = torch.clamp(W, max=0)
+        a_vec = torch.as_tensor(a_vec, device=device, dtype=torch.float32)
+        b_vec = torch.as_tensor(b_vec, device=device, dtype=torch.float32)
+        # Row-vector times matrix -> (d_out,)
+        r_min = torch.matmul(a_vec, W_pos) + torch.matmul(b_vec, W_neg)
+        r_max = torch.matmul(b_vec, W_pos) + torch.matmul(a_vec, W_neg)
+        return r_min, r_max
     
     def compute_output_range_theoretical(self):
         """Compute theoretical output range of this block using per-q tight composition (uses per-channel intervals when available)."""
@@ -1018,7 +1031,7 @@ class SprecherLayerBlock(nn.Module):
                 y_min_per_q = torch.where(has_knots, torch.minimum(y_min_per_q, Yk_min), y_min_per_q)
                 y_max_per_q = torch.where(has_knots, torch.maximum(y_max_per_q, Yk_max), y_max_per_q)
             
-            # Residuals per q using per-dimension intervals when available
+            # Residuals per q (now includes standard 'linear' projection case)
             if CONFIG['use_residual_weights'] and self.input_range is not None:
                 if self.residual_weight is not None:
                     # Scalar residual per output (d_in == d_out): per-q bounds via per-dim intervals
@@ -1026,7 +1039,6 @@ class SprecherLayerBlock(nn.Module):
                     if self.input_min_per_dim is not None and self.input_max_per_dim is not None:
                         a_vec = torch.as_tensor(self.input_min_per_dim, device=device, dtype=torch.float32)
                         b_vec = torch.as_tensor(self.input_max_per_dim, device=device, dtype=torch.float32)
-                        # Ensure correct length
                         if a_vec.numel() != self.d_in or b_vec.numel() != self.d_in:
                             a_vec = torch.full((self.d_in,), self.input_range.min, device=device)
                             b_vec = torch.full((self.d_in,), self.input_range.max, device=device)
@@ -1038,6 +1050,18 @@ class SprecherLayerBlock(nn.Module):
                         r_lo, r_hi = (w * a, w * b) if w.item() >= 0 else (w * b, w * a)
                         r_min_per_q = torch.full((self.d_out,), r_lo.item(), device=device)
                         r_max_per_q = torch.full((self.d_out,), r_hi.item(), device=device)
+                elif self.residual_projection is not None:
+                    # STANDARD linear projection case (d_in != d_out)
+                    if self.input_min_per_dim is not None and self.input_max_per_dim is not None:
+                        a_vec = torch.as_tensor(self.input_min_per_dim, device=device, dtype=torch.float32)
+                        b_vec = torch.as_tensor(self.input_max_per_dim, device=device, dtype=torch.float32)
+                        if a_vec.numel() != self.d_in or b_vec.numel() != self.d_in:
+                            a_vec = torch.full((self.d_in,), self.input_range.min, device=device)
+                            b_vec = torch.full((self.d_in,), self.input_range.max, device=device)
+                    else:
+                        a_vec = torch.full((self.d_in,), self.input_range.min, device=device)
+                        b_vec = torch.full((self.d_in,), self.input_range.max, device=device)
+                    r_min_per_q, r_max_per_q = self._compute_linear_residual_bounds_per_output(a_vec, b_vec)
                 elif self.residual_pooling_weights is not None:
                     if self.input_min_per_dim is not None and self.input_max_per_dim is not None:
                         a_vec = torch.as_tensor(self.input_min_per_dim, device=device, dtype=torch.float32)
@@ -1219,7 +1243,11 @@ class SprecherLayerBlock(nn.Module):
         if not CONFIG['use_residual_weights'] or x_original is None:
             return activated
         
-        if self.residual_weight is not None:
+        if self.residual_projection is not None:
+            # STANDARD linear projection residual: x @ W
+            activated = activated + torch.matmul(x_original, self.residual_projection)
+        
+        elif self.residual_weight is not None:
             # Same dimension case - simple scalar weight
             activated = activated + self.residual_weight * x_original
             
@@ -1284,6 +1312,9 @@ class SprecherMultiLayerNetwork(nn.Module):
         norm_skip_first: Whether to skip normalization for first block
         initialize_domains: Whether to initialize domains on creation (set False when loading checkpoint)
         domain_ranges: Dict of domain ranges for each layer's splines (optional)
+    Note:
+        Residual style is controlled by CONFIG['residual_style'] ∈ {'node', 'linear'}.
+        Default is 'node' to preserve original behavior.
     """
     def __init__(self, input_dim, architecture, final_dim=1, phi_knots=100, Phi_knots=100,
                  norm_type='none', norm_position='after', norm_skip_first=True, initialize_domains=True,
