@@ -2,6 +2,14 @@
 """
 KAN vs SN — Parameter‑Parity Benchmark (with BN recalc + eval progress)
 
+This version **equalizes linear residual semantics**:
+- For KAN with residual_type='linear':
+    * If d_in == d_out  → use a **single scalar** residual α per layer (adds α·x once per layer).
+    * If d_in != d_out  → use the **usual projection matrix** per edge (wb[i,j]) as before.
+- For KAN with residual_type='silu' or 'none' behavior is unchanged.
+
+SN already behaves as: scalar when d_in==d_out, projection when d_in!=d_out.
+
 Usage:
   python -m benchmarks.kan_sn_parity_bench [FLAGS]
 
@@ -249,7 +257,7 @@ class KANUnivariate(nn.Module):
         self.ws = nn.Parameter(torch.tensor(1.0))  # spline scale
         self.residual_type = residual_type
         if residual_type in ("silu", "linear"):
-            self.wb = nn.Parameter(torch.tensor(1.0))  # bypass scale
+            self.wb = nn.Parameter(torch.tensor(1.0))  # bypass scale (per edge)
         else:
             self.wb = None  # no bypass
 
@@ -267,11 +275,20 @@ class KANLayerSlow(nn.Module):
                  outside="linear", residual_type="silu"):
         super().__init__()
         self.d_in = d_in; self.d_out = d_out
+        # Equalized linear residual: scalar α if dims match, else edge-wise wb
+        self.equalized_linear_scalar = (residual_type == "linear" and d_in == d_out)
+        edge_residual_type = residual_type if not self.equalized_linear_scalar else "none"
+
         self.phi = nn.ModuleList(
             [KANUnivariate(n_basis=n_basis, degree=degree, in_min=in_min, in_max=in_max,
-                           outside=outside, residual_type=residual_type)
+                           outside=outside, residual_type=edge_residual_type)
              for _ in range(d_in * d_out)]
         )
+
+        if self.equalized_linear_scalar:
+            self.residual_alpha = nn.Parameter(torch.tensor(0.1))
+        else:
+            self.register_parameter("residual_alpha", None)
 
     def forward(self, x):
         B = x.shape[0]
@@ -283,6 +300,10 @@ class KANLayerSlow(nn.Module):
                 s = s + self.phi[idx](x[:, i]).view(-1)
                 idx += 1
             out[:, j] = s
+
+        # Add α·x once per layer when d_in == d_out and residual_type == 'linear'
+        if self.residual_alpha is not None:
+            out = out + self.residual_alpha * x
         return out
 
 # --- FAST vectorized KAN ---------------------------------------------
@@ -294,6 +315,11 @@ class FastKANLayer(nn.Module):
     where residual_term is SiLU(x) if residual_type='silu', x if 'linear', or 0 if 'none'.
     S_i,j is a degree-d clamped-uniform B-spline with n_basis coefficients.
     Outside behavior 'linear' or 'clamp' matches the slow implementation.
+
+    Equalized linear residuals:
+      - If residual_type == 'linear' and d_in == d_out, we DO NOT use per-edge wb.
+        Instead we add a single scalar α per layer and add α·x after the spline sum.
+      - If residual_type == 'linear' and d_in != d_out, behavior is unchanged (wb matrix).
     """
     def __init__(self, d_in, d_out, n_basis=10, degree=3, in_min=0.0, in_max=1.0,
                  outside="linear", residual_type="silu"):
@@ -307,6 +333,7 @@ class FastKANLayer(nn.Module):
         self.in_max = float(in_max)
         self.outside = outside
         self.residual_type = residual_type
+        self.equalized_linear_scalar = (residual_type == "linear" and self.d_in == self.d_out)
 
         # Shared knot vector
         self.register_buffer('knots', make_clamped_uniform_knots(self.in_min, self.in_max, self.n_basis, self.degree))
@@ -314,10 +341,23 @@ class FastKANLayer(nn.Module):
         self.coeffs = nn.Parameter(torch.zeros(self.d_in, self.d_out, self.n_basis))  # [d_in, d_out, K]
         self.ws     = nn.Parameter(torch.ones(self.d_in, self.d_out))                # spline scale
 
-        if residual_type in ("silu", "linear"):
-            self.wb = nn.Parameter(torch.ones(self.d_in, self.d_out))                # bypass/projection scale
+        # Residual parameters:
+        #   silu: per-edge wb
+        #   linear & d_in!=d_out: per-edge wb
+        #   linear & d_in==d_out: single scalar residual_alpha
+        if self.residual_type == "silu":
+            self.wb = nn.Parameter(torch.ones(self.d_in, self.d_out))
+            self.register_parameter("residual_alpha", None)
+        elif self.residual_type == "linear":
+            if self.equalized_linear_scalar:
+                self.register_parameter("wb", None)
+                self.residual_alpha = nn.Parameter(torch.tensor(0.1))
+            else:
+                self.wb = nn.Parameter(torch.ones(self.d_in, self.d_out))
+                self.register_parameter("residual_alpha", None)
         else:
             self.register_parameter("wb", None)
+            self.register_parameter("residual_alpha", None)
 
         # Precompute boundary bases
         with torch.no_grad():
@@ -353,7 +393,7 @@ class FastKANLayer(nn.Module):
             if self.wb is not None:
                 if self.residual_type == "silu":
                     bypass = F.silu(xi).unsqueeze(1) * self.wb[i]  # [B, d_out]
-                else:  # "linear"
+                else:  # "linear" with d_in != d_out
                     bypass = xi.unsqueeze(1) * self.wb[i]          # [B, d_out]
             else:
                 bypass = 0.0
@@ -394,6 +434,10 @@ class FastKANLayer(nn.Module):
                         spline_term_in[m_hi] = y0 + dx * slope
 
             out = out + bypass + (spline_term_in * self.ws[i])
+
+        # Add α·x once per layer for linear residual with matching dims
+        if self.residual_alpha is not None:
+            out = out + self.residual_alpha * x
 
         return out
 
@@ -497,15 +541,19 @@ def kan_param_count(arch, input_dim, final_dim, n_basis, degree,
     """
     Count parameters for KAN under the chosen residual_type.
       - per-edge: n_basis coeffs + ws (+ wb if residual_type!='none')
+      - BUT for residual_type='linear' with a==b, **omit wb per-edge** and add **1 scalar** per layer.
       - BN affine params
       - output affine
     """
     dims = [input_dim] + list(arch) + [final_dim]
     total = 0
-    add_wb = (residual_type != "none")
-    per_edge = n_basis + 1 + (1 if add_wb else 0)  # coeffs + ws + (wb?)
     for a, b in zip(dims[:-1], dims[1:]):
+        use_layer_scalar = (residual_type == "linear" and a == b)
+        layer_add_wb = (residual_type != "none") and not use_layer_scalar
+        per_edge = n_basis + 1 + (1 if layer_add_wb else 0)  # coeffs + ws + (wb?)
         total += per_edge * a * b
+        if use_layer_scalar:
+            total += 1  # α scalar for this layer
     if bn_type == "batch":
         for li, (a, b) in enumerate(zip(dims[:-1], dims[1:])):
             if bn_position == "before" and not (bn_skip_first and li == 0):
