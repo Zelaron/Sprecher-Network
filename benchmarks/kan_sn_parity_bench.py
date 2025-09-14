@@ -991,7 +991,7 @@ def main():
         notes="SN timing includes warm-up + optional freeze phase. " + parity_note
     )
     kan_result = pretty(
-        kan_title, kan_params, kan_rmse_mean, kan_rmse_mean, kan_per_head, kan_corrF, kan_corr_used, kan_secs,
+        kan_title, kan_params, kan_train_mse, kan_rmse_mean, kan_per_head, kan_corrF, kan_corr_used, kan_secs,
         notes=("BN standardized at test" if args.bn_eval_mode == "recalc_eval" else "") + ("; " + parity_note if parity_note else "")
     )
 
