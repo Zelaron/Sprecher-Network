@@ -209,6 +209,11 @@ class BSpline1D(nn.Module):
         self.n_basis = int(n_basis)
         self.degree = int(degree)
         self.in_min = float(in_min); self.in_max = float(in_max)
+
+        # FIX: ensure at least degree+1 basis functions
+        if self.n_basis < self.degree + 1:
+            self.n_basis = self.degree + 1
+
         self.register_buffer('knots', make_clamped_uniform_knots(self.in_min, self.in_max, self.n_basis, self.degree))
         self.coeffs = nn.Parameter(torch.zeros(self.n_basis))
         self.outside = outside
@@ -327,13 +332,17 @@ class FastKANLayer(nn.Module):
         assert degree in (2, 3)
         self.d_in = int(d_in)
         self.d_out = int(d_out)
-        self.n_basis = int(n_basis)
         self.degree = int(degree)
+        self.n_basis = int(n_basis)
         self.in_min = float(in_min)
         self.in_max = float(in_max)
         self.outside = outside
         self.residual_type = residual_type
         self.equalized_linear_scalar = (residual_type == "linear" and self.d_in == self.d_out)
+
+        # FIX: ensure at least degree+1 basis functions
+        if self.n_basis < self.degree + 1:
+            self.n_basis = self.degree + 1
 
         # Shared knot vector
         self.register_buffer('knots', make_clamped_uniform_knots(self.in_min, self.in_max, self.n_basis, self.degree))
@@ -547,10 +556,12 @@ def kan_param_count(arch, input_dim, final_dim, n_basis, degree,
     """
     dims = [input_dim] + list(arch) + [final_dim]
     total = 0
+    eff_basis = max(int(n_basis), int(degree) + 1)  # FIX: enforce minimum basis
+
     for a, b in zip(dims[:-1], dims[1:]):
         use_layer_scalar = (residual_type == "linear" and a == b)
         layer_add_wb = (residual_type != "none") and not use_layer_scalar
-        per_edge = n_basis + 1 + (1 if layer_add_wb else 0)  # coeffs + ws + (wb?)
+        per_edge = eff_basis + 1 + (1 if layer_add_wb else 0)  # coeffs + ws + (wb?)
         total += per_edge * a * b
         if use_layer_scalar:
             total += 1  # α scalar for this layer
@@ -567,8 +578,9 @@ def kan_param_count(arch, input_dim, final_dim, n_basis, degree,
 def choose_kan_basis_for_parity(target_params, arch, input_dim, final_dim,
                                 degree, bn_type, bn_position, bn_skip_first,
                                 residual_type, prefer_leq=True):
+    min_K = int(degree) + 1  # FIX: search only valid K
     best_n = None; best_diff = float('inf'); best_count = None
-    for n in range(2, 200):
+    for n in range(min_K, 200):
         cnt = kan_param_count(arch, input_dim, final_dim, n, degree,
                               bn_type, bn_position, bn_skip_first, residual_type)
         diff = abs(cnt - target_params)
@@ -579,7 +591,7 @@ def choose_kan_basis_for_parity(target_params, arch, input_dim, final_dim,
             if diff < best_diff:
                 best_diff = diff; best_n = n; best_count = cnt
     if best_n is None:
-        for n in range(2, 200):
+        for n in range(min_K, 200):
             cnt = kan_param_count(arch, input_dim, final_dim, n, degree,
                                   bn_type, bn_position, bn_skip_first, residual_type)
             if cnt >= target_params:
@@ -979,7 +991,7 @@ def main():
         notes="SN timing includes warm-up + optional freeze phase. " + parity_note
     )
     kan_result = pretty(
-        kan_title, kan_params, kan_train_mse, kan_rmse_mean, kan_per_head, kan_corrF, kan_corr_used, kan_secs,
+        kan_title, kan_params, kan_rmse_mean, kan_rmse_mean, kan_per_head, kan_corrF, kan_corr_used, kan_secs,
         notes=("BN standardized at test" if args.bn_eval_mode == "recalc_eval" else "") + ("; " + parity_note if parity_note else "")
     )
 
