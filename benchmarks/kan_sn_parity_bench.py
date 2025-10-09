@@ -1,14 +1,21 @@
 # benchmarks/kan_sn_parity_bench.py
+
 """
-KAN vs SN — Parameter‑Parity Benchmark (with BN recalc + eval progress)
+KAN vs SN — Parameter‑Parity Benchmark (BN semantics aligned with training)
 
-This version **equalizes linear residual semantics**:
-- For KAN with residual_type='linear':
-    * If d_in == d_out  → use a **single scalar** residual α per layer (adds α·x once per layer).
-    * If d_in != d_out  → use the **usual projection matrix** per edge (wb[i,j]) as before.
-- For KAN with residual_type='silu' or 'none' behavior is unchanged.
+Why you saw a huge SN train/test gap:
+- The SN was trained with BatchNorm and its training loss was measured in **train()**,
+  i.e., using *batch statistics*. The benchmark previously tested in **eval()** with
+  *running statistics* (even after a "recalc"). In your run, some running variances
+  were extremely small (e.g., ~1e-4), so evaluation with frozen running stats made
+  the SN hypersensitive to small distribution shifts and blew up the error.
 
-SN already behaves as: scalar when d_in==d_out, projection when d_in!=d_out.
+Fix in this file:
+- Add a BN evaluation mode **'batch_no_update'** that forces BN layers to use *batch
+  statistics* during testing **without updating** any running buffers, while keeping
+  the rest of the model in eval semantics (no dropout, no grad).
+- Make this the **default** for the parity benchmark so train/test BN semantics match.
+  You can still select the old behavior via `--bn_eval_mode recalc_eval` or `off`.
 
 Usage:
   python -m benchmarks.kan_sn_parity_bench [FLAGS]
@@ -22,7 +29,7 @@ Flags
 
   Test / Evaluation:
     --n_test INT                         (default: 20000)
-    --bn_eval_mode {off,recalc_eval}     (default: recalc_eval)
+    --bn_eval_mode {batch_no_update,recalc_eval,off}  (default: batch_no_update)
     --bn_recalc_passes INT               (default: 10)
     --eval_batch_size INT                (default: 8192)
 
@@ -60,21 +67,21 @@ Flags
   Output:
     --outdir PATH                        (default: benchmarks/results)
 
-Examples
-  # CPU, parameter parity, BN recalc, fast KAN, large eval batches, with *linear* residuals on both:
-  python -m benchmarks.kan_sn_parity_bench \
-    --dataset toy_4d_to_5d --epochs 4000 --device cpu --n_test 20000 \
-    --seed 0 \
-    --sn_arch 15,15 --sn_phi_knots 60 --sn_Phi_knots 60 \
-    --sn_norm_type batch --sn_norm_position after --sn_norm_skip_first \
-    --sn_residual_style linear --sn_no_lateral \
-    --sn_freeze_domains_after 1500 --sn_domain_margin 0.01 \
-    --kan_arch 4,4 --kan_degree 3 \
-    --kan_bn_type batch --kan_bn_position after --kan_bn_skip_first \
-    --kan_residual_type linear --kan_outside linear \
-    --equalize_params --prefer_leq \
-    --bn_eval_mode recalc_eval --bn_recalc_passes 10 \
-    --eval_batch_size 8192 --kan_impl fast
+Example (your command remains valid and now uses the safer BN mode by default):
+  for s in 0; do
+    python -m benchmarks.kan_sn_parity_bench \
+      --dataset toy_4d_to_5d --epochs 4000 --device cpu --n_test 20000 \
+      --seed $s \
+      --sn_arch 15,15 --sn_phi_knots 60 --sn_Phi_knots 60 \
+      --sn_norm_type batch --sn_norm_position after --sn_norm_skip_first \
+      --sn_residual_style linear --sn_no_lateral \
+      --sn_freeze_domains_after 300 --sn_domain_margin 0.01 \
+      --kan_arch 4,4 --kan_degree 3 \
+      --kan_bn_type batch --kan_bn_position after --kan_bn_skip_first \
+      --kan_residual_type linear --kan_outside linear \
+      --equalize_params --prefer_leq \
+      --eval_batch_size 8192 --kan_impl fast
+  done
 """
 
 import argparse, math, time, os, json
@@ -87,7 +94,9 @@ from tqdm import tqdm
 
 # --- Use the SN code directly ---
 from sn_core import (
-    get_dataset, train_network, CONFIG, has_batchnorm
+    get_dataset, train_network, CONFIG, has_batchnorm,
+    # NEW: safe BN override to use batch stats without touching running buffers
+    use_batch_stats_without_updating_bn,
 )
 
 # -------------------------------
@@ -730,36 +739,74 @@ def continue_train_sn_no_domain_updates(model, x_train, y_train, epochs, device,
 
 
 # -------------------------------
-# Batched evaluation with PROGRESS
+# Batched evaluation with PROGRESS (configurable BN semantics)
 # -------------------------------
 
+def _is_sn_model(model: nn.Module) -> bool:
+    """
+    Heuristic: SN models in this codebase have `layers` AND `norm_layers` attributes.
+    KAN nets have `layers` and `bn_layers` but no `norm_layers`.
+    """
+    return hasattr(model, "layers") and hasattr(model, "norm_layers")
+
 def evaluate_with_progress(model, x_test, y_test, *,
-                           bn_mode="off", bn_recalc_passes=10, x_train_for_bn=None,
+                           bn_mode="batch_no_update", bn_recalc_passes=10, x_train_for_bn=None,
                            name="Model", eval_batch_size=8192):
     """
-    - Optionally re-calc BN stats on training batch, set eval().
-    - Evaluate on x_test in batches with tqdm.
+    Evaluation with selectable BN semantics:
+
+      bn_mode == "batch_no_update" (DEFAULT):
+        - Put the whole model in eval() so non-BN modules behave deterministically.
+        - Then force ONLY BN layers to use *batch* statistics while temporarily
+          disabling running-stat updates. This matches the training-time semantics
+          used for the reported SN train loss, but without mutating buffers.
+
+      bn_mode == "recalc_eval":
+        - Recompute BN running stats on x_train_for_bn (if any BN present).
+        - Switch to eval() and use those frozen running stats for testing.
+
+      bn_mode == "off":
+        - Just eval() and use whatever running stats already exist.
+
+    In all cases we restore the model's original train/eval flag afterward.
     """
+    was_training = model.training
+
     if bn_mode == "recalc_eval" and has_batchnorm(model):
-        if hasattr(model, "layers"):  # SN heuristic
+        if x_train_for_bn is None:
+            raise ValueError("BN recalc requested but x_train_for_bn is None.")
+        if _is_sn_model(model):
             recalc_bn_for_sn_progress(model, x_train_for_bn, passes=bn_recalc_passes, desc=f"{name} BN re-calc")
         else:
             recalc_bn_for_kan_progress(model, x_train_for_bn, passes=bn_recalc_passes, desc=f"{name} BN re-calc")
-        model.eval()
 
     N = x_test.shape[0]
     out_dim = y_test.shape[1]
     y_pred_cpu = torch.empty(N, out_dim, dtype=y_test.dtype)
-
     bs = max(1, int(eval_batch_size))
     device = next((p.device for p in model.parameters() if p.requires_grad), x_test.device)
 
-    with torch.no_grad():
-        rng = range(0, N, bs)
-        for start in tqdm(rng, desc=f"Evaluating {name}", total=(N + bs - 1) // bs):
-            end = min(N, start + bs)
-            yb = model(x_test[start:end].to(device))
-            y_pred_cpu[start:end] = yb.detach().cpu()
+    try:
+        if bn_mode == "batch_no_update" and has_batchnorm(model):
+            # Eval semantics for everything; BN layers will be locally switched to batch stats.
+            model.eval()
+            with use_batch_stats_without_updating_bn(model):
+                with torch.no_grad():
+                    for start in tqdm(range(0, N, bs), desc=f"Evaluating {name}", total=(N + bs - 1) // bs):
+                        end = min(N, start + bs)
+                        yb = model(x_test[start:end].to(device))
+                        y_pred_cpu[start:end] = yb.detach().cpu()
+        else:
+            # Plain eval (optionally after a recalc above)
+            model.eval()
+            with torch.no_grad():
+                for start in tqdm(range(0, N, bs), desc=f"Evaluating {name}", total=(N + bs - 1) // bs):
+                    end = min(N, start + bs)
+                    yb = model(x_test[start:end].to(device))
+                    y_pred_cpu[start:end] = yb.detach().cpu()
+    finally:
+        # Restore original train/eval state
+        model.train(was_training)
 
     per_head, mean_rmse = rmse_per_head(y_test.cpu(), y_pred_cpu)
     corrF, used = corr_frobenius(y_test.cpu(), y_pred_cpu)
@@ -813,8 +860,9 @@ def main():
     p.add_argument("--equalize_params", action="store_true")
     p.add_argument("--prefer_leq", action="store_true")
 
-    # BN at test
-    p.add_argument("--bn_eval_mode", type=str, default="recalc_eval", choices=["off", "recalc_eval"])
+    # BN at test  (DEFAULT now aligns with training BN semantics)
+    p.add_argument("--bn_eval_mode", type=str, default="batch_no_update",
+                   choices=["batch_no_update", "recalc_eval", "off"])
     p.add_argument("--bn_recalc_passes", type=int, default=10)
 
     # Test set size + eval batching
@@ -940,7 +988,7 @@ def main():
     kan_params = count_params(kan_model)
 
     # ------------------------------
-    # Test evaluation with PROGRESS
+    # Test evaluation with PROGRESS (BN mode selectable)
     # ------------------------------
     sn_per_head, sn_rmse_mean, sn_corrF, sn_corr_used = evaluate_with_progress(
         sn_model, x_test, y_test,
@@ -986,13 +1034,19 @@ def main():
         f"outside={args.kan_outside}, residual={args.kan_residual_type})"
     )
 
+    bn_note = {
+        "batch_no_update": "BN uses batch stats at test without updating buffers (eval for non-BN).",
+        "recalc_eval": "BN running stats recomputed on train, then eval() used at test.",
+        "off": "BN eval() used at test with existing running stats."
+    }[args.bn_eval_mode]
+
     sn_result = pretty(
         sn_title, sn_params, sn_train_mse, sn_rmse_mean, sn_per_head, sn_corrF, sn_corr_used, sn_secs,
-        notes="SN timing includes warm-up + optional freeze phase. " + parity_note
+        notes=bn_note + " SN timing includes warm-up + optional freeze phase. " + parity_note
     )
     kan_result = pretty(
         kan_title, kan_params, kan_train_mse, kan_rmse_mean, kan_per_head, kan_corrF, kan_corr_used, kan_secs,
-        notes=("BN standardized at test" if args.bn_eval_mode == "recalc_eval" else "") + ("; " + parity_note if parity_note else "")
+        notes=bn_note + ("; " + parity_note if parity_note else "")
     )
 
     print(f"\n=== Head-to-Head Results ({args.dataset}) ===")

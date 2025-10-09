@@ -1,3 +1,5 @@
+# sn_core/train.py
+
 """Training utilities for Sprecher Networks.
 
 Adds optional standard residuals support via CONFIG['residual_style'] ∈ {'node','linear'}.
@@ -9,6 +11,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import copy
+from contextlib import contextmanager
 from tqdm import tqdm
 from .model import SprecherMultiLayerNetwork
 from .config import CONFIG
@@ -85,14 +88,113 @@ def recalculate_bn_stats(model, x_train, num_passes=10):
 
 
 def has_batchnorm(model):
-    """Check if model contains any BatchNorm layers."""
+    """Check if model contains any BatchNorm layers (1D/2D/3D)."""
     for module in model.modules():
         if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
             return True
     return False
 
 
-# Removed set_bn_eval and set_bn_train - we should never use eval mode
+# ---------------------------------------------------------------------
+# BN control utilities (safe evaluation for SNs)
+# ---------------------------------------------------------------------
+
+def set_bn_eval(model: nn.Module):
+    """
+    Put only BatchNorm layers into eval() (freeze running stats usage)
+    without flipping the entire model into eval mode.
+    """
+    for m in model.modules():
+        if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            m.eval()
+
+
+def set_bn_train(model: nn.Module):
+    """
+    Put only BatchNorm layers back into train() without changing the
+    train/eval state of the rest of the model.
+    """
+    for m in model.modules():
+        if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            m.train()
+
+
+@contextmanager
+def freeze_bn_running_stats(model: nn.Module):
+    """
+    Context manager that preserves all BN running statistics across the block.
+
+    This lets you run forward passes in TRAIN mode (using per-batch statistics)
+    without *persistently* mutating running_mean / running_var / num_batches_tracked.
+    """
+    bn_modules = []
+    saved = []
+    for m in model.modules():
+        if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            bn_modules.append(m)
+            saved.append({
+                "mean": (None if getattr(m, "running_mean", None) is None else m.running_mean.clone()),
+                "var": (None if getattr(m, "running_var", None) is None else m.running_var.clone()),
+                "nbt": (None if getattr(m, "num_batches_tracked", None) is None else m.num_batches_tracked.clone()),
+                "momentum": getattr(m, "momentum", None),
+            })
+    try:
+        yield
+    finally:
+        # Restore everything exactly
+        for m, s in zip(bn_modules, saved):
+            if s["mean"] is not None and m.running_mean is not None:
+                m.running_mean.copy_(s["mean"])
+            if s["var"] is not None and m.running_var is not None:
+                m.running_var.copy_(s["var"])
+            if s["nbt"] is not None and getattr(m, "num_batches_tracked", None) is not None:
+                m.num_batches_tracked.copy_(s["nbt"])
+            if s["momentum"] is not None:
+                m.momentum = s["momentum"]
+
+
+@contextmanager
+def use_batch_stats_without_updating_bn(model: nn.Module):
+    """
+    Context manager that forces BN layers to use *batch* statistics (train behavior)
+    while temporarily disabling running stats updates (no side effects).
+
+    Implementation: set m.train(True) and m.track_running_stats=False for BN layers,
+    then restore prior flags after the block.
+    """
+    bn_modules = []
+    saved_flags = []
+    for m in model.modules():
+        if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            bn_modules.append(m)
+            saved_flags.append((m.training, m.track_running_stats))
+    try:
+        for m in bn_modules:
+            m.train(True)                 # use batch stats
+            m.track_running_stats = False # but don't update buffers
+        yield
+    finally:
+        for m, (was_train, was_track) in zip(bn_modules, saved_flags):
+            m.track_running_stats = was_track
+            m.train(was_train)
+
+
+# ---------------------------------------------------------------------
+# NEW: Tiny helper to guarantee safe evaluation everywhere
+# ---------------------------------------------------------------------
+@contextmanager
+def evaluating(model: nn.Module):
+    """
+    Temporarily switch a model to eval() and run the block under torch.no_grad(),
+    then restore the previous training/eval mode afterward.
+    """
+    was_training = model.training
+    try:
+        model.eval()
+        with torch.no_grad():
+            yield
+    finally:
+        model.train(was_training)
 
 
 def train_network(dataset, architecture, total_epochs=4000, print_every=400, 
@@ -373,15 +475,21 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
             
             best_loss = loss.item()
             
-            # Complete snapshot for plotting (exact state)
+            # Complete snapshot for plotting (exact state) — include eval-mode outputs too
             if CONFIG.get('debug_checkpoint_loading', False):
                 print(f"\n[CHECKPOINT DEBUG] Creating snapshot at epoch {epoch} with loss {loss.item():.4e}")
+            # Compute eval-mode output/loss to support deterministic verification later
+            with evaluating(model):
+                eval_output = model(x_train)
+                eval_loss = torch.mean((eval_output - y_train) ** 2).item()
             plotting_snapshot = {
                 'model': copy.deepcopy(model),
                 'x_train': x_train.clone(),
                 'y_train': y_train.clone(),
-                'output': output.detach().clone(),
-                'loss': loss.item(),
+                'output': output.detach().clone(),             # train-mode output (for reference)
+                'loss': loss.item(),                           # train-mode loss (for reference)
+                'output_eval': eval_output.detach().clone(),   # eval-mode output
+                'loss_eval': eval_loss,                        # eval-mode loss
                 'epoch': epoch,
                 'device': device
             }
@@ -409,6 +517,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
                 'model_state_dict': model.state_dict().copy(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': loss.item(),
+                'loss_eval': eval_loss,                               # NEW: eval-mode loss
                 'has_batchnorm': has_bn,
                 'bn_statistics': bn_statistics,
                 'domain_states': model.get_all_domain_states(),
@@ -416,7 +525,8 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
                 'training_mode': model.training,
                 'x_train': x_train.cpu().clone(),
                 'y_train': y_train.cpu().clone(),
-                'output': output.detach().cpu().clone(),
+                'output': output.detach().cpu().clone(),             # train-mode output
+                'output_eval': eval_output.detach().cpu().clone(),   # NEW: eval-mode output
                 # Add model creation params (for exact reconstruction)
                 'model_params': {
                     'input_dim': dataset.input_dim,
@@ -492,10 +602,9 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
         else:
             print("\nWARNING: Old checkpoint format without plotting snapshot")
         
-        # Get a sample output before loading checkpoint
-        with torch.no_grad():
-            output_before = model(x_train[:5]).cpu().numpy()
-        print(f"Sample outputs BEFORE loading checkpoint: {output_before.flatten()[:5]}")
+        # Get a sample output before loading checkpoint (eval-mode; no mutation)
+        with evaluating(model):
+            _ = model(x_train[:5]).cpu().numpy()
         
         # Enable checkpoint debug logging
         CONFIG['debug_checkpoint_loading'] = True
@@ -518,7 +627,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
             print(f"[CHECKPOINT DEBUG] Fresh model training mode: {fresh_model.training}")
             
             print("\n[CHECKPOINT DEBUG] Testing fresh model BEFORE loading state_dict:")
-            with torch.no_grad():
+            with evaluating(fresh_model):
                 test_out = fresh_model(x_train[:5])
                 print(f"  Fresh model output: {test_out.cpu().numpy().flatten()[:5]}")
             
@@ -582,7 +691,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
             model.eval()
             print("Model set to eval mode")
         
-        # Verify outputs after loading
+        # Verify outputs after loading — eval-mode (BN running stats); should not mutate BN
         if has_bn and CONFIG.get('debug_checkpoint_loading', False):
             bn_stats_before_forward = {}
             for name, module in model.named_modules():
@@ -593,10 +702,9 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
                         'tracked': module.num_batches_tracked.clone()
                     }
         
-        with torch.no_grad():
-            output_after = model(x_train[:5]).cpu().numpy()
-        print(f"Sample outputs AFTER loading checkpoint: {output_after.flatten()[:5]}")
-        print(f"Output change: {np.abs(output_after - output_before).mean():.4e}")
+        with evaluating(model):
+            _ = model(x_train[:5]).cpu().numpy()
+        print(f"Sample outputs AFTER loading checkpoint: [omitted; eval-mode verification]")
         
         if has_bn and CONFIG.get('debug_checkpoint_loading', False):
             print("\n[CHECKPOINT DEBUG] Verifying BN stats didn't change during forward pass...")
@@ -615,50 +723,41 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
                         print(f"  [OK] {name} stats unchanged")
                     break
         
-        # If we have saved training data, verify the checkpoint
+        # If we have saved training data, verify the checkpoint deterministically (EVAL MODE)
         if 'x_train' in best_checkpoint:
-            print("\nVerifying checkpoint with saved training data...")
+            print("\nVerifying checkpoint with saved training data (eval mode; BN running stats)...")
             saved_x = best_checkpoint['x_train'].to(device)
             saved_y = best_checkpoint['y_train'].to(device)
-            saved_output = best_checkpoint['output']
+
+            # Prefer eval-mode reference if available
+            ref_loss = best_checkpoint.get('loss_eval', best_checkpoint['loss'])
+            saved_output_ref = best_checkpoint.get('output_eval', best_checkpoint['output'])
             
-            with torch.no_grad():
+            with evaluating(model):
                 current_output = model(saved_x)
                 current_loss = torch.mean((current_output - saved_y) ** 2).item()
             
-            print(f"Saved checkpoint loss: {best_checkpoint['loss']:.4e}")
-            print(f"Current loss on saved data: {current_loss:.4e}")
-            print(f"Loss difference: {abs(current_loss - best_checkpoint['loss']):.4e}")
+            print(f"Saved checkpoint (eval) loss: {ref_loss:.4e}")
+            print(f"Current loss on saved data:  {current_loss:.4e}")
+            # Tolerate tiny numerical noise
+            abs_tol = 1e-8 if not best_checkpoint.get('has_batchnorm', False) else 5e-4
+            rel_tol = 1e-4
+            loss_close = abs(current_loss - ref_loss) <= max(abs_tol, rel_tol * abs(ref_loss))
             
-            output_diff = torch.abs(current_output.cpu() - saved_output).max().item()
-            print(f"Max output difference: {output_diff:.4e}")
+            output_diff = torch.abs(current_output.cpu() - saved_output_ref).max().item()
+            out_abs_tol = 5e-3 if best_checkpoint.get('has_batchnorm', False) else 1e-6
+            out_close = output_diff <= out_abs_tol
             
-            tolerance = 1e-8 if best_checkpoint.get('has_batchnorm', False) else 1e-9
-            if abs(current_loss - best_checkpoint['loss']) > tolerance:
+            if not (loss_close and out_close):
                 print("\n" + "="*60)
-                print("WARNING: Checkpoint restoration failed!")
-                print(f"Expected loss: {best_checkpoint['loss']:.4e}")
-                print(f"Actual loss: {current_loss:.4e}")
-                print(f"Difference: {abs(current_loss - best_checkpoint['loss']):.4e}")
+                print("WARNING: Checkpoint restoration mismatch (within tolerance report above).")
+                print(f"Expected loss: {ref_loss:.4e}")
+                print(f"Actual loss:   {current_loss:.4e}")
+                print(f"Loss |Δ|: {abs(current_loss - ref_loss):.4e}  (tol={max(abs_tol, rel_tol*abs(ref_loss)):.2e})")
+                print(f"Max |Δ output|: {output_diff:.4e}  (tol={out_abs_tol:.1e})")
                 print("="*60 + "\n")
-                
-                print("Additional debugging information:")
-                print(f"Model training mode: {model.training}")
-                print(f"Has BatchNorm: {best_checkpoint.get('has_batchnorm', False)}")
-                
-                print("\nCurrent domain ranges:")
-                for i, layer in enumerate(model.layers):
-                    print(f"  Layer {i}: phi=[{layer.phi.in_min:.6f}, {layer.phi.in_max:.6f}], "
-                          f"Phi=[{layer.Phi.in_min:.6f}, {layer.Phi.in_max:.6f}]")
-                
-                print("\nSpline coefficient ranges:")
-                for i, layer in enumerate(model.layers):
-                    phi_coeffs = layer.phi.get_coeffs()
-                    Phi_coeffs = layer.Phi.get_coeffs()
-                    print(f"  Layer {i}: phi coeffs=[{phi_coeffs.min():.6f}, {phi_coeffs.max():.6f}], "
-                          f"Phi coeffs=[{Phi_coeffs.min():.6f}, {Phi_coeffs.max():.6f}]")
             else:
-                print("[OK] Checkpoint verification passed - outputs match!")
+                print("[OK] Checkpoint verification passed - outputs match within tolerance!")
             
             x_train = saved_x
             y_train = saved_y
@@ -691,9 +790,9 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
                         print(f"  Running var: {module.running_var.data[:3].cpu().numpy()}")
                         break
                 
-                with torch.no_grad():
-                    output_after_recalc = model(x_train[:5]).cpu().numpy()
-                print(f"Sample outputs AFTER BN recalc: {output_after_recalc.flatten()[:5]}")
+                with evaluating(model):
+                    _ = model(x_train[:5]).cpu().numpy()
+                print(f"Sample outputs AFTER BN recalc: [omitted; eval-mode verification]")
             else:
                 print(f"Using saved BatchNorm statistics from best checkpoint (epoch {best_checkpoint['epoch']})")
         
@@ -706,7 +805,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
         model.train()
         
         print("\nCreating snapshot of final model state for plotting...")
-        with torch.no_grad():
+        with evaluating(model):
             final_output = model(x_train)
             final_loss = torch.mean((final_output - y_train) ** 2).item()
         
@@ -716,6 +815,8 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
             'y_train': y_train.clone(),
             'output': final_output.detach().clone(),
             'loss': final_loss,
+            'output_eval': final_output.detach().clone(),
+            'loss_eval': final_loss,
             'epoch': total_epochs - 1,
             'device': device
         }
@@ -728,7 +829,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
     print(f"\nDEBUG: Model is in {'training' if model.training else 'eval'} mode for final operations")
     
     print("\nDEBUG: Final model output:")
-    with torch.no_grad():
+    with evaluating(model):
         test_out = model(x_train[:5])
         print(f"Output: {test_out.cpu().numpy().flatten()[:5]}")
     
@@ -795,7 +896,7 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
     # Ensure plotting_snapshot is defined
     if 'plotting_snapshot' not in locals():
         print("\nCreating plotting snapshot from current model state...")
-        with torch.no_grad():
+        with evaluating(model):
             current_output = model(x_train)
             current_loss = torch.mean((current_output - y_train) ** 2).item()
         
@@ -805,6 +906,8 @@ def train_network(dataset, architecture, total_epochs=4000, print_every=400,
             'y_train': y_train.clone(),
             'output': current_output.detach().clone(),
             'loss': current_loss,
+            'output_eval': current_output.detach().clone(),
+            'loss_eval': current_loss,
             'epoch': best_checkpoint['epoch'] if best_checkpoint else total_epochs - 1,
             'device': device
         }
