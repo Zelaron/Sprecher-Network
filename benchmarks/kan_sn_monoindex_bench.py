@@ -32,7 +32,7 @@ We report:
 Implementation notes
 --------------------
 We import KAN machinery, parameter-equalization, and evaluation (BN-safe) directly from
-`benchmarks.kan_sn_parity_bench.py` to keep training loops identical to your current parity code.
+`benchmarks.kan_sn_parity_bench.py` to keep training loops identical to the current parity code.
 """
 
 import argparse, math, os, json, time

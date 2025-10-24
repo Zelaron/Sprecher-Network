@@ -3,20 +3,6 @@
 """
 KAN vs SN — Parameter‑Parity Benchmark (BN semantics aligned with training)
 
-Why you saw a huge SN train/test gap:
-- The SN was trained with BatchNorm and its training loss was measured in **train()**,
-  i.e., using *batch statistics*. The benchmark previously tested in **eval()** with
-  *running statistics* (even after a "recalc"). In your run, some running variances
-  were extremely small (e.g., ~1e-4), so evaluation with frozen running stats made
-  the SN hypersensitive to small distribution shifts and blew up the error.
-
-Fix in this file:
-- Add a BN evaluation mode **'batch_no_update'** that forces BN layers to use *batch
-  statistics* during testing **without updating** any running buffers, while keeping
-  the rest of the model in eval semantics (no dropout, no grad).
-- Make this the **default** for the parity benchmark so train/test BN semantics match.
-  You can still select the old behavior via `--bn_eval_mode recalc_eval` or `off`.
-
 Usage:
   python -m benchmarks.kan_sn_parity_bench [FLAGS]
 
@@ -67,7 +53,7 @@ Flags
   Output:
     --outdir PATH                        (default: benchmarks/results)
 
-Example (your command remains valid and now uses the safer BN mode by default):
+Example:
   for s in 0; do
     python -m benchmarks.kan_sn_parity_bench \
       --dataset toy_4d_to_5d --epochs 4000 --device cpu --n_test 20000 \
