@@ -100,7 +100,7 @@ done
 
 
 
-SN wins by a wide margin:
+SN wins (decisively?):
 
 python -m benchmarks.kan_sn_ridgecomp_bench \
   --dims 40 --hidden 16 --outputs 8 \
@@ -201,3 +201,31 @@ done
 Pretty even run, slight edge for SN:
 
 python -m benchmarks.sn_vs_kan_tiered_pricing --arch 32,32 --kan_k_in 4 --kan_k_out 4 --sn_phi_knots 484 --sn_Phi_knots 484 --warmup 400
+
+
+
+SN WIN (decisively?):
+
+python -m benchmarks.sn_vs_kan_pwl_sensors --device auto --seed 45
+
+(Maybe this: for s in 1 2 3 4 5; do python -m benchmarks.sn_vs_kan_pwl_sensors --device auto --seed $s; done)
+
+
+SN WIN (decisively?):
+
+python -m benchmarks.sn_vs_kan_saturating_hinge \
+  --device auto \
+  --seed 123 \
+  --input_dim 16 --groups 4 \
+  --n_train 4096 --n_val 2048 --n_test 4096 \
+  --arch 32,32 \
+  --phi_knots 64 --Phi_knots 64 \
+  --epochs 4000 --warmup 400 \
+  --lr 3e-4 --weight_decay 1e-7 --batch_size 0 --print_every 200
+
+
+SN WIN (very decisive):
+
+python -m benchmarks.sn_vs_kan_smaf --arch 64,64 --epochs 4000 --seed 45 --device auto
+
+python -m benchmarks.sn_vs_kan_smaf --arch 64,64 --epochs 4000 --seed 45 --seeds 46,47,48 --device auto
