@@ -195,3 +195,9 @@ for s in 0; do
     --bn_eval_mode batch_no_update \
     --eval_batch_size 8192
 done
+
+
+
+Pretty even run, slight edge for SN:
+
+python -m benchmarks.sn_vs_kan_tiered_pricing --arch 32,32 --kan_k_in 4 --kan_k_out 4 --sn_phi_knots 484 --sn_Phi_knots 484 --warmup 400
