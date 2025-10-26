@@ -229,3 +229,9 @@ SN WIN (very decisive):
 python -m benchmarks.sn_vs_kan_smaf --arch 64,64 --epochs 4000 --seed 45 --device auto
 
 python -m benchmarks.sn_vs_kan_smaf --arch 64,64 --epochs 4000 --seed 45 --seeds 46,47,48 --device auto
+
+
+
+SN WIN (very decisive - added in text?)
+
+python -m benchmarks.trimix_sn_vs_kan --epochs 4000 --arch 64,64 --phi_knots 64 --Phi_knots 64 --warmup 400 --seed 0 --device auto
