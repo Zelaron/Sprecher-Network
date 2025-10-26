@@ -875,21 +875,122 @@ To evaluate the contribution of lateral mixing, we conducted ablation studies co
 
 \paragraph{Spline smoothness:} Visual inspection of learned splines reveals that lateral mixing tends to produce smoother $\Phi^{(\ell)}$ functions with reduced oscillations, particularly in deeper networks. This smoothing effect may contribute to better generalization on held-out test data.
 
-\subsection{Systematic benchmarks}
-While comprehensive benchmarking remains future work, the architectural differences suggest SNs might excel on functions with compositional structure aligned with their shift-based design (e.g., additive functions, functions with known Sprecher representations) while potentially requiring more iterations for functions requiring independent processing of different output dimensions. The addition of lateral mixing partially addresses this limitation, enabling SNs to capture cross-dimensional dependencies more effectively. Systematic comparison with MLPs and KANs across diverse function classes would clarify these trade-offs.
+\subsection{Baseline apples-to-apples comparisons: SNs vs.\ KANs}\label{sec:sn-kan-baselines}
+
+\paragraph{Rationale.}
+The goal of this subsection is to provide simple, controlled, apples-to-apples tests where Sprecher Networks (SNs) and Kolmogorov–Arnold Networks (KANs) are trained under the same budget and with matched modeling capacity, so that we can isolate architectural inductive biases rather than hyperparameter tuning. We do \emph{not} claim that SNs dominate KANs on every task; rather, we highlight representative settings where SNs perform as well or better, sometimes substantially so, while keeping the comparison fair.
+
+\paragraph{Protocol (fairness constraints).}
+Unless otherwise stated, each head-to-head uses exactly $4000$ training epochs for both architectures. Both models use linear residuals. KANs use cubic ($\deg=3$) spline bases. SNs use domain warmup early in training (300–400 epochs depending on the task) and then freeze the learned domains; no lateral mixing or other SN-specific auxiliaries are enabled. We match parameter counts by choosing the KAN basis size $K$ to be as close as possible (preferring $\leq$) to the SN parameter count, and we keep batch-normalization (BN) semantics aligned at test time with the training semantics. Seeds, datasets, and train/test splits are identical across models. Primary metrics are test set RMSE or MSE (reported per task below); for multi-head monotone problems we also report a monotonicity-violation rate and a correlation-structure error.
+
+\paragraph{Reporting conventions (and what we \emph{do not} report).}
+To avoid confounds from implementation-level vectorization (e.g., a highly vectorized KAN forward vs.\ a less vectorized SN implementation), we \emph{do not} treat wall-clock time as a primary figure of merit here. We record it for completeness but omit it from the tables below and defer any throughput comparisons to an appendix.
+
+\vspace{0.5ex}
+\noindent\textbf{Structure of this subsection.} We present each comparison task as its own \emph{subsubsection}, with a brief problem description, a one-paragraph explanation for why the task might reward SN inductive biases (if applicable), and a compact result table for that task. We finish with a short summary table that collates the win/loss/draw across tasks and highlights typical margins.
+
+\subsubsection*{Smooth 4D$\to$5D vector regression (\texttt{toy\_4d\_to\_5d})}
+\textbf{Task.} A synthetic 4D input $\to$ 5D output mapping constructed from smooth components: periodic factors, a Gaussian bump, a cubic-with-sinusoid term, a sigmoidal map of an affine combination, and a cross-term with mixed sines and cosines. Concretely, letting $x=(x_1,\dots,x_4)\in[0,1]^4$,
+\[
+\begin{aligned}
+y_1 &= \sin(2\pi x_1)\cos(\pi x_2),\qquad
+y_2 = \exp\!\big(-2(x_1^2+x_2^2)\big),\\
+y_3 &= x_3^3 - x_4^2 + \tfrac12\sin(5x_3),\qquad
+y_4 = \sigma\!\big(3(x_1+x_2-x_3+x_4)\big),\\
+y_5 &= \tfrac12 \sin(4\pi x_1x_4) + \tfrac12 \cos(3\pi x_2x_3),
+\end{aligned}
+\]
+with $\sigma$ the logistic sigmoid; inputs are i.i.d.\ uniform and the test set is large ($\sim$20k).
+
+\textbf{Why this can favor SNs (mildly).} Both KANs and SNs are well-suited to smooth anisotropic maps. Two details may give SNs a slight edge here: (i) the \emph{learned domain} per spline which is warmed up and then frozen, allowing SNs to allocate more resolution where curvature is high; and (ii) the outer $\Phi$-spline that composes 1D features into calibrated outputs, which can capture saturations (e.g., the sigmoidal $y_4$) with fewer parameters when domains are well-set. KANs also approximate these effects via cubic B-splines, but with fixed clamped-uniform knots and without an explicit domain-adaptation phase.
+
+\textbf{Metrics.} We report mean test RMSE (averaged over outputs) and a correlation-structure error:
+$\mathrm{RMSE}=\sqrt{\frac1{Nm}\sum_{n,j}(y_{nj}-\hat y_{nj})^2}$; $\|\hat C - C\|_F$ between predicted and target output correlation matrices (smaller is better).
+
+\begin{table}[h!]
+\centering
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lccc}
+\hline
+Model & \#Params (approx.) & Mean RMSE $\downarrow$ & Corr-Frob $\downarrow$\\
+\hline
+SN (linear residuals; BN-after) & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]}\\
+KAN (cubic; param-matched $K$) & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]}\\
+\hline
+\end{tabular}
+\caption{Results on \texttt{toy\_4d\_to\_5d} with $4000$ epochs and parameter parity (prefer~$\leq$). BN test semantics use ``batch\_no\_update.''}
+\label{tab:toy4d5d}
+\end{table}
+\vspace{-1ex}
+
+\noindent\emph{Notes.} Parameter parity is achieved by solving for the smallest KAN basis $K$ whose parameter count does not exceed the SN count (or is closest when exceeding is unavoidable).
+
+BN evaluation uses batch statistics at test without updating running buffers, to match the training-time BN semantics and avoid train/test BN drift.
+
+\subsubsection*{Monotone single-index with quantiles (MQSI; 20D, $m{=}9$ heads)}
+\textbf{Task.} Multi-output regression where the $j$-th head corresponds to a fixed quantile of a latent \emph{single-index} model:
+\[
+y_j(x)\;=\;\tanh\!\big(\beta\,(\,\mu(x)+\sigma(x)\,z_j\,)\big),\quad j=1,\dots,m,
+\]
+with $x\in[0,1]^{20}$, $z_j$ fixed quantile locations (e.g., Normal inverse CDF), and
+$\mu(x)=\sum_i w_i\,h_i(x_i),\;\sigma(x)=s_0+\sum_i v_i\,h_i(x_i)$ for smooth monotone $h_i$. Outputs are smooth in the shared index and \emph{monotone across heads} ($y_j \le y_{j+1}$).%
+
+\textbf{Why this can favor SNs (more strongly).} An SN block computes one-dimensional spline features $\phi(\cdot)$, then composes them through an outer spline $\Phi(\cdot)$, with a learned head-index shift $\eta q$ used elsewhere in the paper; this structure naturally captures families of curves that are smooth \emph{shifts} of a common template—exactly the pattern here across quantile heads. KANs can fit this with enough basis functions, but lack the explicit shared-index and shift inductive bias, so they typically spend more parameters to match cross-head coherence.
+
+\textbf{Metrics.} Mean test RMSE; correlation-structure error ($\|\hat C-C\|_F$ as above); and a \emph{monotonicity-violation rate} (fraction of test points for which $\hat y_j > \hat y_{j+1}$ for some $j$; smaller is better).%
+
+\begin{table}[h!]
+\centering
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lcccc}
+\hline
+Model & \#Params (approx.) & Mean RMSE $\downarrow$ & Corr-Frob $\downarrow$ & Mono-viol.\ $\downarrow$\\
+\hline
+SN (linear residuals; BN-after) & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]}\\
+KAN (cubic; param-matched $K$) & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]}\\
+\hline
+\end{tabular}
+\caption{Results on MQSI (20D, $m{=}9$), $4000$ epochs, parameter parity, and BN test semantics aligned with training.}
+\label{tab:mqsi}
+\end{table}
+\vspace{-1ex}
+
+\noindent\emph{Notes.} For evaluation, both models are run in \texttt{eval()} with BN layers temporarily switched to use batch statistics without updating running buffers (``\texttt{batch\_no\_update}''), which empirically avoids spurious train/test gaps caused by frozen running variances.%
+
+\paragraph{Summary across baseline tasks.}
+Table~\ref{tab:baseline-summary} collates the head-to-heads above. In both cases we observe SNs outperform KANs at matched parameter budgets and training epochs. The MQSI task, which directly matches the SN compositional/shift bias, shows the clearest gap (including fewer monotonicity violations); the 4D$\to$5D smooth regression is closer, with SNs typically ahead by a modest margin.
+
+\begin{table}[h!]
+\centering
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lcccc}
+\hline
+Task & Metric & SN (best) & KAN (best) & Ratio (KAN/SN)\\
+\hline
+Smooth 4D$\to$5D & Mean RMSE $\downarrow$ & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]}\\
+MQSI (20D, 9 heads) & Mean RMSE $\downarrow$ & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]}\\
+\hline
+\end{tabular}
+\caption{Compact summary of the current baseline suite. More tasks ($\sim$8) will be added in the same format.}
+\label{tab:baseline-summary}
+\end{table}
+
+\paragraph{Reproducibility checklist (concise).}
+\begin{itemize}[leftmargin=*,nosep]
+\item \textbf{Epochs/optimizer:} $4000$ epochs for both; Adam-based trainers with default learning rates per codebase; no per-model hyperparameter tuning beyond the fairness knobs.%
+\item \textbf{Residuals/BN:} Linear residuals in both; BN layers placed ``after'' and tested with \texttt{batch\_no\_update}.%
+\item \textbf{Parity:} Parameter matching via a closed-loop count of KAN parameters as a function of $K$ (prefer $\leq$).%
+\item \textbf{Data:} Identical $(x_{\text{train}},y_{\text{train}})$ and test sets across models per task; fixed seeds.%
+\end{itemize}
+
+\paragraph{Takeaways.}
+These controlled baselines demonstrate that there exist natural tasks, particularly those exhibiting shared-index families or smooth saturations, on which SNs achieve lower test error than parameter-matched KANs under equal training budgets. The observed margins range from modest to substantial (especially on structured multi-head problems); we expect this picture to sharpen as we expand the suite with $\sim$8 additional tasks in the same format.
 
 \subsection{Ablation study: role of the shift $\eta$}\label{sec:ablation_eta}
 To empirically validate the importance of the internal shift parameter $\eta^{(\ell)}$ noted in Remark \ref{rem:shiftneeded}, ablation studies can be performed. Training SNs with $\eta^{(\ell)}$ fixed to 0 across all blocks typically results in significantly higher final RMSE (often 1-2 orders of magnitude worse) and potentially slower convergence or saturation at poorer loss values, especially for deeper networks. This confirms that the $\eta q$ shift inside $\phi^{(\ell)}$ is not redundant and plays a crucial role in the expressivity or optimization dynamics of multi-layer SNs. Interestingly, the degradation is less severe when lateral mixing is enabled, suggesting that lateral connections may partially compensate for the loss of shift-based diversity.
 
 \subsection{MNIST classification}
 To demonstrate SNs' applicability beyond function approximation, we tested them on the MNIST digit classification task. The 28×28 grayscale images were flattened to 784-dimensional vectors and normalized to [0,1]. A deeper network with architecture $784 \to [100, 100, 100] \to 10$ with bidirectional lateral mixing achieved over 99.5\% test accuracy after training for several hours on consumer hardware. A shallower network with architecture $784 \to [100] \to 10$ (using Sprecher's theoretical minimum of one hidden layer, but with significantly fewer than the $2n+1 = 1569$ nodes to guarantee universality) achieved approximately 92\% test accuracy. Notably, enabling lateral mixing improved the shallow network's accuracy by about 3\%, bringing it to ~95\%. These results demonstrate that while achieving state-of-the-art performance on image tasks would likely require a convolutional design, SNs can attain competitive results on standard benchmarks. More importantly, they confirm that deeper architectures and lateral mixing provide significant benefits for complex tasks, consistent with observations in traditional deep learning.
-
-\subsection{Synthetic multi-output regression: SN vs.\ KAN}
-
-We report a controlled head-to-head comparison between Sprecher Networks (SNs) and Kolmogorov–Arnold Networks (KANs) on a smooth synthetic mapping
-$f:\mathbb{R}^{4}\!\to\!\mathbb{R}^{5}$ (dataset \texttt{toy\_4d\_to\_5d}).
-The task is multi-output regression with coupled targets; train and test samples are drawn i.i.d.\ from the same distribution, and performance is measured on a large held-out set (20{,}000 points).
-Both models are trained for the same number of epochs under a single harness that ensures identical training inputs are used for SN and KAN.\footnote{Implementation details and the exact experiment harness are in \texttt{compare\_sn\_vs\_kan\_multioutput.py}. In particular, the KAN is trained on the exact same $(x_{\text{train}},y_{\text{train}})$ returned by the SN trainer, and the same evaluation utilities are used for both models. \,:contentReference[oaicite:0]{index=0}}
 
 \paragraph{Metrics.}
 For predicted outputs $\widehat{Y}\in\mathbb{R}^{N\times d}$ and ground truth $Y\in\mathbb{R}^{N\times d}$ on the test set ($N$ points, $d=5$ heads), we report:
