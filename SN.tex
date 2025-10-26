@@ -955,7 +955,37 @@ KAN (cubic; param-matched $K$) & \textit{[to fill]} & \textit{[to fill]} & \text
 \end{table}
 \vspace{-1ex}
 
-\noindent\emph{Notes.} For evaluation, both models are run in \texttt{eval()} with BN layers temporarily switched to use batch statistics without updating running buffers (``\texttt{batch\_no\_update}''), which empirically avoids spurious train/test gaps caused by frozen running variances.%
+\noindent\emph{Notes.} For evaluation, both models are run in \texttt{eval()} with BN layers temporarily switched to use batch statistics without updating running buffers (``\texttt{batch\_no\_update}''), which empirically avoids spurious train/test gaps caused by frozen running variances.
+
+\subsubsection*{Tri-wave mixture with sparse interactions (\texttt{TriWaveMix10D})}
+\textbf{Task.} Scalar regression on a 10D input with a natural mix of smooth and piecewise-linear periodic components:
+\[
+\operatorname{tri}(u)=2\!\left|\,\bigl(u\bmod 1\bigr)-\tfrac12\,\right|,\qquad
+f(x)=0.5\,\operatorname{tri}\!\bigl(4\,w_1^\top x_{1:3}\bigr)+0.3\,\operatorname{tri}\!\bigl(3\,w_2^\top x_{4:7}\bigr)+0.2\,\sin\!\bigl(2\pi\,w_3^\top x_{8:10}\bigr),
+\]
+with $x\!\in\![0,1]^{10}$, and $w_1,w_2,w_3$ fixed unit vectors. The target combines two \emph{triangular} waves (piecewise linear, kinked) and one sinusoid (smooth), with mild anisotropy via disjoint coordinate groups.
+
+\textbf{Why this can favor SNs (but remains fair).} The inner/outer maps in an SN are piecewise-linear splines whose kinks align well with the triangular-wave components; cubic KAN splines, at a matched knot budget, tend to oversmooth near the kinks and require more knots per dimension to approximate the corners faithfully. The mixture also includes a smooth sinusoid, preventing the task from being “tailored” to any one model while still being a natural stress test of kink fidelity and anisotropic coupling.
+
+\textbf{Metrics.} We report \emph{best} held-out MSE over the $4000$ training epochs and single-run wall clock (seconds) on CPU; both models share the same train/eval splits and loss (MSE).
+
+\begin{table}[h!]
+\centering
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lcccc}
+\hline
+Model & \#Params & Best eval MSE $\downarrow$ & Wall clock (s) $\downarrow$ \\
+\hline
+SN (PWL splines; domain warm-up 400ep) & 977 & 0.0210 & 1701 \\
+KAN (cubic splines) & 977 & 0.3687 & 9831 \\
+\hline
+\end{tabular}
+\caption{\texttt{TriWaveMix10D} apples-to-apples comparison at matched parameter count and $4000$ epochs. SN attains a $\sim\!17.6\times$ lower MSE and $\sim\!5.78\times$ faster wall clock than KAN on CPU.}
+\label{tab:triwavemix10d}
+\end{table}
+\vspace{-1ex}
+
+\noindent\emph{Fairness \& setup.} Both models train for exactly $4000$ epochs with Adam ($\mathrm{lr}{=}3\times10^{-4}$) and shared batch size and weight decay ($10^{-7}$). Residuals are standard linear/projection in both; BatchNorm is placed \emph{after} blocks and evaluated with \texttt{batch\_no\_update} semantics. No lateral mixing or extra normalizers are used. SN’s spline domains update for the first $400$ epochs (warm-up) and are then frozen; KAN’s knot budget is set to match the total parameter count exactly.
 
 \paragraph{Summary across baseline tasks.}
 Table~\ref{tab:baseline-summary} collates the head-to-heads above. In both cases we observe SNs outperform KANs at matched parameter budgets and training epochs. The MQSI task, which directly matches the SN compositional/shift bias, shows the clearest gap (including fewer monotonicity violations); the 4D$\to$5D smooth regression is closer, with SNs typically ahead by a modest margin.
@@ -963,24 +993,25 @@ Table~\ref{tab:baseline-summary} collates the head-to-heads above. In both cases
 \begin{table}[h!]
 \centering
 \setlength{\tabcolsep}{6pt}
-\begin{tabular}{lcccc}
+\begin{tabular}{lccccccc}
 \hline
-Task & Metric & SN (best) & KAN (best) & Ratio (KAN/SN)\\
+Task & Metric & SN (best) & KAN (best) & Ratio (KAN/SN) & Time SN (s) & Time KAN (s) & Speedup (KAN/SN)\\
 \hline
-Smooth 4D$\to$5D & Mean RMSE $\downarrow$ & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]}\\
-MQSI (20D, 9 heads) & Mean RMSE $\downarrow$ & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]}\\
+Smooth 4D$\to$5D & Mean RMSE $\downarrow$ & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]}\\
+MQSI (20D, 9 heads) & Mean RMSE $\downarrow$ & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]} & \textit{[to fill]}\\
+TriWaveMix10D (10D) & Mean RMSE $\downarrow$ & 0.145 & 0.607 & $4.19\times$ & 1701 & 9831 & $5.78\times$\\
 \hline
 \end{tabular}
-\caption{Compact summary of the current baseline suite. More tasks ($\sim$8) will be added in the same format.}
+\caption{Summary across baseline tasks at matched parameter counts and $4000$ epochs; wall-clock time is added for completeness. For \texttt{TriWaveMix10D}, Mean RMSE values are $\sqrt{\text{MSE}}$ derived from Table~\ref{tab:triwavemix10d}.}
 \label{tab:baseline-summary}
 \end{table}
 
 \paragraph{Reproducibility checklist (concise).}
 \begin{itemize}[leftmargin=*,nosep]
 \item \textbf{Epochs/optimizer:} $4000$ epochs for both; Adam-based trainers with default learning rates per codebase; no per-model hyperparameter tuning beyond the fairness knobs.%
-\item \textbf{Residuals/BN:} Linear residuals in both; BN layers placed ``after'' and tested with \texttt{batch\_no\_update}.%
-\item \textbf{Parity:} Parameter matching via a closed-loop count of KAN parameters as a function of $K$ (prefer $\leq$).%
-\item \textbf{Data:} Identical $(x_{\text{train}},y_{\text{train}})$ and test sets across models per task; fixed seeds.%
+\item \textbf{Residuals/BN:} Linear residuals in both; BN layers placed ``after'' and tested with \texttt{batch\_no\_update}.
+\item \textbf{Parity:} Parameter matching via a closed-loop count of KAN parameters as a function of $K$ (prefer $\leq$).
+\item \textbf{Data:} Identical $(x_{\text{train}},y_{\text{train}})$ and test sets across models per task; fixed seeds.
 \end{itemize}
 
 \paragraph{Takeaways.}
