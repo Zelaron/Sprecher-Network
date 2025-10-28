@@ -250,6 +250,16 @@ python -m benchmarks.max_affine_sn_vs_kan \
   --results_dir results
 
 
+  python -m benchmarks.max_affine_sn_vs_kan \
+  --epochs 4000 --warmup 400 \
+  --arch 8,8,8 \
+  --phi_knots 64 --Phi_knots 64 \
+  --pieces 48 \
+  --seed_range 0 9 \
+  --device auto \
+  --results_dir results
+
+
 SN WIN (both in loss and time):
 
 python -m benchmarks.sn_vs_kan_basket --device auto --seeds 0 --arch 32,32 --phi_knots 64 --Phi_knots 64 --epochs 4000 --warmup 400 --batch_size 512 --lr 1e-3 --wd 1e-6 --outdir results
