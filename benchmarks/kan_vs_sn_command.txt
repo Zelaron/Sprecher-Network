@@ -76,9 +76,9 @@ for s in 0 1 2 3 4 5 6 7 8 9; do
 done
 
 
-  SN wins as well (but it's just a repeat of the old code..?) - perfect parameter match:
+  SN wins as well (but it's just a repeat of the old code..?) - perfect parameter match (USED):
 
-  for s in 0; do
+  for s in 0 1 2 3 4 5 6 7 8 9; do
   python -m benchmarks.kan_sn_monoindex_bench \
     --dims 20 --n_quantiles 9 --test_size 50000 \
     --epochs 4000 --device cpu --seed $s \
@@ -119,9 +119,9 @@ python -m benchmarks.kan_sn_ridgecomp_bench \
 
 
 
-Seems promising for SN:
+Seems promising for SN (USED):
 
-for s in 0 1 2 3 4; do
+for s in 0 1 2 3 4 5 6 7 8 9; do
 python -m benchmarks.kan_sn_densehead_shift_bench \
   --dims 12 --heads 64 --test_size 50000 \
   --alpha 0.08 --beta 0.7 --q_bias 0.15 \
@@ -155,9 +155,9 @@ python -m benchmarks.kan_sn_equal_epochs \
   --eval_batch_size 8192 --kan_impl fast
 
 
-  SN wins, but not in all metrics (interesting difference):
+  SN wins, but not in all metrics (interesting difference) (TRIED, but failed):
 
-  for s in 0; do
+  for s in 0 1 2 3 4 5 6 7 8 9; do
   python -m benchmarks.kan_sn_shiftshare_bench \
     --device cpu --seed $s --epochs 4000 \
     --dims 24 --n_heads 25 --eta 0.08 --beta 1.2 \
@@ -177,9 +177,9 @@ python -m benchmarks.kan_sn_equal_epochs \
 done
 
 
-SN wins:
+SN wins (TRIED - FAILED):
 
-for s in 0; do
+for s in 0 1 2 3 4 5 6 7 8 9; do
   python -m benchmarks.kan_sn_headshift_bench \
     --dims 64 --n_heads 16 --delta 0.05 --beta 1.2 \
     --epochs 4000 --device cpu --seed $s --n_test 40000 \
@@ -208,7 +208,9 @@ SN WIN (decisively?):
 
 python -m benchmarks.sn_vs_kan_pwl_sensors --device auto --seed 45
 
-(Maybe this: for s in 1 2 3 4 5; do python -m benchmarks.sn_vs_kan_pwl_sensors --device auto --seed $s; done)
+(USED):
+
+for s in 0 1 2 3 4 5 6 7 8 9; do python -m benchmarks.sn_vs_kan_pwl_sensors --device auto --seed $s; done
 
 
 SN WIN (decisively?):
@@ -228,11 +230,13 @@ SN WIN (very decisive):
 
 python -m benchmarks.sn_vs_kan_smaf --arch 64,64 --epochs 4000 --seed 45 --device auto
 
-python -m benchmarks.sn_vs_kan_smaf --arch 64,64 --epochs 4000 --seed 45 --seeds 46,47,48 --device auto
+(USED):
+
+python -m benchmarks.sn_vs_kan_smaf --arch 64,64 --epochs 4000 --seed 45 --seeds 0,1,2,3,4,5,6,7,8,9 --device auto
 
 
 
-SN WIN (very decisive - added in text?)
+SN WIN (very decisive - added in text?) (USED):
 
 python -m benchmarks.trimix_sn_vs_kan --epochs 4000 --arch 64,64 --phi_knots 64 --Phi_knots 64 --warmup 400 --seed 0 --device auto
 
@@ -250,6 +254,8 @@ python -m benchmarks.max_affine_sn_vs_kan \
   --results_dir results
 
 
+(USED):
+
   python -m benchmarks.max_affine_sn_vs_kan \
   --epochs 4000 --warmup 400 \
   --arch 8,8,8 \
@@ -261,6 +267,8 @@ python -m benchmarks.max_affine_sn_vs_kan \
 
 
 SN WIN (both in loss and time):
+
+(USED (first one)):
 
 python -m benchmarks.sn_vs_kan_basket --device auto --seeds 0 --arch 32,32 --phi_knots 64 --Phi_knots 64 --epochs 4000 --warmup 400 --batch_size 512 --lr 1e-3 --wd 1e-6 --outdir results
 
