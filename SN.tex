@@ -918,13 +918,13 @@ KAN (cubic splines) & 977 & 0.3687 & 9831 \\
 \end{table}
 \vspace{-1ex}
 
-\noindent\emph{Fairness \& setup.} Both models train for exactly $4000$ epochs with Adam ($\mathrm{lr}{=}3\times10^{-4}$) and shared batch size and weight decay ($10^{-7}$). Residuals are standard linear/projection in both; BatchNorm is placed \emph{after} blocks and evaluated with \texttt{batch\_no\_update} semantics. No lateral mixing or extra normalizers are used. SN’s spline domains update for the first $400$ epochs (warm-up) and are then frozen; KAN’s knot budget is set to match the total parameter count exactly.
+\noindent\emph{Fairness \& setup.} Both models train for exactly $4000$ epochs with Adam ($\mathrm{lr}{=}3\times10^{-4}$) and shared batch size and weight decay ($10^{-7}$). Residuals are standard linear/projection in both; BatchNorm is placed \emph{after} blocks and evaluated with \texttt{batch\_no\_update} semantics. No lateral mixing or extra normalizers are used. SN's spline domains update for the first $400$ epochs (warm-up) and are then frozen; KAN's knot budget is set to match the total parameter count exactly.
 
 \subsubsection{Monotone single-index with quantiles (MQSI; 20D, $m{=}9$ heads)}
 \label{sssec:mqsi_20d_9h_parity}
 
 \paragraph{Setup.}
-Targets are $y_j(x)=\tanh\!\big(\beta(\mu(x)+\sigma(x)z_j)\big)$ with strictly increasing quantile indices $z_j=\Phi^{-1}(\tau_j)$, and $\mu,\sigma$ sums of monotone per–coordinate transforms plus small positive pairwise terms (guaranteeing coordinatewise and headwise monotonicity). We train an SN and a KAN under strict parity: SN arch $[24,24]$ with $\phi/\Phi$ knot counts $85/84$, residuals ``linear'', BN (batch, after, skip\_first), no lateral; KAN arch $[4,4]$, degree $3$, residual ``linear'', outside ``linear'', BN (batch, after, skip\_first), impl=fast. Parameters are equalized via $K{=}8$ so both models have $1{,}349$ trainables. Training uses $4{,}000$ epochs on the same $1{,}024$ train points (SN’s generator) and a fixed test set of $50{,}000$ points; device=CPU; seeds $s\in\{0,\dots,9\}$.
+Targets are $y_j(x)=\tanh\!\big(\beta(\mu(x)+\sigma(x)z_j)\big)$ with strictly increasing quantile indices $z_j=\Phi^{-1}(\tau_j)$, and $\mu,\sigma$ sums of monotone per–coordinate transforms plus small positive pairwise terms (guaranteeing coordinatewise and headwise monotonicity). We train an SN and a KAN under strict parity: SN arch $[24,24]$ with $\phi/\Phi$ knot counts $85/84$, residuals ``linear'', BN (batch, after, skip\_first), no lateral; KAN arch $[4,4]$, degree $3$, residual ``linear'', outside ``linear'', BN (batch, after, skip\_first), impl=fast. Parameters are equalized via $K{=}8$ so both models have $1{,}349$ trainables. Training uses $4{,}000$ epochs on the same $1{,}024$ train points (SN's generator) and a fixed test set of $50{,}000$ points; device=CPU; seeds $s\in\{0,\dots,9\}$.
 
 \paragraph{Metrics.}
 Primary: \emph{mean RMSE across heads} (lower is better). Secondary: Frobenius error between target/prediction head–correlation matrices, and the monotonicity–violation rate across heads.
@@ -940,10 +940,10 @@ This MQSI family is structurally aligned with an SN block $s_q=\sum_i \lambda_i\
 
 \paragraph{Setup.}
 We regress a \emph{convex, piecewise-linear} function $f:\mathbb{R}^8\!\to\!\mathbb{R}$ constructed as the maximum of $48$ random affine pieces (dataset: \texttt{MaxOfAffines8D}).\footnote{Convex max-of-affines appears in control/robust modeling and matches ReLU networks’ implicit geometry; it is \emph{not} tailored to Sprecher Networks (SNs) but is unequivocally piecewise linear.}
-Both models use the same 3-layer width-\{8,8,8\} backbone, cubic splines for KAN and piecewise-linear splines with domain updates for SN, with identical knot counts per layer ($\phi{=}\Phi{=}64$). We fix the training budget at \textbf{4000 epochs}, use only linear/projection residuals and batch norm (no attention or extra mixing), and warm up SN’s domain updates for \textbf{400 epochs} (then freeze). Parameter counts are matched (\texttt{SN=434, KAN=434}). Optimizer, LR schedule, batch size, weight decay, splits, and losses are identical.
+Both models use the same 3-layer width-\{8,8,8\} backbone, cubic splines for KAN and piecewise-linear splines with domain updates for SN, with identical knot counts per layer ($\phi{=}\Phi{=}64$). We fix the training budget at \textbf{4000 epochs}, use only linear/projection residuals and batch norm (no attention or extra mixing), and warm up SN's domain updates for \textbf{400 epochs} (then freeze). Parameter counts are matched (\texttt{SN=434, KAN=434}). Optimizer, LR schedule, batch size, weight decay, splits, and losses are identical.
 
 \paragraph{Why this favors SN (but fairly).}
-The target is exactly piecewise linear with sparse kink sets; SN’s PWL spline basis can represent it \emph{without} curvature, whereas a cubic-spline KAN must approximate kinks by smoothing. This mirrors fitting ReLU‑type ground truth: a PWL hypothesis class should need fewer effective degrees of freedom to reach the same error. The task is natural (convex max-of-affines), not bespoke.
+The target is exactly piecewise linear with sparse kink sets; SN's PWL spline basis can represent it \emph{without} curvature, whereas a cubic-spline KAN must approximate kinks by smoothing. This mirrors fitting ReLU‑type ground truth: a PWL hypothesis class should need fewer effective degrees of freedom to reach the same error. The task is natural (convex max-of-affines), not bespoke.
 
 \paragraph{Results across 10 seeds.}
 SN attains lower final eval MSE than KAN in \textbf{8/10} runs (wins all but seeds 4 and 9). Examples:
@@ -951,7 +951,7 @@ SN(1): \(\text{MSE}=6.03\!\times\!10^{-4}\) vs.\ KAN(1): \(1.39\!\times\!10^{-2}
 SN(8): \(1.32\!\times\!10^{-3}\) vs.\ KAN(8): \(4.45\!\times\!10^{-3}\) (win),
 SN(3): \(1.07\!\times\!10^{-2}\) vs.\ KAN(3): \(2.76\!\times\!10^{-2}\) (win),
 SN(4): \(1.96\!\times\!10^{-2}\) vs.\ KAN(4): \(1.34\!\times\!10^{-2}\) (loss).
-Aggregating over seeds, SN’s mean eval MSE is \(9.95\times10^{-3}\) (median \(8.76\times10^{-3}\); min \(6.03\times10^{-4}\); max \(1.96\times10^{-2}\)) versus KAN’s \(1.64\times10^{-2}\) (median \(1.50\times10^{-2}\); min \(4.45\times10^{-3}\); max \(2.76\times10^{-2}\)). Hence SN reduces final error by roughly \(\mathbf{39\%}\) on average.
+Aggregating over seeds, SN's mean eval MSE is \(9.95\times10^{-3}\) (median \(8.76\times10^{-3}\); min \(6.03\times10^{-4}\); max \(1.96\times10^{-2}\)) versus KAN's \(1.64\times10^{-2}\) (median \(1.50\times10^{-2}\); min \(4.45\times10^{-3}\); max \(2.76\times10^{-2}\)). Hence SN reduces final error by roughly \(\mathbf{39\%}\) on average.
 
 \begin{table}[h]
 \centering
@@ -969,7 +969,7 @@ KAN (cubic splines) & 0.01639 & 0.01504 & $4.45\!\times\!10^{-3}$ & $2.76\!\time
 
 \paragraph{Wall-clock.}
 On a fixed 4000-epoch CPU budget, \textbf{SN trains faster per epoch}: SN ranges \(\,115.28\text{–}187.79\,\)s across seeds (avg \(\approx142\)s), while KAN ranges \(\,238.89\text{–}378.36\,\)s (avg \(\approx301\)s). E.g., SN(2) \(115.28\)s (fastest), SN(9) \(187.79\)s (slowest); KAN(1) \(238.89\)s (fastest), KAN(9) \(378.36\)s (slowest).
-Moreover, SN often reaches \emph{KAN’s final} error early: by epoch~500, SN(0) is at \(0.00478\) (below KAN(0)’s final \(0.00653\)), and SN(8) is at \(0.00220\) (below KAN(8)’s final \(0.00445\)).
+Moreover, SN often reaches \emph{KAN's final} error early: by epoch~500, SN(0) is at \(0.00478\) (below KAN(0)’s final \(0.00653\)), and SN(8) is at \(0.00220\) (below KAN(8)’s final \(0.00445\)).
 
 \begin{table}[h]
 \centering
@@ -989,7 +989,7 @@ KAN (cubic splines) & \(\approx\,301\) & 238.89 (1) & 378.36 (9) \\
 On a piecewise-linear target, PWL~SNs are a \emph{better inductive match} than cubic KANs: they win on final error in 8/10 seeds and, importantly, hit KAN-level accuracy much earlier in training—while also training faster per epoch.
 
 \paragraph{Fairness note.}
-Both models trained for exactly 4000 epochs with identical optimizer, schedule, batch size, weight decay, residuals, and batch norm; parameter counts matched (434 vs.\ 434) and the data splits/losses were identical. SN’s only additional mechanism was the symmetric, one-time, 400‑epoch domain‑update warm-up (then frozen).
+Both models trained for exactly 4000 epochs with identical optimizer, schedule, batch size, weight decay, residuals, and batch norm; parameter counts matched (434 vs.\ 434) and the data splits/losses were identical. SN's only additional mechanism was the symmetric, one-time, 400‑epoch domain‑update warm-up (then frozen).
 
 \subsubsection{Non-smooth high-dimensional payoff: 20D basket option regression (\texttt{basket\_options\_nd})}
 \label{subsubsec:basket_nd}
@@ -1004,7 +1004,7 @@ Both models trained for exactly 4000 epochs with identical optimizer, schedule, 
 
 \textbf{Discussion.} The gains line up with the inductive bias: (i) PWL splines match piecewise-linear interiors; (ii) domain updates relocate knot \emph{ranges} to the regions the composition occupies; (iii) cubic pieces in KANs add curvature where the target has none and can oscillate around kinks, demanding more knots/capacity to match sharp transitions. The advantage holds at matched parameters and identical training budget, while also reducing wall-clock.
 
-\vspace{0.25em}\noindent\emph{Fairness note.} Same data splits, optimizer, schedule, batch size, weight decay, residual type (linear/projection), and normalization (BatchNorm) for both; both train for exactly $4000$ epochs with matched parameter counts (955 each). The only asymmetry is the SN’s $400$-epoch domain-update warm-up (then frozen), intrinsic to SN training and completed well before evaluation; it does not add capacity or extra regularization.
+\vspace{0.25em}\noindent\emph{Fairness note.} Same data splits, optimizer, schedule, batch size, weight decay, residual type (linear/projection), and normalization (BatchNorm) for both; both train for exactly $4000$ epochs with matched parameter counts (955 each). The only asymmetry is the SN's $400$-epoch domain-update warm-up (then frozen), intrinsic to SN training and completed well before evaluation; it does not add capacity or extra regularization.
 
 \subsubsection{Saturating Max–Affine Field (SMAF; 20D, $K{=}40$)}
 \label{sssec:smaf-20d}
@@ -1013,7 +1013,7 @@ Both models trained for exactly 4000 epochs with identical optimizer, schedule, 
 \(
 y(x)=\sum_{k=1}^{K} c_k\,\mathrm{clamp}(w_k^\top x+b_k,\;\ell_k,\;h_k)
 \)
-with $x\sim\mathrm{Unif}([0,1]^{20})$, $K{=}40$ channels. We trained on $1024$ random points and validated on $4096$.\; SN and KAN used the same architecture $[64,64]$, Adam ($\mathrm{lr}{=}3\!\times\!10^{-4}$, weight decay $10^{-7}$), full‑batch training for $4000$ epochs; SN had a $400$‑epoch warm‑up for domain updates and then froze domains. Both models used BN (post‑block, skip first), linear/projection residuals only, identical splits/metric, and parameter counts were matched \emph{exactly} (both $1627$ parameters). KAN splines were standard cubic Catmull–Rom with tied $\phi$/$\Phi$ knot counts chosen automatically to match SN’s parameter budget.
+with $x\sim\mathrm{Unif}([0,1]^{20})$, $K{=}40$ channels. We trained on $1024$ random points and validated on $4096$.\; SN and KAN used the same architecture $[64,64]$, Adam ($\mathrm{lr}{=}3\!\times\!10^{-4}$, weight decay $10^{-7}$), full‑batch training for $4000$ epochs; SN had a $400$‑epoch warm‑up for domain updates and then froze domains. Both models used BN (post‑block, skip first), linear/projection residuals only, identical splits/metric, and parameter counts were matched \emph{exactly} (both $1627$ parameters). KAN splines were standard cubic Catmull–Rom with tied $\phi$/$\Phi$ knot counts chosen automatically to match SN's parameter budget.
 
 \medskip
 \textbf{Metric.} Validation MSE; we report the best value over training for each seed and aggregate over 10 seeds ($\{0,1,\ldots,9\}$).
@@ -1022,7 +1022,7 @@ with $x\sim\mathrm{Unif}([0,1]^{20})$, $K{=}40$ channels. We trained on $1024$ r
 \textbf{Results.} SN clearly wins on SMAF. Across seeds (best‑per‑seed, then averaged), SN achieved $4.85\!\times\!10^{-4}\pm7.56\!\times\!10^{-4}$ MSE, whereas KAN yielded $2.12\!\times\!10^{2}\pm4.98\!\times\!10^{2}$ MSE.\footnote{Means $\pm$ std over seeds. Large KAN variability is due to frequent blow‑ups on this non‑smooth target.} For the single best seeds, SN reached $4.04\!\times\!10^{-5}$ (seed 7) and KAN $6.38\!\times\!10^{-3}$ (seed 6), i.e. a $\sim\!1.58\!\times\!10^{2}$ gap in favor of SN. Representative KAN runs exhibited large validation spikes (often orders of magnitude), while SN converged smoothly to $10^{-4}$–$10^{-3}$‑level errors.
 
 \medskip
-\textbf{Why SN wins here.} SMAF is a sum of \emph{clamped affine} channels, i.e., a piecewise‑linear map with many kinks and plateaus. SN’s piecewise‑linear $\phi/\Phi$ splines align with this inductive bias and fit with few knots. In contrast, cubic KAN splines tend to overshoot near kinks/plateaus and need extra capacity/damping to avoid instability; under an equal‑parameter budget they underfit (or blow up) on this non‑smooth objective.
+\textbf{Why SN wins here.} SMAF is a sum of \emph{clamped affine} channels, i.e., a piecewise‑linear map with many kinks and plateaus. SN's piecewise‑linear $\phi/\Phi$ splines align with this inductive bias and fit with few knots. In contrast, cubic KAN splines tend to overshoot near kinks/plateaus and need extra capacity/damping to avoid instability; under an equal‑parameter budget they underfit (or blow up) on this non‑smooth objective.
 
 \medskip
 \textbf{Timing.} Device: CPU. This run did not record wall‑clock times; only metric traces were logged.
@@ -1052,7 +1052,7 @@ with $x\in[0,1]^D$, $j=0,\dots,m{-}1$, $q_j\in[-1,1]$ on a uniform grid, and $z_
 \item \emph{Wall-clock (train time; CPU).} Averaging the ten \texttt{train\_seconds} values: KAN $\,\approx$ \textbf{476\,s}, SN $\,\approx$ \textbf{1{,}433\,s}. For reference, KAN runs were in the $\sim[338,624]$\,s range and SN runs in the $\sim[1{,}241,1{,}607]$\,s range.
 \end{itemize}
 
-\textbf{Takeaways.} On this dense-head shift task—whose structure matches SN’s shared-$\phi/\Phi$ plus head-wise shift inductive bias—SN attains markedly lower error (best-of-10 $2.04\times$ better, and $\approx27\%$ lower RMSE on average) under strict parameter parity ($\sim$3k parameters each, KAN $K{=}4$). KAN trains $\approx3\times$ faster on CPU but shows consistently higher RMSE in this setting. The occasional SN monotonicity violations suggest that adding an explicit head-order regularizer or constraint would likely remove those outliers without changing the overall accuracy picture.
+\textbf{Takeaways.} On this dense-head shift task—whose structure matches SN's shared-$\phi/\Phi$ plus head-wise shift inductive bias—SN attains markedly lower error (best-of-10 $2.04\times$ better, and $\approx27\%$ lower RMSE on average) under strict parameter parity ($\sim$3k parameters each, KAN $K{=}4$). KAN trains $\approx3\times$ faster on CPU but shows consistently higher RMSE in this setting. The occasional SN monotonicity violations suggest that adding an explicit head-order regularizer or constraint would likely remove those outliers without changing the overall accuracy picture.
 
 \subsubsection{Piecewise-linear sensors (S$^2$HI; 16D, scalar)}
 \label{sssec:s2hi}
@@ -1074,9 +1074,9 @@ with $8$ random pairwise hinges and small noise; outputs are standardized using 
 \item \emph{Median over seeds (ID / OOD).} SN: $0.03806\ /\ 0.05739$; KAN: $0.782\ /\ 0.879$ (still far worse than SN).
 \end{itemize}
 
-\textbf{Stability.} SN wins on \emph{all 10/10 seeds} on both ID and OOD MSE. The KAN exhibits $4/10$ seeds with negative ID $R^2$ (e.g.\ MSE $=8.98$, $R^2=-7.97$), while its best seed is still behind SN’s best.
+\textbf{Stability.} SN wins on \emph{all 10/10 seeds} on both ID and OOD MSE. The KAN exhibits $4/10$ seeds with negative ID $R^2$ (e.g.\ MSE $=8.98$, $R^2=-7.97$), while its best seed is still behind SN's best.
 
-\textbf{Why SN wins here.} The target is PWL with saturations and hinge kinks; the SN’s piecewise-linear spline blocks with domain updates match this function class and adapt support to the heavy-tailed mixture before freezing. In contrast, the cubic KAN’s smoother basis tends to overshoot near kinks and, with knots fixed on $[0,1]$ and a matched (small) parameter budget, struggles both on ID mixed tails and on the pure-tail OOD box.
+\textbf{Why SN wins here.} The target is PWL with saturations and hinge kinks; the SN's piecewise-linear spline blocks with domain updates match this function class and adapt support to the heavy-tailed mixture before freezing. In contrast, the cubic KAN's smoother basis tends to overshoot near kinks and, with knots fixed on $[0,1]$ and a matched (small) parameter budget, struggles both on ID mixed tails and on the pure-tail OOD box.
 
 \textbf{Wall-clock.} Not recorded by the script; the summary table leaves the time cell blank. (The training logs include losses and fairness checks but no timing.)
 
@@ -1135,7 +1135,7 @@ $$\Delta_{\mathrm{corr}}
 \;:=\;
 \big\|\mathrm{Corr}(Y)-\mathrm{Corr}(\widehat{Y})\big\|_{F},$$
 
-i.e., the Frobenius norm of the difference between the empirical Pearson correlation matrices of the true and predicted outputs.\footnote{%
+i.e., the Frobenius norm of the difference between the empirical Pearson correlation matrices of the true and predicted outputs.\footnote{
 $\mathrm{Corr}(Y)\in\mathbb{R}^{d\times d}$ is computed by standardizing each output head across the test set and forming the head-by-head correlation matrix; $\|\cdot\|_{F}$ denotes the Frobenius norm. Thus $\Delta_{\mathrm{corr}}$ is scale-invariant and isolates how well a model captures \emph{inter-head} structure. All five heads had non-negligible variance in these runs, so all were included in $\Delta_{\mathrm{corr}}$.}
 
 \paragraph{Architectures, budgets, and caveats.}
