@@ -11,6 +11,7 @@
 \usepackage{algorithm}
 \usepackage{algpseudocode}
 \usepackage{xcolor}
+\usepackage{tabularx,array}
 
 \newtheorem{theorem}{Theorem}
 \newtheorem{lemma}{Lemma}
@@ -889,7 +890,7 @@ To avoid confounds from implementation-level vectorization (e.g., a highly vecto
 \vspace{0.5ex}
 \noindent\textbf{Structure of this subsection.} We present each comparison task as its own \emph{subsubsection}, with a brief problem description, a one-paragraph explanation for why the task might reward SN inductive biases (if applicable), and a compact result table for that task. We finish with a short summary table that collates the win/loss/draw across tasks and highlights typical margins.
 
-\subsubsection*{Tri-wave mixture with sparse interactions (\texttt{TriWaveMix10D})}
+\subsubsection{Tri-wave mixture with sparse interactions (\texttt{TriWaveMix10D})}
 \textbf{Task.} Scalar regression on a 10D input with a natural mix of smooth and piecewise-linear periodic components:
 \[
 \operatorname{tri}(u)=2\!\left|\,\bigl(u\bmod 1\bigr)-\tfrac12\,\right|,\qquad
@@ -1082,23 +1083,24 @@ with $8$ random pairwise hinges and small noise; outputs are standardized using 
 \paragraph{Summary across baseline tasks.}
 Table~\ref{tab:baseline-summary} collates the head-to-heads above. In both cases we observe SNs outperform KANs at matched parameter budgets and training epochs. The MQSI task, which directly matches the SN compositional/shift bias, shows the clearest gap (including fewer monotonicity violations); the 4D$\to$5D smooth regression is closer, with SNs typically ahead by a modest margin.
 
-\begin{table}[ht!]
+\begin{table}[h!]
 \centering
-\setlength{\tabcolsep}{3.5pt}
-\small
-\begin{tabular}{lccccc}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.12}
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X c c c c@{}}
 \hline
-Task & Metric & SN (best) & KAN (best) & \begin{tabular}{@{}c@{}}Ratio\\(KAN/SN)\end{tabular} & \begin{tabular}{@{}c@{}}Time\\(KAN/SN)\\(s)\end{tabular} \\
+\textbf{Task} & \textbf{Metric} & \textbf{SN (best)} & \textbf{KAN (best)} & \textbf{Ratio (KAN/SN)} & \textbf{\shortstack{Time\\(KAN/SN) (s)}} \\
 \hline
 TriWaveMix10D (10D) & RMSE $\downarrow$ & 0.145 & 0.607 & $4.19\times$ & 9{,}831 / 1{,}701 \\
-MQSI (20D, 9 heads) & \begin{tabular}{@{}c@{}}Mean RMSE $\downarrow$\\(best of 10 seeds)\end{tabular} & $4.47\times 10^{-3}$ & $6.58\times 10^{-3}$ & $1.47\times$ & 393 / 589 (avg) \\
-Max-of-Affines8D (8$\to$1) & \begin{tabular}{@{}c@{}}Best MSE $\downarrow$\\(10 seeds)\end{tabular} & $6.03\times 10^{-4}$ & $4.45\times 10^{-3}$ & $7.38\times$ & 301 / 142 (avg) \\
+MQSI (20D, 9 heads) & Mean RMSE $\downarrow$ (best of 10 seeds) & $4.47\times 10^{-3}$ & $6.58\times 10^{-3}$ & $1.47\times$ & 393 / 589 (avg) \\
+Max-of-Affines8D (8$\to$1) & Best MSE $\downarrow$ (10 seeds) & $6.03\times 10^{-4}$ & $4.45\times 10^{-3}$ & $7.38\times$ & 301 / 142 (avg) \\
 Basket options (20$\to$1) & MSE $\downarrow$ & $1.545\times 10^{-3}$ & $2.491\times 10^{-2}$ & 16.1$\times$ & 5{,}366 / 2{,}980 \\
-SMAF (20D, 40 comps) & \begin{tabular}{@{}c@{}}Best val MSE $\downarrow$\\(10 seeds)\end{tabular} & $4.04\times 10^{-5}$ & $6.38\times 10^{-3}$ & $157.9\times$ & \textemdash \\
-DenseHeadShift (12D, 64 heads) & \begin{tabular}{@{}c@{}}Mean RMSE $\downarrow$\\(10 seeds)\end{tabular} & $5.47\times10^{-3}$ & $6.94\times10^{-3}$ & $1.27\times$ & 467 / 1{,}433 (avg) \\
-PWL sensors (S$^2$HI; 16D) & \begin{tabular}{@{}c@{}}Best ID MSE $\downarrow$\\(10 seeds)\end{tabular} & $2.91\times 10^{-2}$ & $5.29\times 10^{-2}$ & $1.82\times$ & \textemdash \\
+SMAF (20D, 40 comps) & Best val MSE $\downarrow$ (10 seeds) & $4.04\times 10^{-5}$ & $6.38\times 10^{-3}$ & $157.9\times$ & \textemdash \\
+DenseHeadShift (12D, 64 heads) & Mean RMSE $\downarrow$ (10 seeds) & $5.47\times10^{-3}$ & $6.94\times10^{-3}$ & $1.27\times$ & 467 / 1{,}433 (avg) \\
+PWL sensors (S$^2$HI; 16D) & Best ID MSE $\downarrow$ (10 seeds) & $2.91\times 10^{-2}$ & $5.29\times 10^{-2}$ & $1.82\times$ & \textemdash \\
 \hline
-\end{tabular}
+\end{tabularx}
 \caption{Summary across baseline tasks at matched parameter counts and $4000$ epochs; wall-clock time shown for completeness. Times are per-task averages across seeds.}
 \label{tab:baseline-summary}
 \end{table}
