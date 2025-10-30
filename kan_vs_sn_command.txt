@@ -1,0 +1,76 @@
+SN WIN:
+
+for s in 0 1 2 3 4 5 6 7 8 9; do
+python -m benchmarks.kan_sn_densehead_shift_bench \
+  --dims 12 --heads 64 --test_size 50000 \
+  --alpha 0.08 --beta 0.7 --q_bias 0.15 \
+  --epochs 4000 --device cpu --seed $s \
+  --sn_arch 32,32 --sn_phi_knots 60 --sn_Phi_knots 60 \
+  --sn_norm_type batch --sn_norm_position after --sn_norm_skip_first \
+  --sn_residual_style linear --sn_no_lateral \
+  --sn_freeze_domains_after 400 --sn_domain_margin 0.01 \
+  --kan_arch 3,24,4 --kan_degree 3 \
+  --kan_bn_type batch --kan_bn_position after --kan_bn_skip_first \
+  --kan_residual_type linear --kan_outside linear \
+  --kan_impl fast \
+  --equalize_params --prefer_leq \
+  --bn_eval_mode batch_no_update \
+  --eval_batch_size 8192
+done
+
+
+SN WIN:
+
+  for s in 0 1 2 3 4 5 6 7 8 9; do
+  python -m benchmarks.kan_sn_monoindex_bench \
+    --dims 20 --n_quantiles 9 --test_size 50000 \
+    --epochs 4000 --device cpu --seed $s \
+    \
+    --sn_arch 24,24 --sn_phi_knots 85 --sn_Phi_knots 84 \
+    --sn_norm_type batch --sn_norm_position after --sn_norm_skip_first \
+    --sn_residual_style linear --sn_no_lateral \
+    --sn_freeze_domains_after 300 --sn_domain_margin 0.01 \
+    \
+    --kan_arch 4,4 --kan_degree 3 \
+    --kan_bn_type batch --kan_bn_position after --kan_bn_skip_first \
+    --kan_residual_type linear --kan_outside linear \
+    --kan_impl fast \
+    \
+    --equalize_params --prefer_leq \
+    --bn_eval_mode batch_no_update \
+    --eval_batch_size 8192
+done
+
+
+SN WIN *:
+
+for s in 0 1 2 3 4 5 6 7 8 9; do python -m benchmarks.sn_vs_kan_pwl_sensors --device auto --seed $s; done
+
+
+SN WIN:
+
+python -m benchmarks.sn_vs_kan_smaf --arch 64,64 --epochs 4000 --seed 45 --seeds 0,1,2,3,4,5,6,7,8,9 --device auto
+
+
+SN WIN:
+
+python -m benchmarks.trimix_sn_vs_kan --epochs 4000 --arch 64,64 --phi_knots 64 --Phi_knots 64 --warmup 400 --seed 0 --device auto
+
+
+SN WIN:
+
+  python -m benchmarks.max_affine_sn_vs_kan \
+  --epochs 4000 --warmup 400 \
+  --arch 8,8,8 \
+  --phi_knots 64 --Phi_knots 64 \
+  --pieces 48 \
+  --seed_range 0 9 \
+  --device auto \
+  --results_dir results
+
+
+SN WIN:
+
+python -m benchmarks.sn_vs_kan_basket --device auto --seeds 0 --arch 32,32 --phi_knots 64 --Phi_knots 64 --epochs 4000 --warmup 400 --batch_size 512 --lr 1e-3 --wd 1e-6 --outdir results
+
+python -m benchmarks.sn_vs_kan_basket --device auto --seeds 0 1 2 3 4 5 6 7 8 9 --arch 32,32 --phi_knots 64 --Phi_knots 64 --epochs 4000 --warmup 400 --batch_size 512 --lr 1e-3 --wd 1e-6 --outdir results
