@@ -9,32 +9,53 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (imported for side-effect
 from contextlib import contextmanager
 
 from .config import CONFIG
+# NEW: import BN-safe helpers so plotting forwards match training semantics
+from .train import has_batchnorm, use_batch_stats_without_updating_bn
 
 
 # ---------------------------------------------------------------------
 # Helper: run a forward pass for visualization in **eval()** (no grads)
+# while making only BN layers temporarily use **batch stats** without
+# mutating their running statistics. This avoids vertical offsets that
+# arise from eval-mode BN running stats on the final scalar output.
 # ---------------------------------------------------------------------
 @contextmanager
 def nonmutating_infer(model):
     """
     Context manager for visualization/evaluation forwards that:
 
-      - **Forces eval()** for the duration of the block (BatchNorm uses
-        running stats; Dropout disabled) and runs under torch.no_grad().
-      - Restores the model's previous train/eval state on exit.
-
-    This ensures we follow the PyTorch "shoulds": use **train mode** for
-    training steps, and **eval mode** for evaluation/plotting.
+      - Puts the whole model in **eval()** for the duration of the block
+        (Dropout disabled etc.).
+      - If the model has BatchNorm layers, they temporarily use **batch
+        statistics** (train behavior) with *track_running_stats=False*,
+        so **no running stats are updated**. Everything is restored on
+        exit.
+      - Runs under torch.no_grad().
 
     Example:
         with nonmutating_infer(model):
             y_pred = model(x)
+
+    Why this is necessary:
+        When a BN layer sits after the final block (especially with one
+        feature), using running statistics in eval mode can introduce a
+        constant vertical offset between the trained function (train-mode
+        BN stats) and the plotted function. Using batch stats just for the
+        forward pass reproduces the behavior the model was optimized for
+        but leaves the saved running stats untouched.
     """
     was_training = model.training
+    model.eval()
     try:
-        model.eval()
-        with torch.no_grad():
-            yield
+        if has_batchnorm(model):
+            # Only BN layers switch to using batch statistics temporarily,
+            # and they will not update running_mean/var during the block.
+            with use_batch_stats_without_updating_bn(model):
+                with torch.no_grad():
+                    yield
+        else:
+            with torch.no_grad():
+                yield
     finally:
         model.train(was_training)
 
