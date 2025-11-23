@@ -5,6 +5,7 @@ import argparse
 import torch
 import numpy as np
 import matplotlib
+
 from sn_core import (
     train_network,
     get_dataset,
@@ -13,12 +14,18 @@ from sn_core import (
     export_parameters,
     parse_param_types,
 )
+# Import the BN helper to evaluate with batch stats without mutating BN buffers
+from sn_core.train import use_batch_stats_without_updating_bn
 
 
+# ----------------------------
+# Argument parsing
+# ----------------------------
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Train Sprecher Networks")
 
+    # Core experiment setup
     parser.add_argument(
         "--dataset",
         type=str,
@@ -62,14 +69,16 @@ def parse_args():
         choices=["auto", "cpu", "cuda"],
         help="Device: auto, cpu, or cuda (default: auto)",
     )
-    parser.add_argument(
-        "--save_plots", action="store_true", help="Save plots to files"
-    )
+
+    # Plotting control
+    parser.add_argument("--save_plots", action="store_true", help="Save plots to files")
     parser.add_argument(
         "--no_show",
         action="store_true",
         help="Don't show plots (useful for batch runs)",
     )
+
+    # Domain debugging / violation tracking
     parser.add_argument(
         "--debug_domains",
         action="store_true",
@@ -107,7 +116,7 @@ def parse_args():
         help="Enable normalization for the first block (overrides norm_skip_first)",
     )
 
-    # Debugging/testing arguments
+    # Checkpoint / BN statistics behavior
     parser.add_argument(
         "--no_load_best",
         action="store_true",
@@ -116,10 +125,11 @@ def parse_args():
     parser.add_argument(
         "--bn_recalc_on_load",
         action="store_true",
-        help="Recalculate BatchNorm statistics when loading best checkpoint (default: use saved stats)",
+        help="Recalculate BatchNorm statistics when loading best checkpoint "
+             "(you shouldn’t need this for cubic; canonical eval is handled automatically).",
     )
 
-    # Feature control arguments
+    # Feature control
     parser.add_argument(
         "--no_residual",
         action="store_true",
@@ -146,7 +156,7 @@ def parse_args():
         help="Use PlateauAwareCosineAnnealingLR scheduler (default: disabled)",
     )
 
-    # Lateral mixing arguments
+    # Lateral mixing
     parser.add_argument(
         "--no_lateral",
         action="store_true",
@@ -160,33 +170,72 @@ def parse_args():
         help="Type of lateral mixing (default: from CONFIG)",
     )
 
-    # Parameter export argument
+    # Parameter export
     parser.add_argument(
         "--export_params",
         nargs="?",
         const="all",
         default=None,
         help=(
-            "Export parameters to text file. Options: all, or comma-separated: "
+            "Export parameters to file. Options: all, or comma-separated: "
             "lambda,eta,spline,residual,codomain,norm,output,lateral"
         ),
     )
 
-    # Memory optimization arguments
+    # Memory optimization
     parser.add_argument(
         "--low_memory_mode",
         action="store_true",
-        help="Use memory-efficient computation (O(N) memory instead of O(N²))",
+        help="Use memory-efficient computation (O(B × max(d_in, d_out)) memory).",
     )
     parser.add_argument(
         "--memory_debug",
         action="store_true",
-        help="Print memory usage statistics during forward pass",
+        help="Print CUDA memory usage statistics during forward pass.",
+    )
+
+    # -------- NEW: spline types / orders --------
+    parser.add_argument(
+        "--spline_type",
+        type=str,
+        default=None,
+        choices=["pwl", "linear", "cubic"],
+        help="Convenience switch to set both φ and Φ spline types. "
+             "Use --phi_spline_type/--Phi_spline_type to override individually.",
+    )
+    parser.add_argument(
+        "--phi_spline_type",
+        type=str,
+        default=None,
+        choices=["pwl", "linear", "cubic"],
+        help="Spline type for φ (default: from --spline_type or project default).",
+    )
+    parser.add_argument(
+        "--Phi_spline_type",
+        type=str,
+        default=None,
+        choices=["pwl", "linear", "cubic"],
+        help="Spline type for Φ (default: from --spline_type or project default).",
+    )
+    parser.add_argument(
+        "--phi_spline_order",
+        type=int,
+        default=None,
+        help="Optional polynomial order for φ for higher-order splines (ignored for cubic Hermite).",
+    )
+    parser.add_argument(
+        "--Phi_spline_order",
+        type=int,
+        default=None,
+        help="Optional polynomial order for Φ for higher-order splines (ignored for cubic Hermite).",
     )
 
     return parser.parse_args()
 
 
+# ----------------------------
+# Helpers
+# ----------------------------
 def _parse_architecture(arch_str: str):
     """Parse architecture string into a list of ints (robust to spaces/empties)."""
     if not arch_str:
@@ -196,52 +245,57 @@ def _parse_architecture(arch_str: str):
     try:
         return [int(p) for p in parts]
     except ValueError:
-        raise ValueError(f"Invalid --arch value '{arch_str}'. Use comma-separated integers, e.g. '15,15'.")
+        raise ValueError(
+            f"Invalid --arch value '{arch_str}'. Use comma-separated integers, e.g. '15,15'."
+        )
 
 
 def get_config_suffix(args, CONFIG):
-    """Build filename suffix for non-default configurations."""
+    """Build filename suffix for non-default configurations (compact tags)."""
     parts = []
 
-    # Check normalization (default is enabled with batch)
+    # Normalization tags
     if args.no_norm or (hasattr(args, "norm_type") and args.norm_type == "none"):
         parts.append("NoNorm")
-    elif hasattr(args, "norm_type") and args.norm_type and args.norm_type not in [
-        "none",
-        "batch",
-    ]:
+    elif hasattr(args, "norm_type") and args.norm_type and args.norm_type not in ["none", "batch"]:
         parts.append(f"Norm{args.norm_type.capitalize()}")
 
-    # Check residuals (default is enabled)
+    # Residuals
     if not CONFIG.get("use_residual_weights", True):
         parts.append("NoResidual")
     else:
-        # Include style if not default 'node'
         style = CONFIG.get("residual_style", "node")
         if style not in (None, "node"):
-            # Compact tag
             parts.append("ResLinear")
 
-    # Check lateral mixing (default is enabled)
+    # Lateral
     if not CONFIG.get("use_lateral_mixing", True):
         parts.append("NoLateral")
     elif CONFIG.get("lateral_mixing_type", "cyclic") != "cyclic":
         parts.append(f"Lateral{CONFIG['lateral_mixing_type'].capitalize()}")
 
-    # Check scheduler (default is disabled)
+    # Scheduler
     if CONFIG.get("use_advanced_scheduler", False):
         parts.append("AdvScheduler")
 
-    # Check memory mode
+    # Memory
     if CONFIG.get("low_memory_mode", False):
         parts.append("LowMem")
 
-    # Join with dashes
+    # Spline (use effective resolved values; see main())
+    phi_t = getattr(args, "phi_spline_type_effective", None)
+    Phi_t = getattr(args, "Phi_spline_type_effective", None)
+    if phi_t is not None and Phi_t is not None:
+        if phi_t == Phi_t:
+            parts.append(f"Spline{phi_t.capitalize()}")
+        else:
+            parts.append(f"SplinePhi{phi_t.capitalize()}-Phi{Phi_t.capitalize()}")
+
     return "-" + "-".join(parts) if parts else ""
 
 
 def profile_memory_usage(model, x_sample):
-    """Profile memory usage of forward pass."""
+    """Profile memory usage of forward pass (CUDA only)."""
     import torch.cuda
 
     if x_sample.is_cuda:
@@ -267,27 +321,23 @@ def profile_memory_usage(model, x_sample):
 
 def verify_memory_efficient_mode(device="cpu"):
     """Verify that memory-efficient mode produces identical results."""
-    from sn_core import CONFIG
     from sn_core.model import SprecherLayerBlock
+    from sn_core.config import CONFIG
 
     print("\nVerifying memory-efficient mode...")
     torch.manual_seed(42)
 
-    # Create a test layer with reasonable dimensions
     layer = SprecherLayerBlock(d_in=100, d_out=200, layer_num=0).to(device)
-    x = torch.randn(32, 100, device=device)  # batch_size=32, d_in=100
+    x = torch.randn(32, 100, device=device)
 
-    # Get output with original method
     CONFIG["low_memory_mode"] = False
     with torch.no_grad():
         output_original = layer._forward_original(x, None)
 
-    # Get output with memory-efficient method
     CONFIG["low_memory_mode"] = True
     with torch.no_grad():
         output_efficient = layer._forward_memory_efficient(x, None)
 
-    # Check if outputs are identical (within floating point precision)
     max_diff = torch.abs(output_original - output_efficient).max().item()
     mean_diff = torch.abs(output_original - output_efficient).mean().item()
 
@@ -299,7 +349,6 @@ def verify_memory_efficient_mode(device="cpu"):
     else:
         print(f"✗ WARNING: Outputs differ by {max_diff:.2e}")
 
-    # Profile memory usage if on CUDA
     if device == "cuda" and torch.cuda.is_available():
         print("\nMemory comparison:")
         CONFIG["low_memory_mode"] = False
@@ -310,12 +359,13 @@ def verify_memory_efficient_mode(device="cpu"):
         print("\nMemory-efficient mode:")
         profile_memory_usage(layer, x)
 
-    # Reset CONFIG
     CONFIG["low_memory_mode"] = False
-
     return max_diff < 1e-6
 
 
+# ----------------------------
+# Main
+# ----------------------------
 def main():
     """Main training script."""
     args = parse_args()
@@ -325,17 +375,13 @@ def main():
         matplotlib.use("Agg")
         print("Using non-interactive 'Agg' backend for plotting (as requested by --no_show).")
 
-    # Now, import pyplot. We will wrap the first plotting call in a try-except
-    # block to handle systems without a working GUI backend.
     import matplotlib.pyplot as plt
 
-    # Parse architecture (robust)
+    # Parse architecture & dataset
     architecture = _parse_architecture(args.arch)
-
-    # Get dataset
     dataset = get_dataset(args.dataset)
 
-    # Determine device (robust fallback if CUDA not available)
+    # Device
     if args.device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
     elif args.device == "cuda" and not torch.cuda.is_available():
@@ -344,7 +390,7 @@ def main():
     else:
         device = args.device
 
-    # Enable domain debugging if requested
+    # CONFIG adjustments
     from sn_core.config import CONFIG
 
     if args.debug_domains:
@@ -353,56 +399,50 @@ def main():
         CONFIG["track_domain_violations"] = True
         print("Domain violation tracking enabled.")
 
-    # Handle memory optimization flags
+    # Memory flags
     if args.low_memory_mode:
         CONFIG["low_memory_mode"] = True
         print("Low memory mode: ENABLED (sequential output computation)")
 
-        # Run verification test if requested
         if args.memory_debug:
             verify_success = verify_memory_efficient_mode(device)
             if not verify_success:
-                print("WARNING: Memory-efficient mode verification failed!")
-                print("Continuing anyway...")
+                print("WARNING: Memory-efficient mode verification failed! Continuing anyway...")
 
     if args.memory_debug:
         CONFIG["memory_debug"] = True
         print("Memory debugging: ENABLED")
 
-    # Handle new/updated feature control flags
-    # Residuals on/off + style
+    # Residuals
     if args.no_residual:
         CONFIG["use_residual_weights"] = False
         if args.residual_style is not None:
-            print("NOTE: --residual_style is ignored because residuals are disabled via --no_residual.")
+            print("NOTE: --residual_style ignored because residuals are disabled via --no_residual.")
     else:
-        # Only apply style if residuals are enabled
         if args.residual_style is not None:
             style = args.residual_style.lower()
-            # Normalize aliases
             if style in ("standard", "matrix"):
                 style = "linear"
-            CONFIG["residual_style"] = style  # used by model/train
+            CONFIG["residual_style"] = style
 
-    # Normalization on/off
+    # Norm and scheduler toggles
     if args.no_norm:
         CONFIG["use_normalization"] = False
     if args.use_advanced_scheduler:
         CONFIG["use_advanced_scheduler"] = True
 
-    # Lateral mixing configuration
+    # Lateral mixing
     if args.no_lateral:
         CONFIG["use_lateral_mixing"] = False
     if args.lateral_type is not None:
         CONFIG["lateral_mixing_type"] = args.lateral_type
 
-    # Parameter export configuration
+    # Parameter export config
     if args.export_params is not None:
         CONFIG["export_params"] = args.export_params
 
-    # Determine effective normalization settings
+    # Effective norm choice
     if CONFIG.get("use_normalization", True) and not args.no_norm:
-        # Use CONFIG defaults or argparser overrides
         if args.norm_type == "none":
             effective_norm_type = "none"
         elif args.norm_type is not None:
@@ -410,47 +450,63 @@ def main():
         else:
             effective_norm_type = CONFIG.get("norm_type", "batch")
     else:
-        # Normalization is disabled
         effective_norm_type = "none"
 
-    # Summarize run configuration
-    print(f"Using device: {device}")
-    print(f"Dataset: {args.dataset}")
+    # --------- Resolve spline types/orders (effective) ---------
+    # If user provided --spline_type, use it for both; can override per-spline.
+    phi_spline_type = args.phi_spline_type if args.phi_spline_type is not None else args.spline_type
+    Phi_spline_type = args.Phi_spline_type if args.Phi_spline_type is not None else args.spline_type
+
+    # Map synonyms: 'pwl'/'linear' -> 'linear' for the training API
+    def _normalize_spline_name(name):
+        if name is None:
+            return None
+        name = name.lower()
+        return "linear" if name in ("pwl", "linear") else name  # keep 'cubic' as-is
+
+    phi_spline_type = _normalize_spline_name(phi_spline_type) or "linear"
+    Phi_spline_type = _normalize_spline_name(Phi_spline_type) or "linear"
+
+    # Store the resolved values on args so get_config_suffix can see them (use user-facing tags)
+    args.phi_spline_type_effective = "cubic" if phi_spline_type == "cubic" else "pwl"
+    args.Phi_spline_type_effective = "cubic" if Phi_spline_type == "cubic" else "pwl"
+
+    # --------- Pretty run header ---------
+    print("\n========== RUN CONFIG ==========")
+    print(f"Dataset: {args.dataset} (dim: {dataset.input_dim}→{dataset.output_dim})")
     print(f"Architecture: {architecture}")
-    print(f"phi knots: {args.phi_knots}, Phi knots: {args.Phi_knots}")
-    print(f"Epochs: {args.epochs}")
-    print(f"Seed: {args.seed}")
-    print(f"Theoretical domains: {CONFIG.get('use_theoretical_domains', True)}")
-    print(f"Domain safety margin: {CONFIG.get('domain_safety_margin', 0.0)}")
-    print(
-        f"Residual connections: {'enabled' if CONFIG.get('use_residual_weights', True) else 'disabled'}"
-    )
-    if CONFIG.get("use_residual_weights", True):
-        print(f"  Residual style: {CONFIG.get('residual_style', 'node')}")
-    print(f"Lateral mixing: {'enabled' if CONFIG.get('use_lateral_mixing', True) else 'disabled'}")
-    if CONFIG.get("use_lateral_mixing", True):
-        print(f"  Type: {CONFIG.get('lateral_mixing_type', 'cyclic')}")
-    if CONFIG.get("low_memory_mode", False):
-        print(f"Memory mode: LOW MEMORY (sequential computation)")
+    print(f"Epochs: {args.epochs} | Device: {device}")
+    print(f"phi_knots: {args.phi_knots} | Phi_knots: {args.Phi_knots}")
+    if CONFIG.get("use_normalization", True) and effective_norm_type != "none":
+        pos = args.norm_position if args.norm_position else "after"
+        skip_first = not args.norm_first if hasattr(args, "norm_first") else True
+        print(f"Normalization: type={effective_norm_type}, pos={pos}, skip_first={skip_first}")
     else:
-        print(f"Memory mode: STANDARD (parallel computation)")
+        print("Normalization: disabled")
+    print(f"Residuals: {'enabled' if CONFIG.get('use_residual_weights', True) else 'disabled'} "
+          f"| style={CONFIG.get('residual_style', 'node') if CONFIG.get('use_residual_weights', True) else 'n/a'}")
+    print(f"Lateral mixing: {'enabled' if CONFIG.get('use_lateral_mixing', True) else 'disabled'} "
+          f"({CONFIG.get('lateral_mixing_type','cyclic') if CONFIG.get('use_lateral_mixing', True) else 'n/a'})")
+    print(f"Spline types: φ={args.phi_spline_type_effective}, Φ={args.Phi_spline_type_effective}")
+    print(f"Domain debug: {CONFIG.get('debug_domains', False)} | Track violations: {CONFIG.get('track_domain_violations', False)}")
+    print("================================\n")
+
+    # Also print a concise summary (matches training printout)
     if effective_norm_type != "none":
-        norm_position = args.norm_position if args.norm_position else CONFIG.get("norm_position", "after")
-        # Handle the --norm_first flag
+        norm_position = args.norm_position if args.norm_position else "after"
         if args.norm_first:
             norm_skip_first = False
         else:
-            norm_skip_first = (
-                args.norm_skip_first if hasattr(args, "norm_skip_first") else CONFIG.get("norm_skip_first", True)
-            )
+            norm_skip_first = args.norm_skip_first if hasattr(args, "norm_skip_first") else True
         print(f"Normalization: {effective_norm_type} (position: {norm_position}, skip_first: {norm_skip_first})")
     else:
         print("Normalization: disabled")
     print(
         f"Scheduler: {'PlateauAwareCosineAnnealingLR' if CONFIG.get('use_advanced_scheduler', False) else 'Adam (fixed LR)'}"
     )
+    # Print internal names ('linear'/'cubic') so training log matches
+    print(f"Spline types: phi={phi_spline_type}, Phi={Phi_spline_type}")
 
-    # Print parameter export configuration
     if CONFIG.get("export_params"):
         if CONFIG["export_params"] == "all" or CONFIG["export_params"] is True:
             print("Parameter export: all parameters")
@@ -464,28 +520,24 @@ def main():
         print("BatchNorm stats will be recalculated when loading best checkpoint")
     print()
 
-    # Determine final normalization parameters
+    # Final normalization params to pass into training
     if effective_norm_type != "none":
-        final_norm_position = args.norm_position if args.norm_position else CONFIG.get("norm_position", "after")
-        # Handle the --norm_first flag for final parameters
-        if args.norm_first:
-            final_norm_skip_first = False
-        else:
-            final_norm_skip_first = (
-                args.norm_skip_first if hasattr(args, "norm_skip_first") else CONFIG.get("norm_skip_first", True)
-            )
+        final_norm_position = args.norm_position if args.norm_position else "after"
+        final_norm_skip_first = not args.norm_first if hasattr(args, "norm_first") and args.norm_first else (
+            args.norm_skip_first if hasattr(args, "norm_skip_first") else True
+        )
     else:
-        final_norm_position = args.norm_position  # Keep for backward compatibility
+        final_norm_position = args.norm_position
         final_norm_skip_first = args.norm_skip_first
 
-    # Determine residual style override to pass to train()
+    # Residual style override (only meaningful if residuals enabled)
     residual_style_override = None
-    if not CONFIG.get("use_residual_weights", True):
-        residual_style_override = None  # style irrelevant if residuals disabled
-    else:
+    if CONFIG.get("use_residual_weights", True):
         residual_style_override = CONFIG.get("residual_style", "node")
 
-    # Train network - returns a snapshot and losses
+    # ------------------------
+    # Train
+    # ------------------------
     plotting_snapshot, losses = train_network(
         dataset=dataset,
         architecture=architecture,
@@ -501,107 +553,68 @@ def main():
         no_load_best=args.no_load_best,
         bn_recalc_on_load=args.bn_recalc_on_load,
         residual_style=residual_style_override,
+        # spline config forwarded to the model (internal names)
+        phi_spline_type=phi_spline_type,
+        Phi_spline_type=Phi_spline_type,
+        phi_spline_order=args.phi_spline_order,
+        Phi_spline_order=args.Phi_spline_order,
     )
 
-    # Extract components from the snapshot
+    # Unpack snapshot
     model = plotting_snapshot["model"]
     x_train = plotting_snapshot["x_train"]
     y_train = plotting_snapshot["y_train"]
     layers = model.layers
 
-    # --- CRITICAL CHANGE: ensure evaluation & plotting run in eval() mode ---
-    model.eval()
-    print("\nSwitched model to EVAL mode for verification and plotting (BN uses running stats; no gradients).")
-    print(f"Model training flag now: {model.training}")
+    # Determine canonical eval mode saved by train_network
+    eval_mode = plotting_snapshot.get("eval_mode", "running")
+    is_canonical_batch = (eval_mode == "batch")
 
-    # Verify the snapshot works correctly with multiple computations (EVAL MODE)
-    print("\nVerifying plotting snapshot consistency (EVAL mode):")
-    print("Computing eval loss multiple times to ensure reproducibility:")
+    # Verify snapshot determinism using the same BN semantics as saved (3 runs)
+    if is_canonical_batch:
+        print("\nSwitched model to EVAL mode for verification and plotting (BN uses batch stats; no gradients).")
+        with torch.no_grad():
+            eval_losses = []
+            # Force batch stats evaluation without updating BN buffers
+            with use_batch_stats_without_updating_bn(model):
+                for _ in range(3):
+                    y_hat = model(x_train)
+                    eval_losses.append(torch.mean((y_hat - y_train) ** 2).item())
+        saved_eval = plotting_snapshot.get("loss_eval", float("nan"))
+        print(f"Saved eval loss: {saved_eval:.4e}")
+        print(f"Recomputed eval loss mean ± std over 3 runs: {np.mean(eval_losses):.4e} ± {np.std(eval_losses):.4e}")
+    else:
+        print("\nSwitched model to EVAL mode for verification and plotting (BN uses running stats; no gradients).")
+        with torch.no_grad():
+            eval_losses = []
+            for _ in range(3):
+                y_hat = model(x_train)
+                eval_losses.append(torch.mean((y_hat - y_train) ** 2).item())
+        saved_eval = plotting_snapshot.get("loss_eval", float("nan"))
+        print(f"Saved eval loss: {saved_eval:.4e}")
+        print(f"Recomputed eval loss mean ± std over 3 runs: {np.mean(eval_losses):.4e} ± {np.std(eval_losses):.4e}")
 
-    losses_verification = []
-    with torch.no_grad():
-        for i in range(5):
-            snapshot_output = model(x_train)
-            snapshot_loss = torch.mean((snapshot_output - y_train) ** 2).item()
-            losses_verification.append(snapshot_loss)
-            print(f"  Computation {i+1}: eval loss = {snapshot_loss:.4e}")
-
-    saved_eval_loss = plotting_snapshot.get("loss_eval", plotting_snapshot.get("loss"))
-    print(f"\nSaved eval loss from snapshot: {saved_eval_loss:.4e}")
-    print(f"Mean of eval verifications: {np.mean(losses_verification):.4e}")
-    print(f"Std of eval verifications:  {np.std(losses_verification):.4e}")
-
-    max_diff = max(abs(l - saved_eval_loss) for l in losses_verification)
-    print(f"Max |Δ| from saved eval loss: {max_diff:.4e}")
-
-    if max_diff < 1e-8:
-        print("[OK] Perfect EVAL-mode consistency achieved! The snapshot is completely isolated.")
-
-    # Print final domain information
+    # Print domain info
     print("\nFinal domain ranges:")
     for idx, layer in enumerate(layers):
-        print(f"Layer {idx}:")
-        print(f"  phi domain: [{layer.phi.in_min:.3f}, {layer.phi.in_max:.3f}]")
-        print(f"  Phi domain: [{layer.Phi.in_min:.3f}, {layer.Phi.in_max:.3f}]")
-        if hasattr(layer, "input_range") and layer.input_range is not None:
-            print(f"  Input range: {layer.input_range}")
-        if hasattr(layer, "output_range") and layer.output_range is not None:
-            print(f"  Output range: {layer.output_range}")
-
-    # Memory usage profiling if requested (run under eval semantics)
-    if CONFIG.get("memory_debug", False) and device == "cuda":
-        print("\nFinal memory usage profile (EVAL mode):")
-        with torch.no_grad():
-            profile_memory_usage(model, x_train)
-
-    # DEBUG: Model structure check before plotting
-    print("\nDEBUG: Model structure check before plotting:")
-    print(f"Model type: {type(model)}")
-    print(f"Model has {len(model.layers)} Sprecher layers")
-    print(f"Model has {len(model.norm_layers) if hasattr(model, 'norm_layers') else 0} norm layers")
-
-    # Test the full model output on a small probe (EVAL mode)
-    if dataset.input_dim == 1:
-        test_input = torch.linspace(0, 1, 5).unsqueeze(1).to(device)
-    else:
-        test_input = torch.rand(5, dataset.input_dim).to(device)
-
-    with torch.no_grad():
-        full_model_output = model(test_input)
-        print(f"Full model output shape: {full_model_output.shape}")
-        print(f"Full model output: {full_model_output.flatten().cpu().numpy()}")
-
-    # Also confirm eval mode flag
-    print(f"Model training flag before plotting (should be False): {model.training}")
-
-    # DEBUG: Testing with same points as checkpoint loading (EVAL mode)
-    print("\nDEBUG: Testing with same points as checkpoint loading:")
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
-    n_samples = 32 if dataset.input_dim == 1 else 32 * 32
-    x_train_debug, _ = dataset.sample(n_samples, device)
-    with torch.no_grad():
-        output_debug = model(x_train_debug[:5])
-        print(f"Output on training points: {output_debug.cpu().numpy().flatten()[:5]}")
-
-    print("=" * 60)
+        try:
+            print(f"Layer {idx}:")
+            print(f"  phi domain: [{layer.phi.in_min:.3f}, {layer.phi.in_max:.3f}]")
+            print(f"  Phi domain: [{layer.Phi.in_min:.3f}, {layer.Phi.in_max:.3f}]")
+            if hasattr(layer, "input_range") and layer.input_range is not None:
+                print(f"  Input range: {layer.input_range}")
+            if hasattr(layer, "output_range") and layer.output_range is not None:
+                print(f"  Output range: {layer.output_range}")
+        except Exception:
+            pass
 
     # Export parameters if requested
     if CONFIG.get("export_params"):
-        # Create params directory if saving
         os.makedirs(CONFIG.get("export_params_dir", "params"), exist_ok=True)
-
-        # Build filename similar to plots
-        prefix = "OneVar" if dataset.input_dim == 1 else f"{dataset.input_dim}Vars"
         arch_str = "-".join(map(str, architecture)) if len(architecture) > 0 else "None"
         config_suffix = get_config_suffix(args, CONFIG)
-        params_filename = (
-            f"{prefix}-{args.dataset}-{arch_str}-{args.epochs}-epochs-"
-            f"outdim{dataset.output_dim}{config_suffix}-params.txt"
-        )
-        params_path = os.path.join(CONFIG.get("export_params_dir", "params"), params_filename)
+        params_path = os.path.join(CONFIG.get("export_params_dir", "params"), f"params-{args.dataset}-{arch_str}-{args.epochs}-epochs{config_suffix}.txt")
 
-        # Prepare dataset info
         dataset_info = {
             "name": args.dataset,
             "architecture": architecture,
@@ -609,14 +622,11 @@ def main():
             "output_dim": dataset.output_dim,
             "epochs": args.epochs,
         }
-
-        # Prepare checkpoint info
         checkpoint_info = {
             "epoch": plotting_snapshot.get("epoch", "Unknown"),
             "loss": plotting_snapshot.get("loss_eval", plotting_snapshot.get("loss", "Unknown")),
         }
 
-        # Export parameters
         export_parameters(
             model,
             CONFIG["export_params"],
@@ -625,13 +635,13 @@ def main():
             checkpoint_info=checkpoint_info,
         )
 
-    # --- Graceful Fallback Plotting Logic ---
+    # ------------------------
+    # Plotting (robust)
+    # ------------------------
     try:
-        # Create plots directory if saving
         if args.save_plots:
             os.makedirs("plots", exist_ok=True)
 
-        # Plot results
         prefix = "OneVar" if dataset.input_dim == 1 else f"{dataset.input_dim}Vars"
         arch_str = "-".join(map(str, architecture)) if len(architecture) > 0 else "None"
         config_suffix = get_config_suffix(args, CONFIG)
@@ -641,25 +651,24 @@ def main():
         )
 
         save_path = os.path.join("plots", filename) if args.save_plots else None
-        # Model is already in eval(); plotting utilities avoid grads and avoid mutating BN.
-        fig_results = plot_results(
+        # IMPORTANT: use plotting API's correct signature
+        _ = plot_results(
             model, layers, dataset, save_path, x_train=x_train, y_train=y_train
         )
 
-        # Plot loss curve
+        # Loss curve
         loss_filename = f"loss-{args.dataset}-{arch_str}-{args.epochs}-epochs{config_suffix}.png"
         loss_save_path = os.path.join("plots", loss_filename) if args.save_plots else None
         plot_loss_curve(losses, loss_save_path)
 
-        # Show plots if requested and not in Agg mode
         if not args.no_show:
             print("Displaying plots. Close the plot windows to exit.")
             plt.show()
         else:
-            plt.close("all")  # Free up memory in non-interactive mode
+            plt.close("all")
 
     except Exception as e:
-        # This block will catch the TclError on Windows or other GUI-related errors
+        # Typical on headless systems
         print("\n" + "=" * 60)
         print("WARNING: A plotting error occurred.")
         print(f"Error type: {type(e).__name__}")
@@ -668,16 +677,13 @@ def main():
         print("\nSwitching to the reliable 'Agg' backend to proceed.")
         print("=" * 60 + "\n")
 
-        # Set the backend and re-run the plotting logic
         matplotlib.use("Agg")
-        import matplotlib.pyplot as plt  # re-import after backend change
+        import matplotlib.pyplot as plt  # re-import after backend switch
 
-        # Ensure we save plots if this fallback is triggered
         if not args.save_plots:
             print("Plots could not be shown interactively. Enabling file saving automatically.")
             args.save_plots = True
 
-        # Re-run plotting logic with the safe backend (still in eval mode)
         os.makedirs("plots", exist_ok=True)
 
         prefix = "OneVar" if dataset.input_dim == 1 else f"{dataset.input_dim}Vars"
@@ -689,7 +695,7 @@ def main():
         )
         save_path = os.path.join("plots", filename)
 
-        plot_results(model, layers, dataset, save_path, x_train=x_train, y_train=y_train)
+        _ = plot_results(model, layers, dataset, save_path, x_train=x_train, y_train=y_train)
 
         loss_filename = f"loss-{args.dataset}-{arch_str}-{args.epochs}-epochs{config_suffix}.png"
         loss_save_path = os.path.join("plots", loss_filename)
