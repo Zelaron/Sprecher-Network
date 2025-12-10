@@ -1,5 +1,5 @@
 """
-pinn_sn_vs_kan_poisson8.py
+pinn_sn_vs_kan_poisson.py
 
 Benchmarking Sprecher Networks (SNs) vs Kolmogorov–Arnold Networks (KANs) on a 2D Poisson PINN.
 
