@@ -1278,7 +1278,7 @@ def main() -> None:
         }
         log_fname = os.path.join(
             args.log_dir,
-            f"pinn_sn_vs_kan_poisson8_seed{args.seed}_params{args.target_params}.json",
+            f"pinn_sn_vs_kan_poisson_seed{args.seed}_params{args.target_params}.json",
         )
         with open(log_fname, "w") as f:
             json.dump(log_data, f, indent=2)
