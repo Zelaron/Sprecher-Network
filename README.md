@@ -82,6 +82,19 @@ The implementation includes various test functions to demonstrate SN capabilitie
 - **Physics-Inspired**: `special_bessel`, `feynman_uv` (Planck's law), `poisson` (PDE solution)
 - **Multi-Input/Output**: `toy_4d_to_5d` (demonstrates vector output capabilities)
 
+## Benchmarks: SN vs KAN
+
+The repository includes benchmarking scripts comparing Sprecher Networks against Kolmogorov-Arnold Networks (KANs) on physics-informed neural network (PINN) tasks.
+
+### Poisson PINN Benchmark
+
+Run an apples-to-apples comparison on a 2D Poisson problem with manufactured solution:
+```
+python -m benchmarks.pinn_sn_vs_kan_poisson --model both --epochs 5000 --seed 0 --target_params 2000
+```
+
+This benchmark enforces fair comparison: both networks use cubic splines, identical parameter counts, the same optimizer, and SN's residual connections and lateral mixing are disabled. At ~850 parameters, SN achieves **1.23× lower L2 solution error** and **8× lower PDE residual** than KAN, despite not using SN's domain update mechanism.
+
 ## Architecture and Configuration
 
 ### Network Notation
