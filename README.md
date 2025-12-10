@@ -84,7 +84,7 @@ The implementation includes various test functions to demonstrate SN capabilitie
 
 ## Benchmarks: SN vs KAN
 
-The repository includes benchmarking scripts comparing Sprecher Networks against Kolmogorov-Arnold Networks (KANs) on physics-informed neural network (PINN) tasks.
+The repository includes benchmarking scripts comparing Sprecher Networks against Kolmogorov-Arnold Networks (KANs) on a variety of tasks.
 
 ### Poisson PINN Benchmark
 
