@@ -4,9 +4,9 @@ pinn_sn_vs_kan_poisson.py
 Benchmarking Sprecher Networks (SNs) vs Kolmogorov–Arnold Networks (KANs) on a 2D Poisson PINN.
 
 Key improvements in this version:
-1. Target ~2000 parameters for both networks (parameter parity)
+1. Target ~900 parameters for both networks (parameter parity)
 2. Fix KAN boundary MSE = 0 issue by proper input scaling and initialization
-3. Fair comparison: disable residual connections and lateral mixing in SN
+3. Fair comparison: disable residual connections/SiLU and lateral mixing in SN
 4. Use PCHIP cubic splines for both networks
 5. Proper domain handling for KAN to match the problem domain [-1, 1]²
 """
@@ -23,6 +23,7 @@ Key improvements in this version:
 # collocation points, optimizer, learning rate, and PINN loss (with identical weights on interior and boundary terms).
 # Both networks use cubic splines (PCHIP for SN, standard cubic for KAN). Residual connections and lateral
 # mixing are DISABLED in the SN to ensure a fair comparison since KAN lacks these features.
+# Domain updates are DISABLED for SN, and grid updates are DISABLED for KAN.
 
 import argparse
 import os
