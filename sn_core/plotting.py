@@ -510,29 +510,99 @@ def plot_results(model, layers, dataset=None, save_path=None,
                     ax_func.legend()
 
         elif input_dim == 2:
-            # For 2D input, create grid for surface plots
-            n = 50
-            points, y_true = dataset.sample(n * n, device=device)
+            # For 2D input, use training data if provided for correct BatchNorm statistics
+            # Otherwise create grid for surface plots
+            
+            if x_train is not None and y_train is not None:
+                # Use training data for prediction (ensures correct batch statistics)
+                print("DEBUG: Using provided training data for 2D plotting")
+                points = x_train.to(device)
+                y_true = y_train.to(device)
+                
+                # Try to infer grid size from training data
+                n_points = points.shape[0]
+                n = int(np.sqrt(n_points))
+                
+                # Check if data is on a perfect square grid
+                if n * n == n_points:
+                    # Data is on a grid, can use surface plot
+                    use_surface_plot = True
+                    print(f"DEBUG: Training data appears to be on a {n}x{n} grid")
+                else:
+                    # Data is not on a perfect grid, use scatter plot
+                    use_surface_plot = False
+                    n = int(np.ceil(np.sqrt(n_points)))
+                    print(f"DEBUG: Training data is not on a perfect grid ({n_points} points), using scatter plot")
+            else:
+                # No training data provided, sample new data
+                print("DEBUG: Generating new test data for 2D plotting")
+                n = 50
+                points, y_true = dataset.sample(n * n, device=device)
+                use_surface_plot = True
 
             if final_dim == 1:
                 # For scalar output from 2D input, plot target and prediction as surfaces
                 gs_bottom = gridspec.GridSpec(1, 2)
                 gs_bottom.update(left=0.05, right=0.95, top=0.50 if want_top_row else 0.95, bottom=0.08, wspace=0.3)
 
-                x = torch.linspace(0, 1, n)
-                y = torch.linspace(0, 1, n)
-                X, Y = torch.meshgrid(x, y, indexing='ij')
-
-                Z_true = y_true.reshape(n, n)
-                ax_target = fig.add_subplot(gs_bottom[0, 0], projection='3d')
-                ax_target.set_title("Target Function", fontsize=12)
-                ax_target.plot_surface(X.cpu().numpy(), Y.cpu().numpy(), Z_true.cpu().numpy(), cmap='viridis')
-
-                ax_output = fig.add_subplot(gs_bottom[0, 1], projection='3d')
-                ax_output.set_title("Network Output", fontsize=12)
+                # Get predictions using the same data (important for BatchNorm consistency!)
                 with nonmutating_infer(model):
-                    Z_pred = model(points).reshape(n, n)
-                ax_output.plot_surface(X.cpu().numpy(), Y.cpu().numpy(), Z_pred.cpu().numpy(), cmap='viridis')
+                    y_pred = model(points)
+
+                if use_surface_plot and x_train is not None:
+                    # Create meshgrid from training data x-coordinates
+                    x_coords = points[:, 0].cpu()
+                    y_coords = points[:, 1].cpu()
+                    
+                    # Get unique sorted values for grid
+                    x_unique = torch.unique(x_coords, sorted=True)
+                    y_unique = torch.unique(y_coords, sorted=True)
+                    
+                    if len(x_unique) * len(y_unique) == n_points:
+                        # Data is on a regular grid
+                        X = x_coords.reshape(n, n)
+                        Y = y_coords.reshape(n, n)
+                        Z_true = y_true.cpu().reshape(n, n)
+                        Z_pred = y_pred.cpu().reshape(n, n)
+                        
+                        ax_target = fig.add_subplot(gs_bottom[0, 0], projection='3d')
+                        ax_target.set_title("Target Function", fontsize=12)
+                        ax_target.plot_surface(X.numpy(), Y.numpy(), Z_true.numpy(), cmap='viridis')
+                        
+                        ax_output = fig.add_subplot(gs_bottom[0, 1], projection='3d')
+                        ax_output.set_title("Network Output", fontsize=12)
+                        ax_output.plot_surface(X.numpy(), Y.numpy(), Z_pred.numpy(), cmap='viridis')
+                    else:
+                        use_surface_plot = False
+                
+                if use_surface_plot and x_train is None:
+                    # Use standard grid approach for sampled data
+                    x = torch.linspace(0, 1, n)
+                    y = torch.linspace(0, 1, n)
+                    X, Y = torch.meshgrid(x, y, indexing='ij')
+
+                    Z_true = y_true.reshape(n, n)
+                    Z_pred = y_pred.reshape(n, n)
+                    
+                    ax_target = fig.add_subplot(gs_bottom[0, 0], projection='3d')
+                    ax_target.set_title("Target Function", fontsize=12)
+                    ax_target.plot_surface(X.cpu().numpy(), Y.cpu().numpy(), Z_true.cpu().numpy(), cmap='viridis')
+
+                    ax_output = fig.add_subplot(gs_bottom[0, 1], projection='3d')
+                    ax_output.set_title("Network Output", fontsize=12)
+                    ax_output.plot_surface(X.cpu().numpy(), Y.cpu().numpy(), Z_pred.cpu().numpy(), cmap='viridis')
+                
+                if not use_surface_plot:
+                    # Use scatter plot for non-grid data
+                    ax_target = fig.add_subplot(gs_bottom[0, 0], projection='3d')
+                    ax_target.set_title("Target Function", fontsize=12)
+                    ax_target.scatter(points[:, 0].cpu(), points[:, 1].cpu(), y_true.cpu(), 
+                                     c=y_true.cpu(), cmap='viridis', s=10)
+                    
+                    ax_output = fig.add_subplot(gs_bottom[0, 1], projection='3d')
+                    ax_output.set_title("Network Output", fontsize=12)
+                    ax_output.scatter(points[:, 0].cpu(), points[:, 1].cpu(), y_pred.cpu(),
+                                     c=y_pred.cpu(), cmap='viridis', s=10)
             else:
                 # For vector output from 2D input, plot each output dimension
                 gs_bottom = gridspec.GridSpec(1, final_dim)
@@ -541,19 +611,40 @@ def plot_results(model, layers, dataset=None, save_path=None,
                 with nonmutating_infer(model):
                     Z_pred_all = model(points)
 
-                x = torch.linspace(0, 1, n)
-                y = torch.linspace(0, 1, n)
-                X, Y = torch.meshgrid(x, y, indexing='ij')
+                if use_surface_plot:
+                    if x_train is not None:
+                        # Use training data grid
+                        x_coords = points[:, 0].cpu()
+                        y_coords = points[:, 1].cpu()
+                        X = x_coords.reshape(n, n)
+                        Y = y_coords.reshape(n, n)
+                    else:
+                        x = torch.linspace(0, 1, n)
+                        y = torch.linspace(0, 1, n)
+                        X, Y = torch.meshgrid(x, y, indexing='ij')
 
-                for d in range(final_dim):
-                    ax_out = fig.add_subplot(gs_bottom[0, d], projection='3d')
-                    ax_out.set_title(f"Output dim {d}", fontsize=12)
-                    Z_pred_d = Z_pred_all[:, d].reshape(n, n)
-                    Z_true_d = y_true[:, d].reshape(n, n)
-                    ax_out.plot_surface(X.cpu().numpy(), Y.cpu().numpy(), Z_true_d.cpu().numpy(),
-                                        cmap='viridis', alpha=0.5)
-                    ax_out.plot_surface(X.cpu().numpy(), Y.cpu().numpy(), Z_pred_d.cpu().numpy(),
-                                        cmap='autumn', alpha=0.5)
+                    for d in range(final_dim):
+                        ax_out = fig.add_subplot(gs_bottom[0, d], projection='3d')
+                        ax_out.set_title(f"Output dim {d}", fontsize=12)
+                        Z_pred_d = Z_pred_all[:, d].reshape(n, n)
+                        Z_true_d = y_true[:, d].reshape(n, n)
+                        ax_out.plot_surface(X.cpu().numpy() if isinstance(X, torch.Tensor) else X.numpy(), 
+                                           Y.cpu().numpy() if isinstance(Y, torch.Tensor) else Y.numpy(), 
+                                           Z_true_d.cpu().numpy(),
+                                           cmap='viridis', alpha=0.5)
+                        ax_out.plot_surface(X.cpu().numpy() if isinstance(X, torch.Tensor) else X.numpy(), 
+                                           Y.cpu().numpy() if isinstance(Y, torch.Tensor) else Y.numpy(), 
+                                           Z_pred_d.cpu().numpy(),
+                                           cmap='autumn', alpha=0.5)
+                else:
+                    # Scatter plot for non-grid data
+                    for d in range(final_dim):
+                        ax_out = fig.add_subplot(gs_bottom[0, d], projection='3d')
+                        ax_out.set_title(f"Output dim {d}", fontsize=12)
+                        ax_out.scatter(points[:, 0].cpu(), points[:, 1].cpu(), y_true[:, d].cpu(),
+                                      c=y_true[:, d].cpu(), cmap='viridis', s=10, alpha=0.5, label='Target')
+                        ax_out.scatter(points[:, 0].cpu(), points[:, 1].cpu(), Z_pred_all[:, d].cpu(),
+                                      c=Z_pred_all[:, d].cpu(), cmap='autumn', s=10, alpha=0.5, label='Predicted')
         else:
             # For high-dimensional inputs, use specialized plotting
             ax_func = fig.add_subplot(gs_func[0, 0])
