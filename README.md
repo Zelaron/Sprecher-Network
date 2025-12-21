@@ -82,6 +82,13 @@ The implementation includes various test functions to demonstrate SN capabilitie
 - **Physics-Inspired**: `special_bessel`, `feynman_uv` (Planck's law), `poisson` (PDE solution)
 - **Multi-Input/Output**: `toy_4d_to_5d` (demonstrates vector output capabilities)
 
+## Benchmarks: SN ablations
+
+See the benefits of the "engineering extras" for SNs, such as cyclic residuals, lateral mixing, domain resampling for splines, etc, across 10 seeds per configuration.
+```
+python -m benchmarks.ablations
+```
+
 ## Benchmarks: SN vs KAN
 
 The repository includes benchmarking scripts comparing Sprecher Networks against Kolmogorov-Arnold Networks (KANs) on a variety of tasks.
