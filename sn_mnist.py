@@ -1,5 +1,5 @@
 """
-sn_mnist.py - MNIST classification using Sprecher Networks (Modernized)
+sn_mnist.py - MNIST classification using Sprecher Networks
 """
 
 import os
@@ -20,7 +20,14 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 # Import Sprecher Network components
-from sn_core import SprecherMultiLayerNetwork, plot_results, plot_loss_curve
+from sn_core import (
+    SprecherMultiLayerNetwork,
+    plot_results,
+    plot_loss_curve,
+    has_batchnorm,
+    use_batch_stats_without_updating_bn,
+    evaluation_mode,
+)
 from sn_core.config import CONFIG, MNIST_CONFIG
 
 
@@ -44,6 +51,17 @@ def parse_args():
                         help="Number of knots for phi splines (default: from MNIST_CONFIG)")
     parser.add_argument("--Phi_knots", type=int, default=None,
                         help="Number of knots for Phi splines (default: from MNIST_CONFIG)")
+    
+    # Spline type arguments
+    parser.add_argument("--spline_type", type=str, default=None,
+                        choices=["pwl", "linear", "cubic"],
+                        help="Convenience switch to set both phi and Phi spline types")
+    parser.add_argument("--phi_spline_type", type=str, default=None,
+                        choices=["pwl", "linear", "cubic"],
+                        help="Spline type for phi (default: from --spline_type or 'linear')")
+    parser.add_argument("--Phi_spline_type", type=str, default=None,
+                        choices=["pwl", "linear", "cubic"],
+                        help="Spline type for Phi (default: from --spline_type or 'linear')")
     
     # Training settings
     parser.add_argument("--epochs", type=int, default=None,
@@ -90,10 +108,26 @@ def parse_args():
     # Feature control arguments
     parser.add_argument("--no_residual", action="store_true",
                         help="Disable residual connections (default: enabled)")
+    parser.add_argument("--residual_style", type=str, default=None,
+                        choices=["node", "linear", "standard", "matrix"],
+                        help="Residual style: 'node' (original) or 'linear' (standard)")
     parser.add_argument("--no_norm", action="store_true",
                         help="Disable normalization (default: enabled with batch norm)")
     parser.add_argument("--use_advanced_scheduler", action="store_true",
                         help="Use PlateauAwareCosineAnnealingLR scheduler (default: disabled)")
+    
+    # Lateral mixing arguments
+    parser.add_argument("--no_lateral", action="store_true",
+                        help="Disable lateral mixing connections (default: enabled)")
+    parser.add_argument("--lateral_type", type=str, default=None,
+                        choices=["cyclic", "bidirectional"],
+                        help="Type of lateral mixing (default: from CONFIG)")
+    
+    # Memory optimization
+    parser.add_argument("--low_memory_mode", action="store_true",
+                        help="Use memory-efficient computation")
+    parser.add_argument("--memory_debug", action="store_true",
+                        help="Print CUDA memory usage statistics during forward pass")
     
     # Debug options
     parser.add_argument("--debug_domains", action="store_true",
@@ -117,10 +151,24 @@ def get_config_suffix(args, CONFIG):
     # Check residuals (default is enabled)
     if not CONFIG.get('use_residual_weights', True):
         parts.append("NoResidual")
+    else:
+        style = CONFIG.get('residual_style', 'node')
+        if style not in (None, 'node'):
+            parts.append("ResLinear")
+    
+    # Lateral mixing
+    if not CONFIG.get('use_lateral_mixing', True):
+        parts.append("NoLateral")
+    elif CONFIG.get('lateral_mixing_type', 'cyclic') != 'cyclic':
+        parts.append(f"Lateral{CONFIG['lateral_mixing_type'].capitalize()}")
     
     # Check scheduler (default is disabled)
     if CONFIG.get('use_advanced_scheduler', False):
         parts.append("AdvScheduler")
+    
+    # Low memory mode
+    if CONFIG.get('low_memory_mode', False):
+        parts.append("LowMem")
     
     # Add norm position if not default
     if hasattr(args, 'norm_position') and args.norm_position != 'after':
@@ -140,6 +188,19 @@ def get_config_suffix(args, CONFIG):
         parts.append(f"phi{phi_knots}")
     if Phi_knots != MNIST_CONFIG['Phi_knots']:
         parts.append(f"Phi{Phi_knots}")
+    
+    # Spline type (use effective resolved values)
+    phi_t = getattr(args, 'phi_spline_type_effective', None)
+    Phi_t = getattr(args, 'Phi_spline_type_effective', None)
+    if phi_t is not None and Phi_t is not None:
+        # Normalize pwl -> linear for comparison
+        phi_t_norm = 'linear' if phi_t == 'pwl' else phi_t
+        Phi_t_norm = 'linear' if Phi_t == 'pwl' else Phi_t
+        # Only add suffix if not the default (linear)
+        if phi_t_norm == Phi_t_norm and phi_t_norm != 'linear':
+            parts.append(f"Spline{phi_t.capitalize()}")
+        elif phi_t_norm != 'linear' or Phi_t_norm != 'linear':
+            parts.append(f"SplinePhi{phi_t.capitalize()}-Phi{Phi_t.capitalize()}")
     
     # Join with dashes
     return "-" + "-".join(parts) if parts else ""
@@ -172,23 +233,39 @@ def parse_model_filename(filename):
         'no_residual': False,
         'use_advanced_scheduler': False,
         'norm_type': None,
-        'norm_position': 'after',  # default
+        'norm_position': 'after',
         'norm_first': False,
-        'norm_skip_first': True,  # default
-        'phi_knots': MNIST_CONFIG['phi_knots'],  # default
-        'Phi_knots': MNIST_CONFIG['Phi_knots'],  # default
+        'norm_skip_first': True,
+        'phi_knots': MNIST_CONFIG['phi_knots'],
+        'Phi_knots': MNIST_CONFIG['Phi_knots'],
+        'residual_style': 'node',
+        'no_lateral': False,
+        'lateral_type': 'cyclic',
+        'phi_spline_type': 'linear',
+        'Phi_spline_type': 'linear',
+        'low_memory_mode': False,
     }
     
     if config_suffix:
-        # Parse suffixes like -NoNorm-NoResidual-AdvScheduler-NormBefore-phi20
+        # Parse suffixes like -NoNorm-NoResidual-AdvScheduler-NormBefore-phi20-SplineCubic
         parts = config_suffix.strip('-').split('-')
-        for part in parts:
+        i = 0
+        while i < len(parts):
+            part = parts[i]
             if part == 'NoNorm':
                 config_flags['no_norm'] = True
             elif part == 'NoResidual':
                 config_flags['no_residual'] = True
+            elif part == 'ResLinear':
+                config_flags['residual_style'] = 'linear'
+            elif part == 'NoLateral':
+                config_flags['no_lateral'] = True
+            elif part.startswith('Lateral'):
+                config_flags['lateral_type'] = part[7:].lower()
             elif part == 'AdvScheduler':
                 config_flags['use_advanced_scheduler'] = True
+            elif part == 'LowMem':
+                config_flags['low_memory_mode'] = True
             elif part.startswith('Norm') and part not in ['NoNorm', 'NormFirst', 'NormAll']:
                 # Handle NormLayer, NormBefore, NormAfter
                 if part == 'NormLayer':
@@ -206,6 +283,23 @@ def parse_model_filename(filename):
                 config_flags['phi_knots'] = int(part[3:])
             elif part.startswith('Phi') and part[3:].isdigit():
                 config_flags['Phi_knots'] = int(part[3:])
+            elif part.startswith('Spline'):
+                # Handle SplineCubic or SplinePhiLinear-PhiCubic (two parts)
+                spline_spec = part[6:]  # Remove 'Spline' prefix
+                if spline_spec.startswith('Phi'):
+                    # Format: SplinePhiX-PhiY - need next part too
+                    phi_type = spline_spec[3:].lower()  # After 'Phi'
+                    config_flags['phi_spline_type'] = phi_type
+                    # Check next part for Phi type
+                    if i + 1 < len(parts) and parts[i + 1].startswith('Phi'):
+                        Phi_type = parts[i + 1][3:].lower()
+                        config_flags['Phi_spline_type'] = Phi_type
+                        i += 1
+                else:
+                    # Format: SplineCubic (both same type)
+                    config_flags['phi_spline_type'] = spline_spec.lower()
+                    config_flags['Phi_spline_type'] = spline_spec.lower()
+            i += 1
     
     return {
         'architecture': architecture,
@@ -259,7 +353,7 @@ def load_checkpoint_and_extract_config(model_path, device):
     if not os.path.exists(model_path):
         return None, None
     
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     
     # Initialize config dict with defaults
     model_config = {
@@ -270,7 +364,13 @@ def load_checkpoint_and_extract_config(model_path, device):
         'norm_position': 'after',
         'norm_skip_first': True,
         'use_residual': True,
+        'residual_style': 'node',
+        'use_lateral': True,
+        'lateral_type': 'cyclic',
         'use_advanced_scheduler': False,
+        'phi_spline_type': 'linear',
+        'Phi_spline_type': 'linear',
+        'low_memory_mode': False,
     }
     
     # First priority: Use saved training_args if available (most complete)
@@ -281,9 +381,15 @@ def load_checkpoint_and_extract_config(model_path, device):
             'norm_position': training_args.get('norm_position', 'after'),
             'norm_skip_first': not training_args.get('norm_first', False) if 'norm_first' in training_args else training_args.get('norm_skip_first', True),
             'use_residual': not training_args.get('no_residual', False),
+            'residual_style': training_args.get('residual_style', 'node'),
+            'use_lateral': not training_args.get('no_lateral', False),
+            'lateral_type': training_args.get('lateral_type', 'cyclic'),
             'use_advanced_scheduler': training_args.get('use_advanced_scheduler', False),
             'phi_knots': training_args.get('phi_knots') or MNIST_CONFIG['phi_knots'],
             'Phi_knots': training_args.get('Phi_knots') or MNIST_CONFIG['Phi_knots'],
+            'phi_spline_type': training_args.get('phi_spline_type', 'linear'),
+            'Phi_spline_type': training_args.get('Phi_spline_type', 'linear'),
+            'low_memory_mode': training_args.get('low_memory_mode', False),
         })
         print("Using complete training configuration from checkpoint")
     
@@ -297,6 +403,8 @@ def load_checkpoint_and_extract_config(model_path, device):
             'norm_type': params.get('norm_type', model_config['norm_type']),
             'norm_position': params.get('norm_position', model_config['norm_position']),
             'norm_skip_first': params.get('norm_skip_first', model_config['norm_skip_first']),
+            'phi_spline_type': params.get('phi_spline_type', model_config['phi_spline_type']),
+            'Phi_spline_type': params.get('Phi_spline_type', model_config['Phi_spline_type']),
         })
         
         # If training_args wasn't available, try to infer residual from state dict
@@ -326,9 +434,15 @@ def load_checkpoint_and_extract_config(model_path, device):
             model_config['norm_position'] = config_flags['norm_position']
             model_config['norm_skip_first'] = config_flags['norm_skip_first']
             model_config['use_residual'] = not config_flags['no_residual']
+            model_config['residual_style'] = config_flags.get('residual_style', 'node')
+            model_config['use_lateral'] = not config_flags.get('no_lateral', False)
+            model_config['lateral_type'] = config_flags.get('lateral_type', 'cyclic')
             model_config['use_advanced_scheduler'] = config_flags['use_advanced_scheduler']
             model_config['phi_knots'] = config_flags['phi_knots']
             model_config['Phi_knots'] = config_flags['Phi_knots']
+            model_config['phi_spline_type'] = config_flags.get('phi_spline_type', 'linear')
+            model_config['Phi_spline_type'] = config_flags.get('Phi_spline_type', 'linear')
+            model_config['low_memory_mode'] = config_flags.get('low_memory_mode', False)
             
             print("WARNING: Old checkpoint format - configuration inferred from filename")
             print("Some settings may be incorrect. Consider retraining with latest code.")
@@ -355,7 +469,7 @@ def auto_discover_and_select_model(args, mode_name):
     
     # If user specified architecture, filter to matching models
     if args.arch:
-        arch_str = args.arch
+        arch_str = args.arch.replace(",", "-")
         matching_models = {k: v for k, v in models.items() if v['arch_str'] == arch_str}
         
         if not matching_models:
@@ -395,109 +509,89 @@ def auto_discover_and_select_model(args, mode_name):
             model_path = regular_filename
             print(f"Using checkpoint: {regular_filename}")
         else:
-            print(f"ERROR: Expected model files not found!")
+            print(f"ERROR: Could not find model file")
             return None, None
-            
-        # Load and extract full configuration
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        checkpoint, model_config = load_checkpoint_and_extract_config(model_path, device)
         
-        if checkpoint is None:
-            print(f"ERROR: Could not load model from {model_path}")
+        # Determine device
+        if args.device == "auto":
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            device = torch.device(args.device)
+        
+        checkpoint, model_config = load_checkpoint_and_extract_config(model_path, device)
+        if model_config is None:
             return None, None
-            
+        
+        # Update model_config with architecture if not found in checkpoint
+        if model_config['architecture'] is None:
+            model_config['architecture'] = model_info['architecture']
+        
         return model_path, model_config
     
+    # Multiple models found - let user choose
+    print(f"\nMultiple model configurations found ({len(models)} total):")
+    model_list = list(models.items())
+    for i, (key, info) in enumerate(model_list, 1):
+        print(f"  [{i}] Architecture: {info['architecture']}, Epochs: {info['epochs']}")
+        if info['config_suffix']:
+            print(f"      Config: {info['config_suffix']}")
+    
+    if args.model_index is not None:
+        idx = args.model_index - 1
+        if 0 <= idx < len(model_list):
+            config_key, model_info = model_list[idx]
+        else:
+            print(f"ERROR: Invalid model index {args.model_index}. Must be 1-{len(model_list)}")
+            return None, None
     else:
-        # Multiple models found
-        print(f"\nFound {len(models)} different model configurations:")
-        
-        # Sort by architecture string for consistent ordering
-        sorted_models = sorted(models.items(), key=lambda x: x[0])
-        
-        for i, (config_key, info) in enumerate(sorted_models, 1):
-            config_desc = []
-            flags = info['config_flags']
-            
-            if flags.get('no_residual'):
-                config_desc.append("no residual")
-            if flags.get('no_norm'):
-                config_desc.append("no normalization")
-            elif flags.get('norm_type') and flags['norm_type'] != 'batch':
-                config_desc.append(f"{flags['norm_type']} norm")
-            if flags.get('norm_position') != 'after':
-                config_desc.append(f"norm {flags['norm_position']}")
-            if flags.get('norm_first'):
-                config_desc.append("norm first block")
-            elif not flags.get('norm_skip_first', True):
-                config_desc.append("norm all blocks")
-            if flags.get('use_advanced_scheduler'):
-                config_desc.append("advanced scheduler")
-            if flags.get('phi_knots') != MNIST_CONFIG['phi_knots']:
-                config_desc.append(f"phi_knots={flags['phi_knots']}")
-            if flags.get('Phi_knots') != MNIST_CONFIG['Phi_knots']:
-                config_desc.append(f"Phi_knots={flags['Phi_knots']}")
-            
-            config_str = f" ({', '.join(config_desc)})" if config_desc else " (default config)"
-            
-            print(f"  {i}. Architecture: 784 -> {info['architecture']} -> 10")
-            print(f"     Epochs: {info['epochs']}{config_str}")
-            print(f"     Files: {', '.join(info['files'])}")
-            print()
-        
-        # Check if user provided a model index
-        if hasattr(args, 'model_index') and args.model_index:
-            idx = args.model_index - 1
-            if 0 <= idx < len(sorted_models):
-                config_key, info = sorted_models[idx]
-                print(f"Using model #{args.model_index} as requested")
-                
-                # Continue with this model (similar code as single model case)
-                arch_str = info['arch_str']
-                epochs = info['epochs']
-                config_suffix = info['config_suffix']
-                
-                best_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}_best.pth"
-                regular_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
-                
-                if os.path.exists(best_filename):
-                    model_path = best_filename
-                elif os.path.exists(regular_filename):
-                    model_path = regular_filename
-                else:
-                    print(f"ERROR: Expected model files not found!")
-                    return None, None
-                    
-                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                checkpoint, model_config = load_checkpoint_and_extract_config(model_path, device)
-                
-                if checkpoint is None:
-                    print(f"ERROR: Could not load model from {model_path}")
-                    return None, None
-                    
-                return model_path, model_config
-            else:
-                print(f"\nERROR: Invalid model index {args.model_index} (must be 1-{len(sorted_models)})")
-                return None, None
-        
-        print("Multiple model configurations found!")
-        print("Please select a model by:")
-        print(f"  1. Specifying architecture: python sn_mnist.py --mode {mode_name} --arch {sorted_models[0][1]['arch_str']}")
-        print(f"  2. Using model index: python sn_mnist.py --mode {mode_name} --model-index 1")
-        print("  3. Removing unwanted model files to leave only one configuration")
-        
+        print(f"\nUse --model-index N to select a specific model, or --arch to filter by architecture.")
         return None, None
+    
+    # Construct model path
+    arch_str = model_info['arch_str']
+    epochs = model_info['epochs']
+    config_suffix = model_info['config_suffix']
+    
+    best_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}_best.pth"
+    regular_filename = f"sn_mnist_model-{arch_str}-{epochs}epochs{config_suffix}.pth"
+    
+    if os.path.exists(best_filename):
+        model_path = best_filename
+        print(f"Using best checkpoint: {best_filename}")
+    elif os.path.exists(regular_filename):
+        model_path = regular_filename
+        print(f"Using checkpoint: {regular_filename}")
+    else:
+        print(f"ERROR: Could not find model file")
+        return None, None
+    
+    # Determine device
+    if args.device == "auto":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(args.device)
+    
+    checkpoint, model_config = load_checkpoint_and_extract_config(model_path, device)
+    if model_config is None:
+        return None, None
+    
+    # Update model_config with architecture if not found in checkpoint
+    if model_config['architecture'] is None:
+        model_config['architecture'] = model_info['architecture']
+    
+    return model_path, model_config
 
 
 def count_parameters_detailed(model):
-    """Count parameters with detailed breakdown matching SN code style."""
-    # Count different parameter types
+    """Count parameters by category for detailed reporting."""
     total_spline_knots = 0
     lambda_params = 0
     eta_params = 0
     residual_params = 0
     codomain_params = 0
     norm_params = 0
+    lateral_params = 0
+    output_params = 0
     
     for name, param in model.named_parameters():
         if not param.requires_grad:
@@ -512,24 +606,27 @@ def count_parameters_detailed(model):
         elif 'eta' in name:
             # Eta shift parameters
             eta_params += param.numel()
-        elif 'residual_weight' in name or 'residual_projection' in name:
+        elif 'residual_weight' in name or 'residual_projection' in name or 'residual_pooling' in name or 'residual_broadcast' in name:
             # Residual connection parameters
             residual_params += param.numel()
         elif 'phi_codomain_params' in name:
             # Codomain parameters (cc, cr)
             codomain_params += param.numel()
-        elif 'norm' in name.lower():
-            # Normalization parameters
+        elif 'lateral' in name:
+            # Lateral mixing parameters
+            lateral_params += param.numel()
+        elif 'output_scale' in name or 'output_bias' in name:
+            # Output layer parameters
+            output_params += param.numel()
+        elif 'norm' in name.lower() or 'weight' in name or 'bias' in name:
+            # Normalization parameters (catch remaining)
             norm_params += param.numel()
     
     # Core parameters (excluding residual and output params)
     core_params = total_spline_knots + lambda_params + eta_params
     
     # Total parameters
-    if CONFIG['train_phi_codomain']:
-        total_params = core_params + residual_params + codomain_params + norm_params
-    else:
-        total_params = core_params + residual_params + norm_params
+    total_params = core_params + residual_params + codomain_params + norm_params + lateral_params + output_params
     
     # Count blocks
     num_blocks = len(model.sprecher_net.layers)
@@ -543,6 +640,8 @@ def count_parameters_detailed(model):
         'residual': residual_params,
         'codomain': codomain_params,
         'norm': norm_params,
+        'lateral': lateral_params,
+        'output': output_params,
         'num_blocks': num_blocks
     }
 
@@ -568,7 +667,9 @@ class MNISTSprecherNet(nn.Module):
     """Wrapper around SprecherMultiLayerNetwork for MNIST classification."""
     
     def __init__(self, architecture, phi_knots=100, Phi_knots=100,
-                 norm_type="none", norm_position="after", norm_skip_first=True):
+                 norm_type="none", norm_position="after", norm_skip_first=True,
+                 phi_spline_type="linear", Phi_spline_type="linear",
+                 initialize_domains=True):
         super().__init__()
         self.sprecher_net = SprecherMultiLayerNetwork(
             input_dim=784,  # 28x28 flattened
@@ -578,7 +679,10 @@ class MNISTSprecherNet(nn.Module):
             Phi_knots=Phi_knots,
             norm_type=norm_type,
             norm_position=norm_position,
-            norm_skip_first=norm_skip_first
+            norm_skip_first=norm_skip_first,
+            phi_spline_type=phi_spline_type,
+            Phi_spline_type=Phi_spline_type,
+            initialize_domains=initialize_domains,
         )
     
     def forward(self, x):
@@ -587,9 +691,9 @@ class MNISTSprecherNet(nn.Module):
             x = x.view(x.size(0), -1)
         return self.sprecher_net(x)
     
-    def update_all_domains(self):
+    def update_all_domains(self, allow_resampling=True, force_resample=False):
         """Forward domain update call to the underlying Sprecher network."""
-        self.sprecher_net.update_all_domains()
+        self.sprecher_net.update_all_domains(allow_resampling, force_resample)
     
     def get_domain_violation_stats(self):
         """Forward domain violation stats call."""
@@ -657,11 +761,15 @@ def train_epoch(model, train_loader, optimizer, scheduler, loss_function, device
     return epoch_loss / len(train_loader), accuracy
 
 
-def test_model(model, test_loader, device):
-    """Evaluate model on test set."""
-    # Keep model in training mode for consistency with checkpoint
-    # model.eval()  # We maintain training mode
-    # This ensures BatchNorm uses the same statistics as during training
+def test_model(model, test_loader, device, use_batch_stats=True):
+    """Evaluate model on test set.
+    
+    Args:
+        model: The model to evaluate
+        test_loader: Test data loader
+        device: Device to use
+        use_batch_stats: If True, use batch statistics for BatchNorm (more consistent with training)
+    """
     correct = 0
     total = 0
     
@@ -669,22 +777,47 @@ def test_model(model, test_loader, device):
     if CONFIG.get('track_domain_violations', False):
         model.reset_domain_violation_stats()
     
+    # Use evaluation mode with proper BatchNorm handling
+    model.eval()
     with torch.no_grad():
-        for images, labels in tqdm(test_loader, desc="Testing"):
-            images, labels = images.to(device), labels.to(device)
-            
-            # Flatten and normalize to [0, 1]
-            images = images.view(images.size(0), -1)
-            images = (images + 1) / 2
-            
-            # Update domains before forward pass
-            if CONFIG.get('use_theoretical_domains', True):
-                model.update_all_domains()
-            
-            outputs = model(images)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
+        if use_batch_stats and has_batchnorm(model):
+            # Use batch statistics without updating running stats
+            with use_batch_stats_without_updating_bn(model):
+                for images, labels in tqdm(test_loader, desc="Testing"):
+                    images, labels = images.to(device), labels.to(device)
+                    
+                    # Flatten and normalize to [0, 1]
+                    images = images.view(images.size(0), -1)
+                    images = (images + 1) / 2
+                    
+                    # Update domains before forward pass
+                    if CONFIG.get('use_theoretical_domains', True):
+                        model.update_all_domains()
+                    
+                    outputs = model(images)
+                    _, predicted = torch.max(outputs.data, 1)
+                    total += labels.size(0)
+                    correct += (predicted == labels).sum().item()
+        else:
+            # Standard eval mode
+            for images, labels in tqdm(test_loader, desc="Testing"):
+                images, labels = images.to(device), labels.to(device)
+                
+                # Flatten and normalize to [0, 1]
+                images = images.view(images.size(0), -1)
+                images = (images + 1) / 2
+                
+                # Update domains before forward pass
+                if CONFIG.get('use_theoretical_domains', True):
+                    model.update_all_domains()
+                
+                outputs = model(images)
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+    
+    # Restore training mode
+    model.train()
     
     # Print domain violation report if tracking
     if CONFIG.get('track_domain_violations', False):
@@ -696,19 +829,31 @@ def test_model(model, test_loader, device):
 
 
 def print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_size, lr, 
-                        effective_norm_type, norm_position, final_norm_skip_first, use_residual):
+                        effective_norm_type, norm_position, final_norm_skip_first, use_residual,
+                        residual_style, use_lateral, lateral_type, phi_spline_type, Phi_spline_type):
     """Print configuration summary."""
-    print(f"Using device: {args.device if args.device != 'auto' else 'cuda' if torch.cuda.is_available() else 'cpu'}")
+    device_str = args.device if args.device != 'auto' else ('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device_str}")
     print(f"Mode: {args.mode}")
     print(f"Architecture: 784 -> {architecture} -> 10")
     print(f"phi knots: {phi_knots}, Phi knots: {Phi_knots}")
+    print(f"Spline types: phi={phi_spline_type}, Phi={Phi_spline_type}")
     print(f"Epochs: {epochs}")
     print(f"Batch size: {batch_size}")
     print(f"Learning rate: {lr}")
     print(f"Seed: {args.seed}")
     print(f"Theoretical domains: {CONFIG.get('use_theoretical_domains', True)}")
     print(f"Domain safety margin: {CONFIG.get('domain_safety_margin', 0.0)}")
-    print(f"Residual connections: {'enabled' if use_residual else 'disabled'}")
+    
+    if use_residual:
+        print(f"Residual connections: enabled (style: {residual_style})")
+    else:
+        print("Residual connections: disabled")
+    
+    if use_lateral:
+        print(f"Lateral mixing: enabled (type: {lateral_type})")
+    else:
+        print("Lateral mixing: disabled")
     
     if effective_norm_type == 'none':
         print("Normalization: disabled")
@@ -716,6 +861,10 @@ def print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_
         print(f"Normalization: {effective_norm_type} (position: {norm_position}, skip_first: {final_norm_skip_first})")
     
     print(f"Scheduler: {'PlateauAwareCosineAnnealingLR' if CONFIG.get('use_advanced_scheduler', False) else 'Adam (fixed LR)'}")
+    
+    if CONFIG.get('low_memory_mode', False):
+        print("Low memory mode: enabled")
+    
     print()
 
 
@@ -731,6 +880,32 @@ def train_mnist(args):
     model_file = args.model_file if args.model_file else MNIST_CONFIG['model_file']
     data_dir = args.data_dir if args.data_dir else MNIST_CONFIG['data_directory']
     
+    # Resolve spline types
+    # Priority: specific args > --spline_type > default 'linear'
+    if args.phi_spline_type:
+        phi_spline_type = args.phi_spline_type
+    elif args.spline_type:
+        phi_spline_type = args.spline_type
+    else:
+        phi_spline_type = 'linear'
+    
+    if args.Phi_spline_type:
+        Phi_spline_type = args.Phi_spline_type
+    elif args.spline_type:
+        Phi_spline_type = args.spline_type
+    else:
+        Phi_spline_type = 'linear'
+    
+    # Normalize 'pwl' to 'linear' for internal use
+    if phi_spline_type == 'pwl':
+        phi_spline_type = 'linear'
+    if Phi_spline_type == 'pwl':
+        Phi_spline_type = 'linear'
+    
+    # Store effective values for config suffix
+    args.phi_spline_type_effective = phi_spline_type
+    args.Phi_spline_type_effective = Phi_spline_type
+    
     # Determine device
     if args.device == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -740,6 +915,7 @@ def train_mnist(args):
     # Set random seed
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
+    CONFIG['seed'] = args.seed
     
     # Handle configuration overrides
     if args.debug_domains:
@@ -749,10 +925,31 @@ def train_mnist(args):
         print("Domain violation tracking enabled.")
     if args.no_residual:
         CONFIG['use_residual_weights'] = False
+    else:
+        if args.residual_style:
+            style = args.residual_style.lower()
+            if style in ('standard', 'matrix'):
+                style = 'linear'
+            CONFIG['residual_style'] = style
+    
     if args.no_norm:
         CONFIG['use_normalization'] = False
     if args.use_advanced_scheduler:
         CONFIG['use_advanced_scheduler'] = True
+    
+    # Lateral mixing
+    if args.no_lateral:
+        CONFIG['use_lateral_mixing'] = False
+    if args.lateral_type:
+        CONFIG['lateral_mixing_type'] = args.lateral_type
+    
+    # Memory optimization
+    if args.low_memory_mode:
+        CONFIG['low_memory_mode'] = True
+        print("Low memory mode: ENABLED")
+    if args.memory_debug:
+        CONFIG['memory_debug'] = True
+        print("Memory debugging: ENABLED")
     
     # Determine effective normalization settings
     if CONFIG.get('use_normalization', True) and not args.no_norm:
@@ -771,10 +968,17 @@ def train_mnist(args):
     else:
         final_norm_skip_first = args.norm_skip_first if hasattr(args, 'norm_skip_first') else CONFIG.get('norm_skip_first', True)
     
+    # Get residual and lateral settings for display
+    use_residual = CONFIG.get('use_residual_weights', True)
+    residual_style = CONFIG.get('residual_style', 'node')
+    use_lateral = CONFIG.get('use_lateral_mixing', True)
+    lateral_type = CONFIG.get('lateral_mixing_type', 'cyclic')
+    
     # Print configuration
     print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_size, lr,
                        effective_norm_type, args.norm_position, final_norm_skip_first,
-                       CONFIG.get('use_residual_weights', True))
+                       use_residual, residual_style, use_lateral, lateral_type,
+                       phi_spline_type, Phi_spline_type)
     
     # Initialize model
     model = MNISTSprecherNet(
@@ -783,7 +987,10 @@ def train_mnist(args):
         Phi_knots=Phi_knots,
         norm_type=effective_norm_type,
         norm_position=args.norm_position,
-        norm_skip_first=final_norm_skip_first
+        norm_skip_first=final_norm_skip_first,
+        phi_spline_type=phi_spline_type,
+        Phi_spline_type=Phi_spline_type,
+        initialize_domains=True,
     ).to(device)
     
     # Count and display parameters
@@ -792,12 +999,16 @@ def train_mnist(args):
     print(f"  - Lambda weight VECTORS: {param_counts['lambda']:,} (TRUE SPRECHER!)")
     print(f"  - Eta shift parameters: {param_counts['eta']:,}")
     print(f"  - Spline parameters: {param_counts['spline_knots']:,}")
-    if CONFIG['use_residual_weights'] and param_counts['residual'] > 0:
+    if use_residual and param_counts['residual'] > 0:
         print(f"  - Residual connection weights: {param_counts['residual']:,}")
+    if use_lateral and param_counts['lateral'] > 0:
+        print(f"  - Lateral mixing parameters: {param_counts['lateral']:,}")
     if param_counts['norm'] > 0:
         print(f"  - Normalization parameters: {param_counts['norm']:,}")
-    if CONFIG['train_phi_codomain'] and param_counts['codomain'] > 0:
+    if CONFIG.get('train_phi_codomain', True) and param_counts['codomain'] > 0:
         print(f"  - Phi codomain parameters (cc, cr per block): {param_counts['codomain']:,}")
+    if param_counts['output'] > 0:
+        print(f"  - Output parameters: {param_counts['output']:,}")
     print()
     
     # Check if model exists and handle retrain
@@ -818,7 +1029,7 @@ def train_mnist(args):
             shutil.rmtree(data_dir)
             print(f"Deleted existing data directory: {data_dir}")
     elif os.path.exists(model_path) and not args.retrain:
-        model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
+        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False), strict=False)
         print(f"Loaded saved model from {model_path} for further training.")
     
     # Setup data
@@ -855,16 +1066,15 @@ def train_mnist(args):
     best_accuracy = 0
     losses = []
     accuracies = []
-    best_plotting_snapshot = None  # Will store complete snapshot for plotting
-    best_checkpoint = None  # Will store complete checkpoint
+    best_plotting_snapshot = None
+    best_checkpoint = None
     
-    # Get a sample batch for snapshot (we'll update this when we find best accuracy)
+    # Get a sample batch for snapshot
     sample_images, sample_labels = next(iter(train_loader))
     sample_images = sample_images.to(device)
     sample_labels = sample_labels.to(device)
-    # Flatten and normalize sample images
     sample_images = sample_images.view(sample_images.shape[0], -1)
-    sample_images = (sample_images + 1) / 2  # Convert from [-1, 1] to [0, 1]
+    sample_images = (sample_images + 1) / 2
     
     for epoch in range(epochs):
         print(f"\nEpoch {epoch + 1}/{epochs}")
@@ -888,16 +1098,16 @@ def train_mnist(args):
                 sample_output = model(sample_images)
                 sample_loss = loss_function(sample_output, sample_labels).item()
             
-            # Create complete plotting snapshot (similar to sn_core/train.py)
+            # Create complete plotting snapshot
             best_plotting_snapshot = {
-                'model': copy.deepcopy(model),  # Complete deep copy of the model
-                'x_train': sample_images.clone(),  # Training inputs
-                'y_train': sample_labels.clone(),  # Training targets
-                'output': sample_output.detach().clone(),  # Model output at this moment
-                'loss': sample_loss,  # Loss value
-                'accuracy': train_acc,  # Accuracy value
-                'epoch': epoch,  # Epoch number
-                'device': device  # Device for later use
+                'model': copy.deepcopy(model),
+                'x_train': sample_images.clone(),
+                'y_train': sample_labels.clone(),
+                'output': sample_output.detach().clone(),
+                'loss': sample_loss,
+                'accuracy': train_acc,
+                'epoch': epoch,
+                'device': device
             }
             
             # Save complete BatchNorm statistics if normalization is used
@@ -906,7 +1116,6 @@ def train_mnist(args):
             if has_bn:
                 for name, module in model.named_modules():
                     if isinstance(module, nn.BatchNorm1d):
-                        # Deep clone all BN state to isolate from future changes
                         bn_statistics[name] = {
                             'running_mean': module.running_mean.clone().cpu(),
                             'running_var': module.running_var.clone().cpu(),
@@ -915,7 +1124,6 @@ def train_mnist(args):
                             'eps': module.eps,
                             'affine': module.affine,
                             'track_running_stats': module.track_running_stats,
-                            # Also save the affine parameters if they exist
                             'weight': module.weight.clone().cpu() if module.affine else None,
                             'bias': module.bias.clone().cpu() if module.affine else None
                         }
@@ -923,16 +1131,16 @@ def train_mnist(args):
             # Create complete checkpoint with all state
             best_checkpoint = {
                 'epoch': epoch,
-                'model_state_dict': copy.deepcopy(model.state_dict()),  # Deep copy the state dict
+                'model_state_dict': copy.deepcopy(model.state_dict()),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': sample_loss,
                 'accuracy': train_acc,
                 'has_batchnorm': has_bn,
-                'bn_statistics': bn_statistics,  # Save exact BN stats at best epoch
-                'training_mode': model.training,  # Save training state
-                'x_train': sample_images.cpu().clone(),  # Save exact training batch
-                'y_train': sample_labels.cpu().clone(),  # Save exact target values
-                'output': sample_output.detach().cpu().clone(),  # Save exact model output
+                'bn_statistics': bn_statistics,
+                'training_mode': model.training,
+                'x_train': sample_images.cpu().clone(),
+                'y_train': sample_labels.cpu().clone(),
+                'output': sample_output.detach().cpu().clone(),
                 # Save model creation parameters for exact reconstruction
                 'model_params': {
                     'architecture': architecture,
@@ -940,11 +1148,16 @@ def train_mnist(args):
                     'Phi_knots': Phi_knots,
                     'norm_type': effective_norm_type,
                     'norm_position': args.norm_position,
-                    'norm_skip_first': final_norm_skip_first
+                    'norm_skip_first': final_norm_skip_first,
+                    'phi_spline_type': phi_spline_type,
+                    'Phi_spline_type': Phi_spline_type,
                 },
                 # SAVE COMPLETE TRAINING ARGS FOR ROBUSTNESS
                 'training_args': {
                     'no_residual': args.no_residual,
+                    'residual_style': CONFIG.get('residual_style', 'node'),
+                    'no_lateral': args.no_lateral if hasattr(args, 'no_lateral') else False,
+                    'lateral_type': CONFIG.get('lateral_mixing_type', 'cyclic'),
                     'no_norm': args.no_norm,
                     'norm_type': args.norm_type,
                     'norm_position': args.norm_position,
@@ -953,6 +1166,9 @@ def train_mnist(args):
                     'use_advanced_scheduler': args.use_advanced_scheduler,
                     'phi_knots': args.phi_knots,
                     'Phi_knots': args.Phi_knots,
+                    'phi_spline_type': phi_spline_type,
+                    'Phi_spline_type': Phi_spline_type,
+                    'low_memory_mode': args.low_memory_mode if hasattr(args, 'low_memory_mode') else False,
                     'epochs': epochs,
                     'seed': args.seed,
                     'batch_size': batch_size,
@@ -966,10 +1182,6 @@ def train_mnist(args):
     
     print(f"\nTraining complete! Best accuracy: {best_accuracy:.2f}%")
     print(f"Model saved to: {model_path}")
-    
-    # IMPORTANT: We keep the model in training mode throughout
-    # This ensures BatchNorm statistics remain consistent with how the model was saved
-    # Using model.eval() would change BatchNorm behavior and make results inconsistent
     
     # Verify the snapshot works correctly if we have one
     if best_plotting_snapshot is not None:
@@ -999,7 +1211,6 @@ def train_mnist(args):
     
     # Plot training curves if requested
     if args.save_plots or not args.no_show:
-        # Graceful fallback plotting logic (similar to sn_experiments.py)
         try:
             os.makedirs("plots", exist_ok=True)
             
@@ -1008,7 +1219,6 @@ def train_mnist(args):
             loss_save_path = os.path.join("plots", loss_filename) if args.save_plots else None
             plot_loss_curve(losses, loss_save_path)
             
-            # Handle show/close for loss curve plot
             if not args.no_show:
                 plt.show()
             else:
@@ -1034,25 +1244,19 @@ def train_mnist(args):
                 plt.close()
                 
         except Exception as e:
-            # This block will catch TclError on Windows or other GUI-related errors
             print("\n" + "="*60)
             print("WARNING: A plotting error occurred.")
             print(f"Error type: {type(e).__name__}")
-            print("The default plotting backend on your system has failed.")
-            print("This is common on systems without a configured GUI toolkit.")
-            print("\nSwitching to the reliable 'Agg' backend to proceed.")
+            print("Switching to the reliable 'Agg' backend to proceed.")
             print("="*60 + "\n")
             
-            # Set the backend and re-import pyplot
             matplotlib.use('Agg')
             import matplotlib.pyplot as plt
             
-            # Ensure we save plots if this fallback is triggered
             if not args.save_plots:
                 print("Plots could not be shown interactively. Enabling file saving automatically.")
                 args.save_plots = True
             
-            # Re-run plotting logic with the safe backend
             os.makedirs("plots", exist_ok=True)
             
             # Plot loss curve
@@ -1085,7 +1289,6 @@ def test_mnist(args):
     model_path, model_config = auto_discover_and_select_model(args, "test")
     
     if model_path is None or model_config is None:
-        # User needs to make a selection or no models found
         return
     
     # Extract configuration
@@ -1096,11 +1299,19 @@ def test_mnist(args):
     norm_position = model_config.get('norm_position', 'after')
     norm_skip_first = model_config.get('norm_skip_first', True)
     use_residual = model_config.get('use_residual', True)
+    residual_style = model_config.get('residual_style', 'node')
+    use_lateral = model_config.get('use_lateral', True)
+    lateral_type = model_config.get('lateral_type', 'cyclic')
+    phi_spline_type = model_config.get('phi_spline_type', 'linear')
+    Phi_spline_type = model_config.get('Phi_spline_type', 'linear')
     batch_size = args.batch_size if args.batch_size else MNIST_CONFIG['batch_size']
     data_dir = args.data_dir if args.data_dir else MNIST_CONFIG['data_directory']
     
     # Update CONFIG based on discovered settings
     CONFIG['use_residual_weights'] = use_residual
+    CONFIG['residual_style'] = residual_style
+    CONFIG['use_lateral_mixing'] = use_lateral
+    CONFIG['lateral_mixing_type'] = lateral_type
     if args.debug_domains:
         CONFIG['debug_domains'] = True
     if args.track_violations:
@@ -1115,12 +1326,14 @@ def test_mnist(args):
     print(f"\nLoading model from: {model_path}")
     print(f"Using device: {device}")
     print(f"Architecture: 784 -> {architecture} -> 10")
+    print(f"Spline types: phi={phi_spline_type}, Phi={Phi_spline_type}")
     print(f"Normalization: {norm_type} (position: {norm_position}, skip_first: {norm_skip_first})")
-    print(f"Residual connections: {'enabled' if use_residual else 'disabled'}")
+    print(f"Residual connections: {'enabled (' + residual_style + ')' if use_residual else 'disabled'}")
+    print(f"Lateral mixing: {'enabled (' + lateral_type + ')' if use_lateral else 'disabled'}")
     print()
     
     # Load checkpoint
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     
     # Initialize model with the correct configuration
     model = MNISTSprecherNet(
@@ -1129,12 +1342,14 @@ def test_mnist(args):
         Phi_knots=Phi_knots,
         norm_type=norm_type,
         norm_position=norm_position,
-        norm_skip_first=norm_skip_first
+        norm_skip_first=norm_skip_first,
+        phi_spline_type=phi_spline_type,
+        Phi_spline_type=Phi_spline_type,
+        initialize_domains=False,  # Don't initialize domains until after loading
     ).to(device)
     
     # Load the model state
     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-        # New format with complete checkpoint
         model.load_state_dict(checkpoint['model_state_dict'], strict=False)
         print(f"Loaded checkpoint from epoch {checkpoint.get('epoch', 'unknown')} with accuracy {checkpoint.get('accuracy', 'unknown'):.2f}%")
         
@@ -1148,11 +1363,11 @@ def test_mnist(args):
                     if 'num_batches_tracked' in bn_stats:
                         module.num_batches_tracked.copy_(bn_stats['num_batches_tracked'].to(device))
     else:
-        # Old format - just state dict
         model.load_state_dict(checkpoint, strict=False)
     
-    # Keep model in training mode - do not use model.eval()
-    # This maintains consistency with how the model was saved
+    # Update domains after loading
+    if CONFIG.get('use_theoretical_domains', True):
+        model.update_all_domains()
     
     # Count parameters
     param_counts = count_parameters_detailed(model)
@@ -1177,7 +1392,6 @@ def infer_mnist(args):
     model_path, model_config = auto_discover_and_select_model(args, "infer")
     
     if model_path is None or model_config is None:
-        # User needs to make a selection or no models found
         return
     
     # Extract configuration
@@ -1188,9 +1402,17 @@ def infer_mnist(args):
     norm_position = model_config.get('norm_position', 'after')
     norm_skip_first = model_config.get('norm_skip_first', True)
     use_residual = model_config.get('use_residual', True)
+    residual_style = model_config.get('residual_style', 'node')
+    use_lateral = model_config.get('use_lateral', True)
+    lateral_type = model_config.get('lateral_type', 'cyclic')
+    phi_spline_type = model_config.get('phi_spline_type', 'linear')
+    Phi_spline_type = model_config.get('Phi_spline_type', 'linear')
     
     # Update CONFIG based on discovered settings
     CONFIG['use_residual_weights'] = use_residual
+    CONFIG['residual_style'] = residual_style
+    CONFIG['use_lateral_mixing'] = use_lateral
+    CONFIG['lateral_mixing_type'] = lateral_type
     
     # Determine device
     if args.device == "auto":
@@ -1204,7 +1426,7 @@ def infer_mnist(args):
     print()
     
     # Load checkpoint
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     
     # Initialize model with the correct configuration
     model = MNISTSprecherNet(
@@ -1213,12 +1435,14 @@ def infer_mnist(args):
         Phi_knots=Phi_knots,
         norm_type=norm_type,
         norm_position=norm_position,
-        norm_skip_first=norm_skip_first
+        norm_skip_first=norm_skip_first,
+        phi_spline_type=phi_spline_type,
+        Phi_spline_type=Phi_spline_type,
+        initialize_domains=False,
     ).to(device)
     
     # Load the model state
     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-        # New format with complete checkpoint
         model.load_state_dict(checkpoint['model_state_dict'], strict=False)
         print(f"Loaded checkpoint from epoch {checkpoint.get('epoch', 'unknown')} with accuracy {checkpoint.get('accuracy', 'unknown'):.2f}%")
         
@@ -1232,12 +1456,8 @@ def infer_mnist(args):
                     if 'num_batches_tracked' in bn_stats:
                         module.num_batches_tracked.copy_(bn_stats['num_batches_tracked'].to(device))
     else:
-        # Old format - just state dict
         model.load_state_dict(checkpoint, strict=False)
-        checkpoint = None  # Mark as old format
-    
-    # Keep model in training mode - do not use model.eval()
-    # This ensures consistent behavior with the saved model state
+        checkpoint = None
     
     # Update domains
     if CONFIG.get('use_theoretical_domains', True):
@@ -1255,15 +1475,12 @@ def infer_mnist(args):
     if norm_type in ['batch', 'layer']:
         # Try to use saved batch from checkpoint for diversity
         if isinstance(checkpoint, dict) and 'x_train' in checkpoint:
-            # Use saved batch from checkpoint
             saved_batch = checkpoint['x_train'].to(device)
-            # Replace first sample with our inference image
             batch_tensor = saved_batch.clone()
             batch_tensor[0] = image_tensor.squeeze(0)
             image_tensor = batch_tensor
             print(f"Using saved batch of {batch_tensor.shape[0]} samples for BatchNorm diversity")
         else:
-            # Fallback: Create diverse batch using noise
             print("No saved batch found, creating diverse batch with noise")
             batch_size = 16
             noise_levels = torch.linspace(0.0, 0.1, batch_size).to(device)
@@ -1271,25 +1488,27 @@ def infer_mnist(args):
             
             for i in range(batch_size):
                 if i == 0:
-                    # First sample is the original image
                     batch_list.append(image_tensor.squeeze(0))
                 else:
-                    # Add noise to create diversity
                     noise = torch.randn_like(image_tensor.squeeze(0)) * noise_levels[i]
                     noisy_image = image_tensor.squeeze(0) + noise
-                    # Clamp to valid range [0, 1]
                     noisy_image = torch.clamp(noisy_image, 0, 1)
                     batch_list.append(noisy_image)
             
             image_tensor = torch.stack(batch_list)
     
-    # Inference
+    # Inference with proper eval mode handling
+    model.eval()
     with torch.no_grad():
-        output = model(image_tensor)
+        if has_batchnorm(model):
+            with use_batch_stats_without_updating_bn(model):
+                output = model(image_tensor)
+        else:
+            output = model(image_tensor)
         
         # Take only the first result (our target image)
         if norm_type in ['batch', 'layer']:
-            output = output[0:1]  # Take first sample
+            output = output[0:1]
             
         probabilities = torch.softmax(output, dim=1)
         probs_list = probabilities.cpu().numpy().flatten()
@@ -1309,7 +1528,6 @@ def plot_mnist_splines(args):
     model_path, model_config = auto_discover_and_select_model(args, "plot")
     
     if model_path is None or model_config is None:
-        # User needs to make a selection or no models found
         return
     
     # Extract configuration
@@ -1320,9 +1538,17 @@ def plot_mnist_splines(args):
     norm_position = model_config.get('norm_position', 'after')
     norm_skip_first = model_config.get('norm_skip_first', True)
     use_residual = model_config.get('use_residual', True)
+    residual_style = model_config.get('residual_style', 'node')
+    use_lateral = model_config.get('use_lateral', True)
+    lateral_type = model_config.get('lateral_type', 'cyclic')
+    phi_spline_type = model_config.get('phi_spline_type', 'linear')
+    Phi_spline_type = model_config.get('Phi_spline_type', 'linear')
     
     # Update CONFIG based on discovered settings
     CONFIG['use_residual_weights'] = use_residual
+    CONFIG['residual_style'] = residual_style
+    CONFIG['use_lateral_mixing'] = use_lateral
+    CONFIG['lateral_mixing_type'] = lateral_type
     
     # Determine device
     if args.device == "auto":
@@ -1337,7 +1563,7 @@ def plot_mnist_splines(args):
     print()
     
     # Load checkpoint
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     
     # Initialize model with the correct configuration
     model = MNISTSprecherNet(
@@ -1346,12 +1572,14 @@ def plot_mnist_splines(args):
         Phi_knots=Phi_knots,
         norm_type=norm_type,
         norm_position=norm_position,
-        norm_skip_first=norm_skip_first
+        norm_skip_first=norm_skip_first,
+        phi_spline_type=phi_spline_type,
+        Phi_spline_type=Phi_spline_type,
+        initialize_domains=False,
     ).to(device)
     
     # Load the model state
     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-        # New format with complete checkpoint
         model.load_state_dict(checkpoint['model_state_dict'], strict=False)
         print(f"Loaded checkpoint from epoch {checkpoint.get('epoch', 'unknown')} with accuracy {checkpoint.get('accuracy', 'unknown'):.2f}%")
         
@@ -1365,11 +1593,7 @@ def plot_mnist_splines(args):
                     if 'num_batches_tracked' in bn_stats:
                         module.num_batches_tracked.copy_(bn_stats['num_batches_tracked'].to(device))
     else:
-        # Old format - just state dict
         model.load_state_dict(checkpoint, strict=False)
-    
-    # Keep model in training mode for consistency with checkpoint
-    # model.eval()  # We maintain training mode
     
     # Update domains
     if CONFIG.get('use_theoretical_domains', True):
@@ -1386,17 +1610,15 @@ def plot_mnist_splines(args):
     # Create save path
     if args.save_plots:
         os.makedirs("plots", exist_ok=True)
-        # Extract config suffix from model path
         filename = os.path.basename(model_path)
         if '_best.pth' in filename:
             base_filename = filename.replace('_best.pth', '')
         else:
             base_filename = filename.replace('.pth', '')
-        # Extract arch and config from base filename
-        parts = base_filename.split('-', 2)  # Split into at most 3 parts
+        parts = base_filename.split('-', 2)
         if len(parts) >= 3:
-            arch_part = parts[1]  # Architecture part
-            config_part = parts[2].replace('epochs', '')  # Remove 'epochs' suffix
+            arch_part = parts[1]
+            config_part = parts[2].replace('epochs', '')
             if config_part.endswith(str(model_config.get('epochs', ''))):
                 config_part = config_part[:-len(str(model_config.get('epochs', '')))]
         else:
@@ -1428,25 +1650,19 @@ def plot_mnist_splines(args):
             plt.close(fig)
             
     except Exception as e:
-        # This block will catch TclError on Windows or other GUI-related errors
         print("\n" + "="*60)
         print("WARNING: A plotting error occurred.")
         print(f"Error type: {type(e).__name__}")
-        print("The default plotting backend on your system has failed.")
-        print("This is common on systems without a configured GUI toolkit.")
-        print("\nSwitching to the reliable 'Agg' backend to proceed.")
+        print("Switching to the reliable 'Agg' backend to proceed.")
         print("="*60 + "\n")
         
-        # Set the backend and re-import pyplot
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
         
-        # Ensure we save plots if this fallback is triggered
         if not args.save_plots:
             print("Plots could not be shown interactively. Enabling file saving automatically.")
             args.save_plots = True
             
-        # Re-create save path since we're now saving
         os.makedirs("plots", exist_ok=True)
         if not save_path:
             filename = os.path.basename(model_path)
@@ -1465,7 +1681,6 @@ def plot_mnist_splines(args):
                 config_part = ""
             save_path = f"plots/mnist_splines-{arch_part}{config_part}.png"
         
-        # Re-run plotting logic with the safe backend
         fig = plot_results(
             model.sprecher_net, 
             model.sprecher_net.layers,
