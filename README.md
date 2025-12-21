@@ -95,6 +95,54 @@ python -m benchmarks.pinn_sn_vs_kan_poisson --model both --epochs 5000 --seed 0 
 
 This benchmark enforces fair comparison: both networks use cubic splines, identical parameter counts, the same optimizer, and SN's residual connections and lateral mixing are disabled. At ~850 parameters, SN achieves **1.23× lower L2 solution error** and **8× lower PDE residual** than KAN, despite not using SN's domain update mechanism.
 
+### Densehead shift benchmark
+
+Run an SN vs KAN benchmark where the SN gets domain warmups for 400 (out of 4000) epochs, and the KAN gets cubic splines. No additional engineering (residuals, grid updates, etc) for either architecture. 10 seeds can be used with the following command:
+```
+for s in 0 1 2 3 4 5 6 7 8 9; do
+python -m benchmarks.kan_sn_densehead_shift_bench \
+  --dims 12 --heads 64 --test_size 50000 \
+  --alpha 0.08 --beta 0.7 --q_bias 0.15 \
+  --epochs 4000 --device cpu --seed $s \
+  --sn_arch 32,32 --sn_phi_knots 60 --sn_Phi_knots 60 \
+  --sn_norm_type batch --sn_norm_position after --sn_norm_skip_first \
+  --sn_residual_style linear --sn_no_lateral \
+  --sn_freeze_domains_after 400 --sn_domain_margin 0.01 \
+  --kan_arch 3,24,4 --kan_degree 3 \
+  --kan_bn_type batch --kan_bn_position after --kan_bn_skip_first \
+  --kan_residual_type linear --kan_outside linear \
+  --kan_impl fast \
+  --equalize_params --prefer_leq \
+  --bn_eval_mode batch_no_update \
+  --eval_batch_size 8192
+done
+```
+
+### Monoindex bench
+
+Run an SN vs KAN benchmark where the SN gets domain warmups for 400 (out of 4000) epochs, and the KAN gets cubic splines. No additional engineering (residuals, grid updates, etc) for either architecture. 10 seeds can be used with the following command:
+```
+for s in 0 1 2 3 4 5 6 7 8 9; do
+python -m benchmarks.kan_sn_monoindex_bench \
+  --dims 20 --n_quantiles 9 --test_size 50000 \
+  --epochs 4000 --device cpu --seed $s \
+  \
+  --sn_arch 24,24 --sn_phi_knots 85 --sn_Phi_knots 84 \
+  --sn_norm_type batch --sn_norm_position after --sn_norm_skip_first \
+  --sn_residual_style linear --sn_no_lateral \
+  --sn_freeze_domains_after 300 --sn_domain_margin 0.01 \
+  \
+  --kan_arch 4,4 --kan_degree 3 \
+  --kan_bn_type batch --kan_bn_position after --kan_bn_skip_first \
+  --kan_residual_type linear --kan_outside linear \
+  --kan_impl fast \
+  \
+  --equalize_params --prefer_leq \
+  --bn_eval_mode batch_no_update \
+  --eval_batch_size 8192
+done
+```
+
 ## Architecture and Configuration
 
 ### Network Notation
