@@ -83,7 +83,45 @@ class Toy1DComplex(Dataset):
 
 
 class Toy2D(Dataset):
-    """2D function: exp(sin(11x)) + 3y + 4sin(8y)"""
+    """2D function from the KAN paper: f(x,y) = exp(sin(πx) + y²)
+    
+    This is the canonical toy example used throughout Liu et al. (2024)
+    "KAN: Kolmogorov-Arnold Networks" for demonstrating interpretability
+    and scaling properties. It can be exactly represented by a [2,1,1] KAN.
+    """
+    
+    @property
+    def input_dim(self):
+        return 2
+    
+    @property
+    def output_dim(self):
+        return 1
+    
+    def generate_inputs(self, n, device='cpu'):
+        """Generate grid if n is perfect square, otherwise random."""
+        sqrt_n = int(np.sqrt(n))
+        if sqrt_n * sqrt_n == n:
+            x = torch.linspace(0, 1, sqrt_n, device=device)
+            y = torch.linspace(0, 1, sqrt_n, device=device)
+            X, Y = torch.meshgrid(x, y, indexing='ij')
+            return torch.stack([X.flatten(), Y.flatten()], dim=1)
+        else:
+            return torch.rand(n, 2, device=device)
+    
+    def evaluate(self, x):
+        """Evaluate the 2D function at x."""
+        # f(x, y) = exp(sin(π x) + y²)  [KAN paper Eq. in Section 2.5]
+        return torch.exp(torch.sin(torch.pi * x[:, [0]]) + x[:, [1]]**2)
+
+
+class Toy2DComplex(Dataset):
+    """More complex 2D function: f(x,y) = exp(sin(11x)) + 3y + 4sin(8y)
+    
+    A synthetic benchmark with high-frequency oscillations in both variables.
+    Unlike Toy2D (the KAN paper function), this function has non-compositional
+    structure, making it a useful stress test for approximation.
+    """
     
     @property
     def input_dim(self):
@@ -110,7 +148,11 @@ class Toy2D(Dataset):
 
 
 class Toy2DVector(Dataset):
-    """2D vector function with 2 outputs."""
+    """2D vector function with 2 outputs.
+    
+    First component: (exp(sin(πx) + y²) - 1) / 7  [normalized KAN paper function]
+    Second component: (1/4)y + (1/5)y² - x³ + (1/5)sin(7x)
+    """
     
     @property
     def input_dim(self):
@@ -139,7 +181,14 @@ class Toy2DVector(Dataset):
 
 
 class Toy100D(Dataset):
-    """100D function: exp of mean squared sine (KAN Section 3)."""
+    """100D function: exp of mean squared sine (KAN Section 3).
+    
+    f(x_1,...,x_100) = exp(1/100 * sum(sin²(πx_i/2)))
+    
+    This high-dimensional example from the KAN paper demonstrates that KANs
+    can achieve fast scaling laws even in high dimensions when the function
+    has compositional structure.
+    """
     
     @property
     def input_dim(self):
@@ -268,6 +317,7 @@ DATASETS = {
     "toy_1d_poly": Toy1DPoly(),
     "toy_1d_complex": Toy1DComplex(),
     "toy_2d": Toy2D(),
+    "toy_2d_complex": Toy2DComplex(),  # The original Toy2D function from the KAN paper
     "toy_2d_vector": Toy2DVector(),
     "toy_100d": Toy100D(),
     "special_bessel": SpecialBessel(),
