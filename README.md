@@ -77,8 +77,8 @@ python sn_sweeps.py --sweeps toy_1d_poly feynman_uv --parallel 1
 ### Network Notation
 
 SNs use the notation `input_dim → [hidden_widths] → output_dim`:
-- `2→[10,15,10]→1` — 2D input, three hidden layers (10, 15, 10), scalar output (summed)
-- `784→[100]→10` — MNIST-sized input, one hidden layer, 10-class output
+- `2→[10,15,10]→1` - 2D input, three hidden layers (10, 15, 10), scalar output (summed)
+- `784→[100]→10` - MNIST-sized input, one hidden layer, 10-class output
 
 ### Block Structure
 
@@ -92,8 +92,8 @@ Each Sprecher block contains:
 ### Spline Types
 
 Both φ and Φ support:
-- `linear` / `pwl` — Piecewise linear (fast, discontinuous derivatives)
-- `cubic` — C¹ piecewise-cubic Hermite (PCHIP), smooth with well-defined 2nd derivatives
+- `linear` / `pwl` - Piecewise linear (fast, discontinuous derivatives)
+- `cubic` - C¹ piecewise-cubic Hermite (PCHIP), smooth with well-defined 2nd derivatives
 
 ```
 # Set both splines to cubic
@@ -373,7 +373,7 @@ Sprecher (1965) showed that any continuous f:[0,1]ⁿ → ℝ can be represented
 
 with a single monotonic φ, a continuous Φ, and scalar weights λₚ. The sum over q runs from 0 to 2n. This architecture directly implements this formula with learnable components and extends it to deep compositions.
 
-**Key insight:** The use of weight *vectors* rather than *matrices* maintains fidelity to Sprecher's construction while providing O(LN + LG) parameter scaling—dramatically more efficient than MLPs' O(LN²) or KANs' O(LN²G).
+**Key insight:** The use of weight *vectors* rather than *matrices* maintains fidelity to Sprecher's construction while providing O(LN + LG) parameter scaling-dramatically more efficient than MLPs' O(LN²) or KANs' O(LN²G).
 
 ## Citation
 
@@ -389,7 +389,7 @@ If you use this code, please cite:
 
 ## License
 
-MIT License — see LICENSE file for details.
+MIT License - see LICENSE file for details.
 
 ## Acknowledgments
 
