@@ -25,7 +25,7 @@
 
 \newcommand{\mathpdf}[2]{\texorpdfstring{$#1$}{#2}}
 
-\title{Sprecher Networks: A Parameter-Efficient Architecture \\ Inspired by the Kolmogorov--Arnold--Sprecher Theorem}
+\title{Sprecher Networks: A Parameter-Efficient Kolmogorov-Arnold Architecture}
 \author{
   Christian Hägg\thanks{Department of Mathematics, Stockholm University, Stockholm, Sweden. Email: \texttt{hagg@math.su.se}} \and
   Kathlén Kohn\thanks{Department of Mathematics, KTH Royal Institute of Technology, Stockholm, Sweden. Email: \texttt{kathlen@kth.se}} \and
@@ -39,7 +39,7 @@
 \maketitle
 
 \begin{abstract}
-We present \emph{Sprecher Networks} (SNs), a family of trainable neural architectures inspired by the classical Kolmogorov--Arnold--Sprecher (KAS) construction for approximating multivariate continuous functions. Distinct from Multi-Layer Perceptrons (MLPs) with fixed node activations and Kolmogorov-Arnold Networks (KANs) featuring learnable edge activations, SNs utilize shared, learnable splines (\emph{monotonic} and \emph{general}) within structured blocks incorporating explicit learnable shifts and mixing weights. Our approach directly realizes Sprecher's specific 1965 ``sum of shifted splines'' formula in its single-layer variant and extends it to deeper, multi-layer compositions. We further enhance the architecture with optional lateral mixing connections that enable intra-block communication between output dimensions, providing a parameter-efficient alternative to full attention mechanisms. Beyond parameter efficiency with $O(LN)$ scaling versus MLPs' $O(LN^2)$, SNs admit a sequential evaluation strategy that reduces peak forward-intermediate memory from $O(N^2)$ to $O(N)$ (treating batch size as constant), making much wider architectures feasible under memory constraints. We demonstrate empirically that composing these blocks into deep networks leads to highly parameter and memory-efficient models, discuss theoretical motivations, and compare SNs with related architectures (MLPs, KANs, and networks with learnable node activations).
+We present \emph{Sprecher Networks} (SNs), a family of trainable neural architectures inspired by the classical Kolmogorov--Arnold--Sprecher (KAS) construction for approximating multivariate continuous functions. Distinct from Multi-Layer Perceptrons (MLPs) with fixed node activations and Kolmogorov-Arnold Networks (KANs) featuring learnable edge activations, SNs utilize shared, learnable splines (\emph{monotonic} and \emph{general}) within structured blocks incorporating explicit shift parameters and mixing weights. Our approach directly realizes Sprecher's specific 1965 ``sum of shifted splines'' formula in its single-layer variant and extends it to deeper, multi-layer compositions. We further enhance the architecture with optional lateral mixing connections that enable intra-block communication between output dimensions, providing a parameter-efficient alternative to full attention mechanisms. Beyond parameter efficiency with $O(LN + LG)$ scaling (where $G$ is the knot count of the shared splines) versus MLPs' $O(LN^2)$, SNs admit a sequential evaluation strategy that reduces peak forward-intermediate memory from $O(N^2)$ to $O(N)$ (treating batch size as constant), making much wider architectures feasible under memory constraints. We demonstrate empirically that composing these blocks into deep networks leads to highly parameter and memory-efficient models, discuss theoretical motivations, and compare SNs with related architectures (MLPs, KANs, and networks with learnable node activations).
 \end{abstract}
 
 \section{Introduction and historical background}
@@ -84,7 +84,7 @@ For scalar outputs, the outputs of the final Sprecher block are aggregated (via 
 
 In Sprecher's original work, one layer (block) with $d_{\mathrm{out}} = 2n+1$ outputs (where $n=d_{\mathrm{in}}$) was sufficient for universality. Our approach stacks $L$ Sprecher blocks to create a deep network progression:
 $$ d_0 \to d_1 \to \cdots \to d_{L-1} \to d_L, $$
-where $d_0=d_{\mathrm{in}}$ is the input dimension, and $d_L$ is the dimension of the final hidden representation before potential aggregation or final mapping. This multi-block composition provides a deeper analog of the KAS construction, aiming for potentially enhanced expressive power or efficiency for complex compositional functions. The universality of networks with \(L>1\) blocks or vector-valued outputs is an open question we explore empirically (see Section~\ref{sec:universality}).
+where $d_0=d_{\mathrm{in}}$ is the input dimension, and $d_L$ is the dimension of the final hidden representation before potential aggregation or final mapping. This multi-block composition provides a deeper analog of the KAS construction, aiming for potentially enhanced expressive power or efficiency for complex compositional functions. Although the overall SN family is universal already for $L=1$ (Theorem~\ref{thm:ua_single_layer}), we do not yet have a universality characterization under fixed depth/width constraints for $L>1$ blocks (nor for our vector-output extension); we explore this empirically (see Section~\ref{sec:universality}).
 
 \begin{definition}[Network notation]
 Throughout this paper, we denote Sprecher Network architectures using arrow notation of the form $d_{\mathrm{in}}\to[d_1,d_2,\ldots,d_L]\to d_{\mathrm{out}}$, where $d_{\mathrm{in}}$ is the input dimension, $[d_1,d_2,\ldots,d_L]$ represents the hidden layer dimensions (widths), and $d_{\mathrm{out}}$ is the final output dimension of the network. For scalar output ($d_{\mathrm{out}}=1$), the final block's outputs are summed. For vector output ($d_{\mathrm{out}}>1$), an additional non-summed block maps from $d_L$ to $d_{\mathrm{out}}$. For example, $2\to[5,3,8]\to1$ describes a network with 2-dimensional input, three hidden layers of widths 5, 3, and 8 respectively, and a scalar output (implying the final block's outputs of dimension 8 are summed). $2\to[5,3]\to4$ describes a network with 2-dimensional input, two hidden layers of widths 5 and 3, and a 4-dimensional vector output (implying an additional output block maps from dimension 3 to 4 without summation). When input or output dimensions are clear from context, we may use the abbreviated notation $[d_1,d_2,\ldots,d_L]$ to focus on the hidden layer structure.
@@ -96,8 +96,8 @@ In our architecture, the fundamental building unit is the \emph{Sprecher block}.
 \subsection{Sprecher block structure}
 A Sprecher block transforms an input vector $\mathbf{x} \in \mathbb{R}^{d_{\mathrm{in}}}$ to an output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$. The data flow through a single block is illustrated in Figure~\ref{fig:block_flow}. This transformation is implemented using the following shared, learnable components specific to that block:
 \begin{itemize}
-    \item \textbf{Monotonic spline $\phi(\cdot)$:} A non-decreasing spline mapping $\mathbb{R} \to [0,1]$ (piecewise-linear or $C^1$ piecewise-cubic Hermite/PCHIP; see \Cref{sec:implementation}) that is applied coordinate-wise. While we denote the domain as $\mathbb{R}$ for generality, in practice each $\phi^{(\ell)}$ operates on a bounded domain determined dynamically by the network's structure and current parameters, as detailed in Section~\ref{sec:theoretical_domains}. This function is shared across all input-output connections within the block and its coefficients are learnable. Monotonicity is enforced during training through appropriate parameterization (see Section \ref{sec:implementation}).
-    \item \textbf{General spline $\Phi(\cdot)$:} A spline mapping $\mathbb{R} \to \mathbb{R}$ (piecewise-linear or $C^1$ piecewise-cubic Hermite/PCHIP; see \Cref{sec:implementation}, without monotonicity constraints) whose domain and codomain are determined by the network structure and can be either fixed or made trainable. If trainable codomains are used, they can be parameterized in various ways, such as by center and radius parameters, allowing the spline to adapt its output range during training. This function is also shared across the block and its coefficients are learnable.
+    \item \textbf{Monotonic spline $\phi(\cdot)$:} A non-decreasing spline mapping $\mathbb{R} \to [0,1]$ (piecewise-linear in our implementation; see \Cref{sec:implementation}) that is applied coordinate-wise. While we denote the domain as $\mathbb{R}$ for generality, in practice each $\phi^{(\ell)}$ operates on a bounded domain determined dynamically by the network's structure and current parameters, as detailed in Section~\ref{sec:theoretical_domains}. This function is shared across all input-output connections within the block and its coefficients are learnable. Monotonicity is enforced during training through appropriate parameterization (see Section \ref{sec:implementation}).
+    \item \textbf{General spline $\Phi(\cdot)$:} A spline mapping $\mathbb{R} \to \mathbb{R}$ (piecewise-linear or $C^1$ piecewise-cubic Hermite/PCHIP; see \Cref{sec:implementation}, without monotonicity constraints) whose domain and codomain are determined by the network structure and can be either fixed or made trainable. If trainable codomains are used, they can be parameterized in various ways, such as by center and scale (half-width) parameters, allowing the spline to adapt its output range during training. This function is also shared across the block and its coefficients are learnable.
     \item \textbf{Mixing weights vector $\lambda$:} A vector $\{\lambda_{i}\}$ of size $d_{\mathrm{in}}$, whose entries are learnable. These weights linearly combine the contributions from different input dimensions after transformation by $\phi$. Crucially, these weights are shared across all output dimensions within the block, maintaining fidelity to Sprecher's original formulation.
     \item \textbf{Shift parameter $\eta$:} A learnable scalar $\eta$. This parameter controls the magnitude of the input shift $x_i + \eta q$, which depends on the output index $q$. While Sprecher's original construction requires $\eta > 0$, practical implementations may allow $\eta$ to take any real value during training.
     \item \textbf{Lateral mixing parameters (optional):} When enabled, learnable parameters that allow intra-block communication between output dimensions. This includes a scalar $\tau^{(\ell)}$ (lateral scale) and weight vector(s) $\omega^{(\ell)}$ that enable outputs to exchange information before passing through $\Phi^{(\ell)}$. Two variants are supported: \emph{cyclic} (each output receives from its cyclic neighbor) and \emph{bidirectional} (each output mixes with both neighbors).
@@ -169,7 +169,7 @@ A Sprecher block transforms an input vector $\mathbf{x} \in \mathbb{R}^{d_{\math
 Concretely, we first define a single Sprecher block as an operator. Let $B^{(\ell)}: \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell}$ denote the $\ell$-th Sprecher block with parameters $\phi^{(\ell)}, \Phi^{(\ell)}, \eta^{(\ell)}, \lambda^{(\ell)}$, a fixed spacing constant $\alpha$ (set to $1$ in all experiments unless noted), and optionally $\tau^{(\ell)}, \omega^{(\ell)}$. Given an input vector $\mathbf{x} = (x_1, \dots, x_{d_{\mathrm{in}}}) \in \mathbb{R}^{d_{\mathrm{in}}}$, the block computes its output vector $\mathbf{h} \in \mathbb{R}^{d_{\mathrm{out}}}$ component-wise as:
 $$ [B^{(\ell)}(\mathbf{x})]_q = \Phi^{(\ell)}\Biggl(\,s_q^{(\ell)} + \tau^{(\ell)} \sum_{j \in \mathcal{N}(q)} \omega_{q,j}^{(\ell)} s_j^{(\ell)}\Biggr),$$
 
-where $s_q^{(\ell)} = \sum_{i=1}^{d_{\mathrm{in}}} \lambda_i^{(\ell)} \phi^{(\ell)}(x_i^{(\ell)} + \eta^{(\ell)} q) + \alpha q$ represents the pre-mixing activation, $\alpha$ is a fixed channel-spacing constant (we set $\alpha=1$ in all experiments unless explicitly stated otherwise), and $\mathcal{N}(q)$ denotes the neighborhood structure:
+where $s_q^{(\ell)} = \sum_{i=1}^{d_{\mathrm{in}}} \lambda_i^{(\ell)} \phi^{(\ell)}(x_i + \eta^{(\ell)} q) + \alpha q$ represents the pre-mixing activation, $\alpha$ is a fixed channel-spacing constant (we set $\alpha=1$ in all experiments unless explicitly stated otherwise), and $\mathcal{N}(q)$ denotes the neighborhood structure:
 \begin{itemize}
     \item \textbf{No mixing:} $\mathcal{N}(q) = \emptyset$ (reduces to original formulation)
     \item \textbf{Cyclic:} $\mathcal{N}(q) = \{(q+1) \bmod d_{\mathrm{out}}\}$ with scalar weights $\omega_q^{(\ell)}$
@@ -309,16 +309,16 @@ Several optional components can enhance the basic Sprecher block:
     \item \textbf{Residual connections (Cyclic):} When enabled, residual connections are implemented using a dimension-adaptive modulo-based cyclic assignment that maintains architectural coherence. Like convolutional layers that achieve parameter efficiency through local connectivity patterns, cyclic residuals use periodic patterns to reduce parameters from $O(d_{\mathrm{in}} \times d_{\mathrm{out}})$ to $O(\max(d_{\mathrm{in}}, d_{\mathrm{out}}))$. This method adapts based on dimensional relationships between adjacent layers:
     \begin{itemize}
         \item \textbf{Identity} ($d_{\mathrm{in}} = d_{\mathrm{out}}$): Uses a single learnable weight $w_{\text{res}}$
-        \item \textbf{Broadcasting} ($d_{\mathrm{in}} < d_{\mathrm{out}}$): Each output dimension cyclically selects an input via $q \bmod d_{\mathrm{in}}$ and applies a learnable scale
-        \item \textbf{Pooling} ($d_{\mathrm{in}} > d_{\mathrm{out}}$): Input dimensions are cyclically assigned to outputs via $i \bmod d_{\mathrm{out}}$ with learnable weights
+        \item \textbf{Broadcasting} ($d_{\mathrm{in}} < d_{\mathrm{out}}$): Each output dimension cyclically selects an input via $1+(q \bmod d_{\mathrm{in}})$ and applies a learnable scale
+        \item \textbf{Pooling} ($d_{\mathrm{in}} > d_{\mathrm{out}}$): Input dimensions are cyclically assigned to outputs via $(i-1) \bmod d_{\mathrm{out}}$ with learnable weights
     \end{itemize}
     Specifically, the block output with residual connection becomes:
     $$[B^{(\ell)}_{\text{res}}(\mathbf{x})]_q = [B^{(\ell)}(\mathbf{x})]_q + \begin{cases}
-    w_{\text{res}} \cdot x_q & \text{if } d_{\mathrm{in}} = d_{\mathrm{out}}\\
-    w_q^{\text{bcast}} \cdot x_{q \bmod d_{\mathrm{in}}} & \text{if } d_{\mathrm{in}} < d_{\mathrm{out}}\\
-    \sum_{i: i \bmod d_{\mathrm{out}} = q} w_i^{\text{pool}} \cdot x_i & \text{if } d_{\mathrm{in}} > d_{\mathrm{out}}
+    w_{\text{res}} \cdot x_{q+1} & \text{if } d_{\mathrm{in}} = d_{\mathrm{out}}\\
+    w_q^{\text{bcast}} \cdot x_{1+(q \bmod d_{\mathrm{in}})} & \text{if } d_{\mathrm{in}} < d_{\mathrm{out}}\\
+    \sum_{i: (i-1) \bmod d_{\mathrm{out}} = q} w_i^{\text{pool}} \cdot x_i & \text{if } d_{\mathrm{in}} > d_{\mathrm{out}}
     \end{cases}$$
-    where $w^{\text{bcast}} \in \mathbb{R}^{d_{\mathrm{out}}}$ and $w^{\text{pool}} \in \mathbb{R}^{d_{\mathrm{in}}}$ are learnable weight vectors. Remarkably, empirical evidence suggests these constrained connections in many cases perform as well as or better than full projections, despite using orders of magnitude fewer parameters.
+    where $w^{\text{bcast}} \in \mathbb{R}^{d_{\mathrm{out}}}$ and $w^{\text{pool}} \in \mathbb{R}^{d_{\mathrm{in}}}$ are learnable weight vectors. Empirically, these constrained connections often perform comparably to full projection residuals while using substantially fewer residual parameters.
     
     \item \textbf{Lateral mixing connections (distinct from cyclic residuals):} Inspired by the success of attention mechanisms and lateral connections in vision models, we introduce an optional intra-block communication mechanism. Before applying the outer spline $\Phi^{(\ell)}$, each output dimension can incorporate weighted contributions from neighboring outputs:
     $$\tilde{s}_q^{(\ell)} = s_q^{(\ell)} + \tau^{(\ell)} \cdot \begin{cases}
@@ -329,7 +329,8 @@ Several optional components can enhance the basic Sprecher block:
     
     \item \textbf{Normalization:} Batch normalization can be applied to block outputs to improve training stability, particularly in deeper networks. See Section \ref{sec:normalization} for details.
     
-    \item \textbf{Output scaling:} The network may include learnable output scaling parameters $\gamma$ (scale) and $b$ (bias) applied to the final network output: $f_{\text{final}}(\mathbf{x}) = \gamma \cdot f(\mathbf{x}) + b$. These parameters can improve optimization dynamics and are typically initialized with $\gamma = 0.1$ and $b$ set to match the mean of the target distribution when available.
+    \item \textbf{Output affine head:} The network may include a learnable affine head applied to the final network output: $f_{\text{final}}(\mathbf{x}) = s_{\text{out}}\, f(\mathbf{x}) + b_{\text{out}}$, where $s_{\text{out}}, b_{\text{out}}\in\mathbb{R}$ (2 parameters) are shared across all output dimensions. In our experiments we initialize $b_{\text{out}}$ to the mean of the training targets (averaged over all outputs when $m>1$) and set $s_{\text{out}}=0.1$.
+
 \end{itemize}
 
 \begin{remark}[Lateral mixing as structured attention]
@@ -387,28 +388,44 @@ differing only through the deterministic index-dependent shifts $x_i\mapsto x_i+
 
 Cyclic residual connections help by injecting input information directly into each output, 
 but in very wide layers this may still be insufficient to break output symmetry and avoid plateaus.
-As an illustrative example, a $2\to[120]\to1$ network trained on the 2D regression benchmark $f(x_1,x_2)=\exp(\sin(11x_1))+3x_2+4\sin(8x_2)$ over $[0,1]^2$ (with a fixed $32\times 32$ training grid) reaches an MSE of $8.55$ after $40{,}000$ epochs with cyclic residuals (broadcast weights; $120$ residual parameters). Replacing the cyclic residual with a dense projection residual ($2\times120=240$ residual parameters) provides no improvement (MSE: $8.55$), while adding cyclic lateral mixing (a scalar $\tau$ plus $120$ mixing weights) adds only $121$ parameters and drops the MSE to $2.12$. This demonstrates that the problem is not simply the general difficulty of optimizing wide shallow networks (which affects MLPs too), but 
+As an illustrative example, a $2\to[120]\to1$ network trained on the 2D regression benchmark (\textsc{Toy-2D-Complex}) $f(x_1,x_2)=\exp(\sin(11x_1))+3x_2+4\sin(8x_2)$ over $[0,1]^2$ (with a fixed $32\times 32$ training grid) reaches an MSE of $8.55$ after $40{,}000$ epochs with cyclic residuals (broadcast weights; $120$ residual parameters). Replacing the cyclic residual with a dense projection residual ($2\times120=240$ residual parameters) provides no improvement (MSE: $8.55$), while adding cyclic lateral mixing (a scalar $\tau$ plus $120$ mixing weights) adds only $121$ parameters and drops the MSE to $2.12$. This demonstrates that the problem is not simply the general difficulty of optimizing wide shallow networks (which affects MLPs too), but 
 specifically the need to break symmetries created by the shared-weight constraint. The lateral mixing mechanism provides the minimal cross-dimensional communication needed to differentiate the outputs beyond mere shifting, enabling successful optimization where traditional approaches fail.
 \end{remark}
 
 \begin{remark}[Cyclic residuals as dimensional folding]
-The cyclic assignment pattern can be understood geometrically as a form of dimensional folding. When $d_{\mathrm{in}} > d_{\mathrm{out}}$, the modulo operation $i \bmod d_{\mathrm{out}}$ effectively ``wraps'' the higher-dimensional input space around the lower-dimensional output space, analogous to wrapping a string around a cylinder. This creates a regular pattern where input dimensions are distributed uniformly across outputs, ensuring complete coverage and direct gradient paths. The cyclic pattern maximally separates consecutive inputs; for instance, with $d_{\mathrm{in}}=7, d_{\mathrm{out}}=3$, consecutive inputs $\{0,1,2,3,4,5,6\}$ map to outputs $\{0,1,2,0,1,2,0\}$ respectively, preventing the local clustering that might occur with contiguous block assignments.
+The cyclic assignment pattern can be understood geometrically as a form of dimensional folding. When $d_{\mathrm{in}} > d_{\mathrm{out}}$, the modulo operation $(i-1) \bmod d_{\mathrm{out}}$ effectively ``wraps'' the higher-dimensional input space around the lower-dimensional output space, analogous to wrapping a string around a cylinder. This creates a regular pattern where input dimensions are distributed uniformly across outputs, ensuring complete coverage and direct gradient paths. The cyclic pattern maximally separates consecutive inputs; for instance, with $d_{\mathrm{in}}=7, d_{\mathrm{out}}=3$, consecutive inputs $\{1,2,3,4,5,6,7\}$ map to outputs $\{0,1,2,0,1,2,0\}$ respectively, preventing the local clustering that might occur with contiguous block assignments.
 \end{remark}
+
+\subsubsection{Toy-$4\to5$ synthetic regression task}
+\label{sec:toy4to5}
+We additionally consider a higher-dimensional vector-valued regression benchmark, \textsc{Toy-$4\to5$}, with inputs $\mathbf{x}=(x_1,x_2,x_3,x_4)\in[0,1]^4$ and outputs $f(\mathbf{x})\in\mathbb{R}^5$ defined by
+\begin{align*}
+f_1(\mathbf{x}) &= \sin(2\pi x_1)\cos(\pi x_2),\\
+f_2(\mathbf{x}) &= \exp\!\bigl(-2(x_1^2+x_2^2)\bigr),\\
+f_3(\mathbf{x}) &= x_3^3 - x_4^2 + \tfrac{1}{2}\sin(5x_3),\\
+f_4(\mathbf{x}) &= \operatorname{sigmoid}\!\bigl(3(x_1+x_2-x_3+x_4)\bigr),\\
+f_5(\mathbf{x}) &= \tfrac{1}{2}\sin(4\pi x_1 x_4)+\tfrac{1}{2}\cos(3\pi x_2 x_3),
+\end{align*}
+where $\operatorname{sigmoid}(t)=\frac{1}{1+e^{-t}}$.
+Unless otherwise stated, training inputs are sampled i.i.d. uniformly from $[0,1]^4$.
 
 \begin{table}[ht]
 \centering
-\caption{Cyclic residuals vs.\ linear residual projections on synthetic regression tasks. We report test RMSE after the stated number of epochs. Toy-2D refers to the scalar 2D regression benchmark defined above; Toy-$4\to5$ refers to the synthetic regression task defined in Section~\ref{sec:toy4to5}. ``Linear'' uses a learned scalar when $d_{\mathrm{in}}=d_{\mathrm{out}}$ and a learned matrix $W\in\mathbb{R}^{d_{\mathrm{in}}\times d_{\mathrm{out}}}$ otherwise; ``cyclic'' uses the pooling/broadcast construction when $d_{\mathrm{in}}\neq d_{\mathrm{out}}$ (and a learned scalar when $d_{\mathrm{in}}=d_{\mathrm{out}}$). The last columns count residual-path parameters only.}
+\caption{Cyclic residuals vs.\ linear residual projections on synthetic regression tasks. We report the best MSE on a fixed 1{,}024-point training set (measured in evaluation mode) achieved within the stated number of epochs. Toy-2D-Complex refers to the scalar 2D regression benchmark defined above; Toy-2D (vector) refers to the vector-valued 2D benchmark in Fig.~\ref{fig:twovarsprechervector_revised}; Toy-$4\to5$ refers to the synthetic regression task defined in Section~\ref{sec:toy4to5}. ``Linear'' uses a learned scalar when $d_{\mathrm{in}}=d_{\mathrm{out}}$ and a learned matrix $W\in\mathbb{R}^{d_{\mathrm{in}}\times d_{\mathrm{out}}}$ otherwise; ``cyclic'' uses the pooling/broadcast construction when $d_{\mathrm{in}}\neq d_{\mathrm{out}}$ (and a learned scalar when $d_{\mathrm{in}}=d_{\mathrm{out}}$). The last columns count residual-path parameters only. For tasks with $d_{\mathrm{out}}>1$, MSE is computed as the mean of $(\hat y-y)^2$ over all output dimensions and samples.}
 \label{tab:cyclic-residual-ablation}
 \small
 \resizebox{\textwidth}{!}{%
 \begin{tabular}{@{}llrrrrr@{}}
 \toprule
-Task & Architecture & Epochs & RMSE (linear) & RMSE (cyclic) & \#resid params (lin./cyc.) & Ratio \\
+Task & Architecture & Epochs & MSE (linear) & MSE (cyclic) & \#resid params (lin./cyc.) & Ratio \\
 \midrule
-Toy-2D & $2\rightarrow[10,10,10]\rightarrow1$ & 10{,}000 & $3.38\times10^{-3}$ & $2.87\times10^{-3}$ & $22/12$ & $1.83\times$ \\
-Toy-2D & $2\rightarrow[10,11,10,11,10,11,10]\rightarrow1$ & 50{,}000 & $3.14\times10^{-3}$ & $3.88\times10^{-3}$ & $680/76$ & $8.95\times$ \\
-Toy-2D & $2\rightarrow[10,11,12,13,14,15,16,17]\rightarrow1$ & 50{,}000 & $2.42\times10^{-3}$ & $1.89\times10^{-3}$ & $1322/108$ & $12.2\times$ \\
-Toy-$4\to5$ & $4\rightarrow[10,11,12,13,14,15,16,17]\rightarrow5$ & 10{,}000 & $4.85\times10^{-3}$ & $4.26\times10^{-3}$ & $1427/125$ & $11.4\times$ \\
+Toy-2D-Complex & $2\rightarrow[10,10,10]\rightarrow1$ & 10{,}000 & $4.33\times10^{-2}$ & $\mathbf{1.79\times10^{-3}}$ & $22/12$ & $1.8\times$ \\
+Toy-2D-Complex & $2\rightarrow[10,11,12,13,14,15,16,17]\rightarrow1$ & 50{,}000 & $\mathbf{9.77\times10^{-6}}$ & $3.88\times10^{-5}$ & $1322/108$ & $12.2\times$ \\
+Toy-2D-Complex & $2\rightarrow[10,11,10,11,10,11,10,11,10,11,10,11,10,11,10,11]\rightarrow1$ & 50{,}000 & $\mathbf{1.52\times10^{-5}}$ & $3.89\times10^{-5}$ & $1670/175$ & $9.5\times$ \\
+Toy-2D (vector) & $2\rightarrow[50,50,50]\rightarrow2$ & 10{,}000 & $7.50\times10^{-6}$ & $\mathbf{2.46\times10^{-6}}$ & $202/102$ & $2.0\times$ \\
+Toy-2D (vector) & $2\rightarrow[10,11,12,13,14,15,16,17]\rightarrow2$ & 5{,}000 & $\mathbf{5.47\times10^{-3}}$ & $9.09\times10^{-2}$ & $1356/125$ & $10.8\times$ \\
+Toy-$4\to5$ & $4\rightarrow[30,40]\rightarrow5$ & 10{,}000 & $\mathbf{8.01\times10^{-3}}$ & $1.60\times10^{-2}$ & $1520/110$ & $13.8\times$ \\
+Toy-$4\to5$ & $4\rightarrow[10,11,10,11,10,11,10,11,10,11,10,11,10,11,10,11]\rightarrow5$ & 10{,}000 & $\mathbf{3.24\times10^{-4}}$ & $5.51\times10^{-3}$ & $1745/186$ & $9.4\times$ \\
 \bottomrule
 \end{tabular}%
 }
@@ -416,18 +433,18 @@ Toy-$4\to5$ & $4\rightarrow[10,11,12,13,14,15,16,17]\rightarrow5$ & 10{,}000 & $
 
 \begin{table}[t]
 \centering
-\caption{Ablation on Toy-2D. Mean test RMSE $\pm$ std over 10 seeds. We progressively add key architectural components, ending with the full SN configuration. Lower is better.}
+\caption{Ablation on Toy-2D-Vector. Mean test RMSE $\pm$ std over 10 seeds (5{,}000 epochs per run). Lower is better.}
 \label{tab:toy2d_addons_ablation}
 \small
 \begin{tabular}{lc}
 \toprule
 Setting & Test RMSE \\
 \midrule
-Base SN (no residuals/mixing/domain tracking) & $0.438 \pm 0.061$ \\
-+ cyclic residuals & $0.267 \pm 0.038$ \\
-+ bidirectional mixing & $0.082 \pm 0.010$ \\
-+ domain tracking & $0.045 \pm 0.008$ \\
-+ resampling + domain tracking (full SN) & $\mathbf{0.028 \pm 0.006}$ \\
+Base SN (no residuals/mixing/domain tracking) & $0.325 \pm 0.015$ \\
++ cyclic residuals & $0.226 \pm 0.065$ \\
++ bidirectional mixing & $0.211 \pm 0.055$ \\
++ domain tracking & $0.046 \pm 0.050$ \\
++ resampling (full SN) & $\mathbf{0.029 \pm 0.020}$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -448,7 +465,7 @@ Base SN (no residuals/mixing/domain tracking) & $0.438 \pm 0.061$ \\
                 \draw[->, dashed, sprecherorange, thick] (x\i) -- (y\i);
             }
             
-            \node[font=\footnotesize, align=center] at (1.25,-4.5) {$h_q \mathrel{+}= w \cdot x_q$\\[2pt]\footnotesize 1 parameter};
+            \node[font=\footnotesize, align=center] at (1.25,-4.5) {$h_q \mathrel{+}= w \cdot x_{q}$\\[2pt]\footnotesize 1 parameter};
         \end{scope}
         
         % Pooling case
@@ -469,7 +486,7 @@ Base SN (no residuals/mixing/domain tracking) & $0.438 \pm 0.061$ \\
             \draw[->, dashed, sprecherorange, thick] (px4) -- (py2);
             \draw[->, dashed, sprecherorange, thick] (px5) -- (py1);
 
-            \node[font=\footnotesize, align=center] at (1.25,-4.5) {$h_q \mathrel{+}= \sum_{i \bmod d_{\mathrm{out}} = q} w_i x_i$\\[2pt]\footnotesize $d_{\mathrm{in}}$ parameters};
+            \node[font=\footnotesize, align=center] at (1.25,-4.5) {$h_q \mathrel{+}= \sum_{i:\ (i-1)\bmod d_{\mathrm{out}} = q-1} w_i x_i$\\[2pt]\footnotesize $d_{\mathrm{in}}$ parameters};
         \end{scope}
         
         % Broadcast case
@@ -491,10 +508,10 @@ Base SN (no residuals/mixing/domain tracking) & $0.438 \pm 0.061$ \\
             \draw[->, dashed, sprecherorange, thick] (bx2) -- (by4);
             \draw[->, dashed, sprecherorange, thick] (bx1) -- (by5);
 
-            \node[font=\footnotesize, align=center] at (1.25,-4.5) {$h_q \mathrel{+}= w_q \cdot x_{q \bmod d_{\mathrm{in}}}$\\[2pt]\footnotesize $d_{\mathrm{out}}$ parameters};
+            \node[font=\footnotesize, align=center] at (1.25,-4.5) {$h_q \mathrel{+}= w_q \cdot x_{((q-1) \bmod d_{\mathrm{in}})+1}$\\[2pt]\footnotesize $d_{\mathrm{out}}$ parameters};
         \end{scope}
     \end{tikzpicture}
-    \caption{Dimension-adaptive cyclic residual connections. \textbf{Left:} When dimensions match, a single scalar weight applies element-wise. \textbf{Center:} When $d_{\mathrm{in}} > d_{\mathrm{out}}$ (pooling), multiple inputs are cyclically assigned to each output via modular indexing. \textbf{Right:} When $d_{\mathrm{in}} < d_{\mathrm{out}}$ (broadcast), inputs are cyclically reused across outputs. All cases maintain $O(\max(d_{\mathrm{in}}, d_{\mathrm{out}}))$ parameters, preserving the linear scaling of the architecture.}
+    \caption{Dimension-adaptive cyclic residual connections (indices shown 1-based for readability). \textbf{Left:} When dimensions match, a single scalar weight applies element-wise. \textbf{Center:} When $d_{\mathrm{in}} > d_{\mathrm{out}}$ (pooling), multiple inputs are cyclically assigned to each output via modular indexing. \textbf{Right:} When $d_{\mathrm{in}} < d_{\mathrm{out}}$ (broadcast), inputs are cyclically reused across outputs. All cases maintain $O(\max(d_{\mathrm{in}}, d_{\mathrm{out}}))$ parameters, preserving the linear scaling of the architecture.}
     \label{fig:cyclic_residuals}
 \end{figure}
 
@@ -519,17 +536,17 @@ The cyclic residual design can be viewed as implementing a structured sparse pro
             
             % Draw monotonic spline
             \draw[thick, sprechergreen] 
-                (0,0) -- (0.6,0.35) -- (1.2,0.8) -- (1.8,1.4) -- 
-                (2.4,1.85) -- (3.0,2.2) -- (3.6,2.5);
+                (0,0) -- (0.6,0.14) -- (1.2,0.32) -- (1.8,0.56) -- 
+                (2.4,0.74) -- (3.0,0.88) -- (3.6,1.0);
             
             % Mark knots
-            \foreach \x/\y in {0/0, 0.6/0.35, 1.2/0.8, 1.8/1.4, 2.4/1.85, 3.0/2.2, 3.6/2.5} {
+            \foreach \x/\y in {0/0, 0.6/0.14, 1.2/0.32, 1.8/0.56, 2.4/0.74, 3.0/0.88, 3.6/1.0} {
                 \fill[sprechergreen] (\x,\y) circle (2pt);
             }
             
             % Codomain annotation
-            \draw[<->, gray] (-0.4,0) -- (-0.4,2.5);
-            \node[left, gray, font=\footnotesize] at (-0.4,1.25) {$[0,1]$};
+            \draw[<->, gray] (-0.4,0) -- (-0.4,1.0);
+            \node[left, gray, font=\footnotesize] at (-0.4,0.5) {$[0,1]$};
             
             % Label: Fixed offset from x-axis
             \node[font=\footnotesize] at (2.1,-0.7) {dynamic domain};
@@ -563,7 +580,7 @@ The cyclic residual design can be viewed as implementing a structured sparse pro
             \node[font=\footnotesize] at (2.1,-1.2) {dynamic domain};
         \end{scope}
     \end{tikzpicture}
-    \caption{The dual spline system in Sprecher Networks. Left: The inner spline $\phi$ is monotonic (non-decreasing) with fixed codomain $[0, 1]$, parameterized via cumulative sums of softplus-transformed increments; it is strictly increasing on its spline domain and uses constant extension outside that domain (outputs 0 left, 1 right). Right: The outer spline $\Phi$ is a general (non-monotonic) univariate spline (piecewise-linear or cubic PCHIP) with optional learnable codomain parameters $(c_c, c_r)$ defining center and radius. It uses linear extrapolation outside its domain. Both domains can be updated during training as $\lambda$ and $\eta$ evolve; in some experiments we freeze domain updates after a warm-up period (and in our PINN experiments we disable domain updates altogether).}
+    \caption{The dual spline system in Sprecher Networks. Left: The inner spline $\phi$ is monotonic (non-decreasing) with fixed codomain $[0, 1]$, parameterized via cumulative sums of softplus-transformed increments; it is strictly increasing on its spline domain and uses constant extension outside that domain ($0$ for inputs below the leftmost knot, $1$ above the rightmost knot). Right: The outer spline $\Phi$ is a general (non-monotonic) univariate spline (piecewise-linear or cubic PCHIP) with optional learnable codomain parameters $(c_c, c_r)$ defining center and radius. It uses linear extrapolation outside its domain. Both domains can be updated during training as $\lambda$ and $\eta$ evolve; in some experiments we freeze domain updates after a warm-up period (and in our PINN experiments we disable domain updates altogether).}
     \label{fig:dual_splines}
 \end{figure}
 
@@ -573,22 +590,22 @@ The unique structure of Sprecher Networks requires careful consideration when in
 
 Batch normalization can be placed either \emph{before} or \emph{after} a Sprecher block. In both placements it acts on the vector features $\mathbf{h}$, not on the internal scalars $s^{(\ell)}_q$, so the additive $+\alpha q$ and any lateral mixing remain entirely inside $\Phi^{(\ell)}$.
 \begin{itemize}
-    \item \textbf{After block (default).} Apply BN to the block output $\mathbf{h}^{(\ell)} \in \mathbb{R}^{d_\ell}$. For a final block whose outputs are summed to a scalar, this reduces to normalizing a single feature.
+    \item \textbf{After block (default).} Apply BN to the block output $\mathbf{h}^{(\ell)} \in \mathbb{R}^{d_\ell}$.
     \item \textbf{Before block.} Apply BN to the input $\mathbf{h}^{(\ell-1)} \in \mathbb{R}^{d_{\ell-1}}$ before it enters the block.
 \end{itemize}
 
 The transformation takes the familiar form:
-$$\tilde{\mathbf{h}} = \gamma \odot \frac{\mathbf{h} - \mu}{\sigma + \epsilon} + \beta$$
-where $\gamma, \beta \in \mathbb{R}^{d}$ are learnable affine parameters, and the statistics $\mu$ and $\sigma$ are computed per-dimension across the batch.
+$$\tilde{\mathbf{h}} = \gamma \odot \frac{\mathbf{h} - \mu}{\sqrt{\sigma^2 + \epsilon}} + \beta$$
+where $\gamma, \beta \in \mathbb{R}^{d}$ are learnable affine parameters, and the statistics $\mu$ and $\sigma^2$ are computed per-dimension across the batch.
 
 This approach maintains the parameter efficiency central to SNs: each normalization layer adds only $2d$ parameters, preserving the $O(LN)$ scaling. Moreover, by treating the block output as a unified representation rather than normalizing individual components, the method respects the architectural philosophy that all output dimensions arise from shared transformations through $\phi^{(\ell)}$ and $\Phi^{(\ell)}$.
 
-Practitioners often find it beneficial to skip normalization for the first block (default setting), allowing the network to directly process the input features while still stabilizing deeper layers. This selective application is particularly important when theoretical domain computation assumes inputs in $[0,1]^n$, as normalization could shift the data outside expected ranges.
+We often find it beneficial to skip normalization for the first block (default setting), allowing the network to directly process the input features while still stabilizing deeper layers. This selective application is particularly important when theoretical domain computation assumes inputs in $[0,1]^n$, as normalization could shift the data outside expected ranges.
 
 When computing theoretical domains (Section~\ref{sec:theoretical_domains}), the bounds must account for normalization:
 \begin{itemize}
     \item \textbf{Training mode}: Conservative bounds assume standardization to approximately $[-4, 4]$ (covering ~99.99\% of a standard normal distribution), with affine transformation applied afterward.
-    \item \textbf{Evaluation mode}: Uses the actual running statistics to compute tighter per-channel bounds.
+    \item \textbf{Evaluation mode}: Uses the actual per-channel running statistics (and affine parameters, if enabled) to compute tighter bounds.
 \end{itemize}
 
 Our empirical findings suggest that the combination of normalization with residual connections and lateral mixing proves particularly effective for deeper SNs, enabling successful training of networks with many blocks while maintaining the characteristic parameter efficiency of the architecture.
@@ -596,11 +613,11 @@ Our empirical findings suggest that the combination of normalization with residu
 \subsection{Layer composition and final mapping}
 Let $L$ be the number of hidden layers specified by the architecture $[d_1, \dots, d_L]$. In our framework, a ``hidden layer'' corresponds to the vector output of a Sprecher block. The mapping from the representation at layer $\ell-1$ to layer $\ell$ is implemented by the $\ell$-th Sprecher block.
 
-Let the input to the network be $\mathbf{h}^{(0)} = \mathbf{x} \in \mathbb{R}^{d_0}$ (where $d_0 = d_{\mathrm{in}}$). The output of the $\ell$-th Sprecher block ($\ell = 1, \dots, L$) is the vector $\mathbf{h}^{(\ell)} \in \mathbb{R}^{d_\ell}$, computed component-wise as:
+Let the input to the network be $\mathbf{h}^{(0)} = \mathbf{x} \in \mathbb{R}^{d_0}$ (where $d_0 = d_{\mathrm{in}}$). The spline core of the $\ell$-th Sprecher block ($\ell = 1, \dots, L$) produces a vector $\tilde{\mathbf{h}}^{(\ell)} \in \mathbb{R}^{d_\ell}$, computed component-wise as:
 \begin{align}
-    \label{eq:SN}\mathbf{h}^{(\ell)}_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\ell-1}} \lambda^{(\ell)}_{i}\,\phi^{(\ell)}\Bigl(\mathbf{h}^{(\ell-1)}_i+\eta^{(\ell)}\,q\Bigr) + \alpha q + \tau^{(\ell)} \sum_{j \in \mathcal{N}(q)} \omega_{q,j}^{(\ell)} s_j^{(\ell)}\Biggr),\quad q=0,\dots,d_\ell-1.
+    \label{eq:SN}\tilde{\mathbf{h}}^{(\ell)}_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\ell-1}} \lambda^{(\ell)}_{i}\,\phi^{(\ell)}\Bigl(\mathbf{h}^{(\ell-1)}_i+\eta^{(\ell)}\,q\Bigr) + \alpha q + \tau^{(\ell)} \sum_{j \in \mathcal{N}(q)} \omega_{q,j}^{(\ell)} s_j^{(\ell)}\Biggr) + R^{(\ell)}\!\bigl(\mathbf{h}^{(\ell-1)}\bigr)_q,\quad q=0,\dots,d_\ell-1.
 \end{align}
-where the lateral mixing term is included when enabled, and $s_j^{(\ell)}$ denotes the pre-mixing activation for output $j$. When cyclic residual connections are enabled (Fig.~\ref{fig:cyclic_residuals}), the post-activation vector from \eqref{eq:SN} is further updated by adding the corresponding pooling/broadcast residual term. When BatchNorm is used, it is applied before or after each block as described in Section~\ref{sec:normalization}.
+where the lateral mixing term is included when enabled, and $s_j^{(\ell)}$ denotes the pre-mixing activation for output $j$. The term $R^{(\ell)}(\mathbf{h}^{(\ell-1)})_q$ denotes an (optional) residual connection (e.g., the cyclic residual of Fig.~\ref{fig:cyclic_residuals} or a standard learned linear projection); set $R^{(\ell)}\equiv 0$ when residuals are disabled. When BatchNorm is used, it is applied before or after each block as described in Section~\ref{sec:normalization}. Throughout, $\tilde{\mathbf{h}}^{(\ell)}$ denotes the pre-normalization output of the Sprecher block; if BatchNorm-after-block is enabled then $\mathbf{h}^{(\ell)}$ denotes the post-normalization vector passed to the next layer (otherwise $\mathbf{h}^{(\ell)}=\tilde{\mathbf{h}}^{(\ell)}$).
 
 \begin{remark}[On the nature of composition]
 Note that in this $L>1$ composition (Eq. \ref{eq:SN}), the argument to the inner spline $\phi^{(\ell)}$ is $\mathbf{h}^{(\ell-1)}_i$, the output of the previous layer, not the original input coordinate $x_i$. This is the fundamental departure from Sprecher's construction and is the defining feature of our proposed deep architecture. The motivation for this compositional structure comes not from Sprecher's work, but from the empirical success of the deep learning paradigm. Each layer processes the complex, transformed output of the layer before it, enabling the network to learn hierarchical representations.
@@ -611,15 +628,15 @@ The composition of these blocks and the final output generation depend on the de
 \paragraph{(a) Scalar output ($m=1$):}
 The network consists of exactly $L$ Sprecher blocks. The output of the final block, $\mathbf{h}^{(L)} \in \mathbb{R}^{d_L}$, is aggregated by summation to yield the scalar output:
 $$ f(\mathbf{x}) = \sum_{q=0}^{d_L-1} \mathbf{h}^{(L)}_q. $$
-If we define the operator for the $\ell$-th block as $T^{(\ell)}: \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell}$, where
-$$ \Bigl(T^{(\ell)}(z)\Bigr)_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\ell-1}} \lambda^{(\ell)}_{i}\,\phi^{(\ell)}\Bigl(z_i+\eta^{(\ell)}\,q\Bigr) + \alpha q + \tau^{(\ell)} \sum_{j \in \mathcal{N}(q)} \omega_{q,j}^{(\ell)} s_j^{(\ell)}\Biggr), $$
+If we define the operator for the $\ell$-th block (including residuals when enabled) as $T^{(\ell)}: \mathbb{R}^{d_{\ell-1}} \to \mathbb{R}^{d_\ell}$, where
+$$ \Bigl(T^{(\ell)}(z)\Bigr)_q = \Phi^{(\ell)}\Biggl(\,\sum_{i=1}^{d_{\ell-1}} \lambda^{(\ell)}_{i}\,\phi^{(\ell)}\Bigl(z_i+\eta^{(\ell)}\,q\Bigr) + \alpha q + \tau^{(\ell)} \sum_{j \in \mathcal{N}(q)} \omega_{q,j}^{(\ell)} s_j^{(\ell)}\Biggr) + R^{(\ell)}(z)_q, $$
 then the overall function is
 $$ f(\mathbf{x}) = \sum_{q=0}^{d_L-1} \Bigl(T^{(L)} \circ T^{(L-1)} \circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x})_q. $$
 This network uses $L$ blocks and $2L$ shared spline functions in total (one pair $(\phi^{(\ell)}, \Phi^{(\ell)})$ per block).
 
 \paragraph{(b) Vector-valued output ($m>1$):}
 When the target function $f$ maps to $\mathbb{R}^m$ with $m>1$, the network first constructs the $L$ hidden layers as above, yielding a final hidden representation $\mathbf{h}^{(L)} \in \mathbb{R}^{d_L}$. An \emph{additional} output block (block $L+1$) is then appended to map this representation $\mathbf{h}^{(L)}$ to the final output space $\mathbb{R}^m$. This $(L+1)$-th block operates \emph{without} a final summation over its output index. It computes the final output vector $\mathbf{y} \in \mathbb{R}^m$ as:
-$$ y_q = \Bigl(T^{(L+1)}(\mathbf{h}^{(L)})\Bigr)_q = \Phi^{(L+1)}\Biggl(\,\sum_{r=0}^{d_L-1} \lambda^{(L+1)}_{r}\,\phi^{(L+1)}\Bigl(\mathbf{h}^{(L)}_r+\eta^{(L+1)}\,q\Bigr)+\alpha q + \tau^{(L+1)} \sum_{j \in \mathcal{N}(q)} \omega_{q,j}^{(L+1)} s_j^{(L+1)}\Biggr), $$
+$$ y_q = \Bigl(T^{(L+1)}(\mathbf{h}^{(L)})\Bigr)_q = \Phi^{(L+1)}\Biggl(\,\sum_{r=0}^{d_L-1} \lambda^{(L+1)}_{r}\,\phi^{(L+1)}\Bigl(\mathbf{h}^{(L)}_r+\eta^{(L+1)}\,q\Bigr)+\alpha q + \tau^{(L+1)} \sum_{j \in \mathcal{N}(q)} \omega_{q,j}^{(L+1)} s_j^{(L+1)}\Biggr) + R^{(L+1)}(\mathbf{h}^{(L)})_q, $$
 for $q=0,\dots,m-1$. The network output function is then:
 \begin{equation}\label{eq:defsn}
 f(\mathbf{x}) = \mathbf{y} = \Bigl(T^{(L+1)} \circ T^{(L)} \circ \cdots \circ T^{(1)}\Bigr)(\mathbf{x}) \in \mathbb{R}^m. 
@@ -627,11 +644,11 @@ f(\mathbf{x}) = \mathbf{y} = \Bigl(T^{(L+1)} \circ T^{(L)} \circ \cdots \circ T^
 In this configuration, the network uses $L+1$ blocks and involves $2(L+1)$ shared spline functions. The extra block serves as a trainable output mapping layer, transforming the final hidden representation $\mathbf{h}^{(L)}$ into the desired $m$-dimensional output vector.
 
 \medskip
-In summary: for an architecture with $L$ hidden layers, a scalar-output SN uses $L$ blocks and $2L$ shared splines. A vector-output SN (with $m>1$) uses $L+1$ blocks and $2(L+1)$ shared splines. This structure provides a natural extension of Sprecher's original scalar formula to the vector-valued setting. In our experiments we additionally apply a learned \emph{scalar} affine head to the final output (broadcast across output dimensions),
-$$f_{\mathrm{final}}(\mathbf{x}) \;=\; s_{\mathrm{out}}\,f(\mathbf{x}) + b_{\mathrm{out}},$$
-with $s_{\mathrm{out}}, b_{\mathrm{out}}\in\mathbb{R}$, adding exactly 2 parameters regardless of $m$.
-
+In summary: for an architecture with $L$ hidden layers, a scalar-output SN uses $L$ blocks and $2L$ shared splines. A vector-output SN (with $m>1$) uses $L+1$ blocks and $2(L+1)$ shared splines. This structure provides a natural extension of Sprecher's original scalar formula to the vector-valued setting. In our supervised regression experiments we additionally apply a learned affine head to the final output,
+$$f_{\mathrm{final}}(\mathbf{x}) \;=\; s_{\mathrm{out}}\, f(\mathbf{x}) + b_{\mathrm{out}},$$
+with $s_{\mathrm{out}}, b_{\mathrm{out}}\in\mathbb{R}$ (2 parameters, shared across output dimensions). We initialize $b_{\mathrm{out}}$ to the mean of the training targets (averaged over all outputs when $m>1$) and set $s_{\mathrm{out}}=0.1$. In PINN experiments (where no full supervised target set is available), we keep the default initialization $s_{\mathrm{out}}=1$ and $b_{\mathrm{out}}=0$.
 \medskip
+
 We illustrate the vector-output case ($m>1$) for a network architecture $d_0\to[d_1,d_2,d_3]\to m$ (i.e., $L=3$ hidden layers). Let $X^{(0)}$ be the input $\mathbf{x}$.
 \begin{center}
 \begin{tikzpicture}[
@@ -662,7 +679,7 @@ We illustrate the vector-output case ($m>1$) for a network architecture $d_0\to[
 Here, $X^{(\ell)} = \mathbf{h}^{(\ell)}$ denotes the output vector of the $\ell$-th Sprecher block (we use both notations interchangeably for clarity in different contexts). Each block $T^{(\ell)}$ internally uses its own pair of shared splines $(\phi^{(\ell)}, \Phi^{(\ell)})$, mixing weights $\lambda^{(\ell)}$, shift $\eta^{(\ell)}$, and optionally lateral mixing parameters $(\tau^{(\ell)}, \omega^{(\ell)})$. The final output block $T^{(4)}$ maps the representation $X^{(3)}$ to the final $m$-dimensional output $\mathbf{y}$ without subsequent summation.
 
 \subsection{Illustrative expansions (scalar output)}
-To further clarify the compositional structure for the scalar output case ($m=1$), we write out the full expansions for networks with $L=1, 2, 3$ hidden layers.
+To further clarify the compositional structure for the scalar output case ($m=1$), we write out the full expansions for networks with $L=1, 2, 3$ hidden layers, omitting optional residual connections and normalization operators for readability. For readability, we omit optional add-ons such as cyclic residual terms and normalization; when enabled, these appear additively (e.g., each block output includes an extra $R^{(\ell)}(\cdot)_q$ term as in \eqref{eq:SN}).
 
 \subsubsection{Single hidden layer ($L=1$)}\label{sec:single_layer}
 For a network with architecture $d_{\mathrm{in}}\to[d_1]\to1$ (i.e., $d_0=d_{\mathrm{in}}$), the network computes:
@@ -700,7 +717,7 @@ These expansions highlight the compositional nature where the output of one Spre
 \end{remark}
 
 \begin{remark}[Necessity of internal shifts]\label{rem:shiftneeded}
-It is tempting to simplify the nested structures, for instance by removing the inner shift terms like $\eta^{(2)}q$ inside $\phi^{(2)}$. One might hypothesize that the outer splines $\Phi^{(\ell)}$ could absorb this shifting effect (yielding a single composite spline per Sprecher block). However, experiments (see Section \ref{sec:ablation_eta}) suggest that these internal shifts $\eta^{(\ell)}q$ applied to the inputs of the $\phi^{(\ell)}$ splines are crucial for the effective functioning of deeper Sprecher Networks. Removing them significantly degrades performance. The precise theoretical reason for their necessity in the multi-layer case, beyond their presence in Sprecher's original single-layer formula, warrants further investigation.
+It is tempting to simplify the nested structures, for instance by removing the inner shift terms like $\eta^{(2)}q$ inside $\phi^{(2)}$. One might hypothesize that the outer splines $\Phi^{(\ell)}$ could absorb this shifting effect (yielding a single composite spline per Sprecher block). However, experiments suggest that these internal shifts $\eta^{(\ell)}q$ applied to the inputs of the $\phi^{(\ell)}$ splines are crucial for the effective functioning of deeper Sprecher Networks. Removing them significantly degrades performance. The precise theoretical reason for their necessity in the multi-layer case, beyond their presence in Sprecher's original single-layer formula, warrants further investigation.
 \end{remark}
 
 \section{Comparison with related architectures}
@@ -732,15 +749,15 @@ Feature                   & MLP                 & LAN / Adaptive-MLP & KAN      
 \textbf{Param scaling}    & $O(L N^2)$          & $O(L N^2 + L N G)$ & $O(L N^2 G)$          & $O(L N + L G)$ \\
                           &                     & (Approx.)          &                       & (Approx.) \\
 \textbf{Memory complexity} & $O(L N^2)$          & $O(L N^2)$         & $O(L N^2 G)$          & $O(L N^2)$ parallel \\
-                          &                     &                    &                       & $\mathbf{O(L N)}$ sequential \\
+                          &                     &                    &                       & $\mathbf{O(L N + L G)}$ sequential \\
 \bottomrule
 \end{tabular}
 \vspace{2mm}
-\parbox{\textwidth}{\footnotesize \textit{Notes:} $L$=depth, $N$=average width, $G$=spline grid size/complexity. UAT=Universal Approx. Theorem, KAT=Kolmogorov-Arnold Theorem, KAS=Kolmogorov-Arnold-Sprecher. LAN details often follow KAN Appendix B \cite{liu2024kan}. Forward working memory refers to peak \emph{forward-pass} intermediate storage plus parameters (excluding optimizer state), treating batch size as a constant; during training, reverse-mode autodiff may store additional activations unless checkpointing is used. The ``sequential'' mode for SNs processes output dimensions iteratively rather than in parallel, maintaining mathematical equivalence while reducing memory usage. All architectures may optionally include normalization layers; SNs apply normalization to entire block outputs rather than individual activations.
-\textit{The parameter scaling notation uses $N$ to denote a typical or average layer width for simplicity, following \cite{liu2024kan}. For architectures with varying widths $d_\ell$, the $LN^2$ terms should be understood as $\sum_{\ell} d_{\ell-1}d_{\ell}$ (MLP, LAN), the $LN^2G$ term for KAN as $(\sum_{\ell} d_{\ell-1}d_{\ell})G$, and the $LN$ term for SN as $\sum_{\ell} d_{\ell-1}$ (since SN uses weight vectors, not matrices), where the sum is over the relevant blocks/layers, for precise counts.}}
+\parbox{\textwidth}{\footnotesize \textit{Notes:} $L$=depth, $N$=average width, $G$=spline grid size/complexity. UAT=Universal Approx. Theorem, KAT=Kolmogorov-Arnold Theorem, KAS=Kolmogorov-Arnold-Sprecher. LAN details often follow KAN Appendix B \cite{liu2024kan}. Forward working memory refers to peak \emph{forward-pass} intermediate storage plus parameters (excluding optimizer state), treating batch size as a constant; during training, reverse-mode autodiff may store additional activations unless checkpointing is used. The ``sequential'' mode for SNs processes output dimensions iteratively rather than in parallel, maintaining mathematical equivalence while reducing memory usage. All architectures may optionally include normalization layers; SNs apply normalization to entire block outputs rather than individual activations. For SNs, the $O(LN+LG)$ parameter scaling assumes the default cyclic/node residual; using a full linear residual projection adds an additional $O(\sum_{\ell} d_{\ell-1}d_{\ell})$ parameters.
+\textit{The parameter scaling notation uses $N$ to denote a typical or average layer width for simplicity, following \cite{liu2024kan}. For architectures with varying widths $d_\ell$, the $LN^2$ terms should be understood as $\sum_{\ell} d_{\ell-1}d_{\ell}$ (MLP, LAN), the $LN^2G$ term for KAN as $(\sum_{\ell} d_{\ell-1}d_{\ell})G$, and the $LN$ term for SN as $\sum_{\ell} (d_{\ell-1}+d_{\ell})$ (since SN uses weight vectors, not matrices), where the sum is over the relevant blocks/layers, for precise counts.}}
 \end{table}
 
-Table \ref{tab:arch_comparison} summarizes the key distinctions between these architectures. MLPs learn edge weights with fixed node activations, LANs add learnable node activations to this structure, KANs move learnability entirely to edge splines while eliminating linear weights, and SNs concentrate learnability in shared block-level splines, block-level shifts, mixing weights, and optionally lateral mixing connections. The critical difference for SNs is their use of weight vectors rather than matrices, which fundamentally reduces the dependence on width from quadratic to linear. This architectural choice can be understood through an analogy with convolutional neural networks: just as CNNs achieve parameter efficiency and improved generalization by sharing weights across spatial locations, SNs share weights across output dimensions within each block. In CNNs, spatial shifts provide the necessary diversity despite weight sharing; in SNs, the shifts $\eta q$ and the additive term $+\alpha q$, along with lateral mixing when enabled, play this diversifying role. This perspective reframes our architectural constraint not as a limitation, but as a principled form of weight sharing motivated by Sprecher's theorem, suggesting that SNs might be viewed as a ``convolutional'' approach to function approximation networks. While this weight sharing is theoretically justified for single-layer networks, its effectiveness in deep compositions remains an empirical finding that warrants further theoretical investigation. This combination of choices leads to SNs' distinctive parameter scaling of $O(L N + L G)$ compared to KANs' $O(L N^2 G)$ and, for fixed spline resolution $G$, parameter-memory scaling of $O(LN)$.\footnote{The $O(LN)$ term includes contributions from input weights ($\lambda$), normalization parameters when used, lateral mixing parameters, and residual connections. Each residual connection contributes at most $\max(d_{\mathrm{in}}, d_{\mathrm{out}})$ parameters, maintaining the linear scaling in width.}
+Table \ref{tab:arch_comparison} summarizes the key distinctions between these architectures. MLPs learn edge weights with fixed node activations, LANs add learnable node activations to this structure, KANs move learnability entirely to edge splines while eliminating linear weights, and SNs concentrate learnability in shared block-level splines, block-level shifts, mixing weights, and optionally lateral mixing connections. The critical difference for SNs is their use of weight vectors rather than matrices, which fundamentally reduces the dependence on width from quadratic to linear. This architectural choice can be understood through an analogy with convolutional neural networks: just as CNNs achieve parameter efficiency and improved generalization by sharing weights across spatial locations, SNs share weights across output dimensions within each block. In CNNs, spatial shifts provide the necessary diversity despite weight sharing; in SNs, the shifts $\eta q$ and the additive term $+\alpha q$, along with lateral mixing when enabled, play this diversifying role. This perspective reframes our architectural constraint not as a limitation, but as a principled form of weight sharing motivated by Sprecher's theorem, suggesting that SNs might be viewed as a ``convolutional'' approach to function approximation networks. While this weight sharing is theoretically justified for single-layer networks, its effectiveness in deep compositions remains an empirical finding that warrants further theoretical investigation. This combination of choices leads to SNs' distinctive parameter scaling of $O(L N + L G)$ compared to KANs' $O(L N^2 G)$ and, for fixed spline resolution $G$, parameter-memory scaling of $O(LN)$.\footnote{The $O(LN)$ term includes contributions from input weights ($\lambda$), normalization parameters when used, lateral mixing parameters, and (when used) \emph{cyclic} residual connections. Cyclic residuals contribute at most $\max(d_{\mathrm{in}}, d_{\mathrm{out}})$ parameters per block; a learned linear residual projection instead adds $d_{\mathrm{in}}d_{\mathrm{out}}$ parameters when $d_{\mathrm{in}}\neq d_{\mathrm{out}}$ (and only a single scalar gate when $d_{\mathrm{in}}=d_{\mathrm{out}}$), so it is quadratic in width only on dimension-changing blocks.}
 
 Here, we provide a precise comparison between LANs and SNs. While the following proposition shows that SNs can be expressed as special cases of LANs with specific structural constraints, it is important to note that Sprecher's construction guarantees that this constrained form retains full expressivity in the single-layer case. This suggests that the extreme parameter sharing and structural constraints in SNs may serve as a beneficial inductive bias rather than a limitation.
 
@@ -753,7 +770,7 @@ where $A^{(k)} \colon \mathbb{R}^{d_{k-1}} \rightarrow \mathbb{R}^{d_k}$ is an a
 \end{definition}
 
 \begin{remark}[Note on weight structure]
-The following proposition uses matrix weights $\lambda_{i,q}^{(\ell)}$ to establish the connection between SNs and LANs. However, the architecture we propose and analyze throughout this paper uses vector weights $\lambda_i^{(\ell)}$ (following Sprecher's original formulation), where the same weights are shared across all output dimensions. This vector version represents an even more constrained special case of the LAN formulation shown below. The practical SN architecture with vector weights would require the weight matrices in the proposition to have repeated rows, i.e., $\lambda_{i,q}^{(\ell)} = \lambda_i^{(\ell)}$ for all $q$. This constraint is fundamental to maintaining the "true Sprecher" structure and achieving the characteristic $O(LN)$ parameter scaling. Additionally, when lateral mixing is enabled, the structure becomes more complex, requiring additional terms in the LAN representation to capture the intra-block communication.
+The following proposition uses matrix weights $\lambda_{i,q}^{(\ell)}$ to establish the connection between SNs and LANs. However, the architecture we propose and analyze throughout this paper uses vector weights $\lambda_i^{(\ell)}$ (following Sprecher's original formulation), where the same weights are shared across all output dimensions. This vector version represents an even more constrained special case of the LAN formulation shown below. The practical SN architecture with vector weights corresponds to the constraint that these matrix weights are constant across the output index, i.e., $\lambda_{i,q}^{(\ell)} = \lambda_i^{(\ell)}$ for all $q$. This constraint is fundamental to maintaining the "true Sprecher" structure and achieving the characteristic $O(LN)$ parameter scaling. Additionally, when lateral mixing is enabled, the structure becomes more complex, requiring additional terms in the LAN representation to capture the intra-block communication.
 \end{remark}
 
 \begin{prop} \label{prop:SNareLAN}
@@ -773,7 +790,7 @@ The following proposition uses matrix weights $\lambda_{i,q}^{(\ell)}$ to establ
     \end{itemize}
 \end{prop}
 \begin{proof}
-    Follows immediately by inspecting \eqref{eq:SN} with $\tau^{(\ell)} = 0$ (no lateral mixing).
+    Follows immediately by inspecting \eqref{eq:SN} with $\tau^{(\ell)} = 0$ and $R^{(\ell)}\equiv 0$ (no lateral mixing or residual path).
 \end{proof}
 
 \begin{remark}[Understanding the LAN representation]
@@ -783,7 +800,7 @@ intermediate state space. Each Sprecher block is decomposed into two LAN layers:
 \item The first layer expands the input $\mathbf{h}^{(\ell-1)} \in \mathbb{R}^{d_{\ell-1}}$ 
 to $\mathbb{R}^{d_\ell d_{\ell-1}}$ by creating $d_\ell$ shifted copies, where the 
 $(q \cdot d_{\ell-1} + i)$-th component contains $\phi^{(\ell)}(h^{(\ell-1)}_i + \eta^{(\ell)} q)$.
-\item The second layer applies the mixing weights $\lambda^{(\ell)}_{i,q}$ to select and sum 
+\item The second layer applies the (tied) mixing weights $\lambda^{(\ell)}_{i}$ (shared across all $q$) to select and sum 
 the appropriate components for each output $q$, adds the shift $\alpha q$, and applies $\Phi^{(\ell)}$.
 \end{itemize}
 This construction shows that while SNs can be expressed within the LAN framework, they 
@@ -791,7 +808,7 @@ represent a highly structured special case with specific weight patterns and an 
 intermediate dimension of $O(d_{\ell-1} d_\ell)$ between each pair of SN layers. The inclusion of lateral mixing would further complicate this representation, requiring additional structure to capture the intra-block communication.
 \end{remark}
 
-While this proposition shows that SNs are special cases of LANs with specific structural constraints, Sprecher's construction guarantees that this constrained form retains full expressivity. In Sprecher's original construction, $\eta$ can be chosen as a universal constant rather than a learnable parameter. This, combined with Proposition \ref{prop:SNareLAN}, implies that LANs do not lose expressivity when constraining biases to specific structured forms.
+While this proposition shows that SNs are special cases of LANs with specific structural constraints, Sprecher's theorem guarantees that \emph{in the single-layer setting} this highly structured shift-and-sum form is still universal on $[0,1]^n$. In Sprecher's original construction, $\eta$ can be chosen as a universal constant rather than a learnable parameter. Thus, universality can already hold in the presence of strongly structured, index-dependent bias patterns; Proposition \ref{prop:SNareLAN} makes this connection explicit by exhibiting one concrete structured realization.
 
 \begin{figure}[h!]
     \centering  
@@ -806,7 +823,7 @@ While this proposition shows that SNs are special cases of LANs with specific st
 \end{figure}
 
 \begin{remark}[Domain considerations]
-The above proposition assumes that the spline functions $\phi^{(\ell)}$ can handle inputs outside their original domain $[0,1]$, which may arise due to the shifts $\eta^{(\ell)}q$. While Sprecher's theoretical construction extends $\phi$ appropriately, practical implementations typically compute exact theoretical bounds for all spline domains based on the network structure, ensuring that all evaluations fall within the spline's operating range through dynamic domain updates.
+The above proposition assumes that the spline functions $\phi^{(\ell)}$ can handle inputs outside their original domain $[0,1]$, which may arise due to the shifts $\eta^{(\ell)}q$. While Sprecher's theoretical construction extends $\phi$ appropriately, practical implementations typically compute exact theoretical bounds for all spline domains based on the network structure, and use these bounds to update spline knot ranges; any remaining out-of-range queries are handled by the splines' explicit extension/extrapolation rules (constant extension for $\phi^{(\ell)}$ and linear extrapolation for $\Phi^{(\ell)}$).
 \end{remark}
 
 \section{Parameter counting and efficiency as a trade-off}
@@ -816,7 +833,7 @@ Let's assume a network of depth $L$ (meaning $L$ hidden layers, thus $L$ blocks 
 
 The parameter counts for different architectures scale as follows. MLPs primarily consist of linear weight matrices, leading to a total parameter count dominated by these weights, scaling as $O(L N^2)$. LANs (Adaptive-MLPs) have both linear weights ($O(L N^2)$) and learnable activations; if each of the $N$ nodes per layer has a learnable spline, this adds $O(L N G)$ parameters, for a total of $O(L N^2 + L N G)$. KANs replace linear weights with learnable edge splines, with $O(N^2)$ edges between layers. If each edge has a spline with $O(G)$ parameters, the total count per layer is $O(N^2 G)$, leading to an overall scaling of $O(L N^2 G)$.
 
-Sprecher Networks have a fundamentally different structure. Each block $\ell$ contains mixing weights $\lambda^{(\ell)}$ with $O(d_{\ell-1})$ parameters, where $d_{\ell-1}$ is the input dimension to that block (crucially, these are vectors, not matrices), shared splines $\phi^{(\ell)}, \Phi^{(\ell)}$ with $2 \times O(G) = O(G)$ parameters per block independent of $N$, and a shift parameter $\eta^{(\ell)}$ with $O(1)$ parameter per block. When lateral mixing is enabled, each block additionally contains a lateral scale parameter $\tau^{(\ell)}$ with $O(1)$ parameter and mixing weights $\omega^{(\ell)}$ with $O(d_\ell)$ parameters (specifically $d_\ell$ for cyclic, $2d_\ell$ for bidirectional). When normalization is used, each block may have an associated normalization layer adding $O(N)$ parameters (specifically $2N$ for the affine transformation). When residual connections are used, they add at most $O(N)$ parameters per block using the Cyclic approach (specifically $\max(d_{\ell-1}, d_\ell)$ for block $\ell$, or just 1 when dimensions match). Summing over $L$ (or $L+1$) blocks, the total parameter count scales approximately as $O(LN + LG + L)$, where the linear dependence on $N$ now includes mixing weights, optional normalization parameters, lateral mixing weights, and residual connections.
+Sprecher Networks have a fundamentally different structure. Each block $\ell$ contains mixing weights $\lambda^{(\ell)}$ with $O(d_{\ell-1})$ parameters, where $d_{\ell-1}$ is the input dimension to that block (crucially, these are vectors, not matrices), shared splines $\phi^{(\ell)}, \Phi^{(\ell)}$ with $2 \times O(G) = O(G)$ parameters per block independent of $N$, and a shift parameter $\eta^{(\ell)}$ with $O(1)$ parameter per block. When lateral mixing is enabled, each block additionally contains a lateral scale parameter $\tau^{(\ell)}$ with $O(1)$ parameter and mixing weights $\omega^{(\ell)}$ with $O(d_\ell)$ parameters (specifically $d_\ell$ for cyclic, $2d_\ell$ for bidirectional). When normalization is used, each block may have an associated normalization layer adding $O(N)$ parameters (specifically $2N$ for the affine transformation). When residual connections are used, cyclic residuals add at most $O(N)$ parameters per block (specifically $\max(d_{\ell-1}, d_\ell)$ for block $\ell$, or just 1 when dimensions match); a learned linear residual projection instead adds $O(d_{\ell-1}d_\ell)$ parameters when $d_{\ell-1}\neq d_\ell$ (and just 1 when $d_{\ell-1}=d_\ell$). Summing over $L$ (or $L+1$) blocks, the total parameter count scales approximately as $O(LN + LG + L)$, where the linear dependence on $N$ now includes mixing weights, optional normalization parameters, lateral mixing weights, and residual connections.
 
 Beyond parameter efficiency, SNs also admit memory-efficient computation strategies. While standard vectorized implementations materialize a $(B \cdot d_{\mathrm{in}} \cdot d_{\mathrm{out}})$ tensor of shifted inputs, a sequential evaluation strategy avoids this materialization and reduces the largest temporary forward tensor to $O(B \cdot \max(d_{\mathrm{in}}, d_{\mathrm{out}}))$ (Section~\ref{sec:memory_efficient}). In wide settings where $d_{\mathrm{in}}\approx d_{\mathrm{out}}\approx N$, this yields a peak temporary forward footprint that scales linearly in $N$ rather than quadratically. (As usual, achieving this scaling during training may require checkpointing/recomputation, since the backward pass can retain additional intermediates.)
 
@@ -859,32 +876,24 @@ Thus, single-layer SNs inherit (indeed, contain) the family given by Sprecher's 
 \medskip
 \noindent\textbf{Notation for a single block.}
 A (possibly mixed) Sprecher block $T:\mathbb{R}^{d_{\mathrm{in}}}\to\mathbb{R}^{d_{\mathrm{out}}}$ acts componentwise as
-\[
-[T(\mathbf{z})]_q \;=\; \Phi\!\Biggl(\,\underbrace{\sum_{i=1}^{d_{\mathrm{in}}}\lambda_i\,\phi(z_i+\eta q)+\alpha q}_{=:s_q}\;+\;\tau\sum_{j\in\mathcal{N}(q)}\omega_{qj}\,s_j\Biggr),
-\quad q=0,\ldots,d_{\mathrm{out}}-1,
-\]
-where $\lambda\in\mathbb{R}^{d_{\mathrm{in}}}$, $\eta,\alpha,\tau\in\mathbb{R}$, $\mathcal{N}(q)$ specifies the (optional) neighborhood used for lateral mixing, and $\omega=(\omega_{qj})$ are the mixing weights. When a cyclic residual connection is present, the block output is $T_{\mathrm{res}}(\mathbf{z})=T(\mathbf{z})+R(\mathbf{z})$; the analysis below applies to $T$ and extends to $T_{\mathrm{res}}$ by adding the Lipschitz constant of $R$ where relevant.
+$$[T(\mathbf{z})]_q \;=\; \Phi\!\Biggl(\,\underbrace{\sum_{i=1}^{d_{\mathrm{in}}}\lambda_i\,\phi(z_i+\eta q)+\alpha q}_{=:s_q}\;+\;\tau\sum_{j\in\mathcal{N}(q)}\omega_{qj}\,s_j\Biggr),
+\quad q=0,\ldots,d_{\mathrm{out}}-1,$$
+where $\lambda\in\mathbb{R}^{d_{\mathrm{in}}}$, $\eta,\alpha,\tau\in\mathbb{R}$, $\mathcal{N}(q)$ specifies the (optional) neighborhood used for lateral mixing, and $\omega=(\omega_{qj})$ are the mixing weights. When a cyclic residual connection is present, the block output is $T_{\mathrm{res}}(\mathbf{z})=T(\mathbf{z})+R(\mathbf{z})$. The approximation analysis below applies to $T$; when the residual map $R$ is shared between the target block and its spline approximation, it cancels in the blockwise difference. However, Lipschitz/composition constants for the full block include an additive contribution from $R$ (e.g.\ $L_{T_{\mathrm{res}}}\le L_T+L_R$).
 
 \begin{lemma}[Single block approximation with piecewise-linear splines]\label{lem:single_block}
 Fix $B_{\mathrm{in}}>0$ and assume $\mathbf{z}\in\mathcal{B}_{\mathrm{in}}:=[-B_{\mathrm{in}},B_{\mathrm{in}}]^{d_{\mathrm{in}}}$. Let
-\[
-I_\phi := \bigl[-B_{\mathrm{in}}-|\eta|(d_{\mathrm{out}}-1),\; B_{\mathrm{in}}+|\eta|(d_{\mathrm{out}}-1)\bigr],
+$$I_\phi := \bigl[-B_{\mathrm{in}}-|\eta|(d_{\mathrm{out}}-1),\; B_{\mathrm{in}}+|\eta|(d_{\mathrm{out}}-1)\bigr],
 \quad
-M_\phi := \|\phi\|_{L^\infty(I_\phi)}.
-\]
+M_\phi := \|\phi\|_{L^\infty(I_\phi)}.$$
 Define
-\[
-B_\omega:=\sup_{q}\sum_{j\in\mathcal{N}(q)}|\omega_{qj}|,
+$$B_\omega:=\sup_{q}\sum_{j\in\mathcal{N}(q)}|\omega_{qj}|,
 \qquad
 R_{\mathrm{mix}}:=1+|\tau|\,B_\omega,
 \qquad
-M_s := \|\lambda\|_{1}\,M_\phi + |\alpha|\,(d_{\mathrm{out}}-1),
-\]
+M_s := \|\lambda\|_{1}\,M_\phi + |\alpha|\,(d_{\mathrm{out}}-1),$$
 and set $I_\Phi := [-R_{\mathrm{mix}}M_s,\; R_{\mathrm{mix}}M_s]$. Assume $\phi,\Phi\in C^2$ on neighborhoods of $I_\phi$ and $I_\Phi$, respectively. Let $\hat\phi$ and $\hat\Phi$ be the (shape-preserving) piecewise-linear interpolants of $\phi$ on a uniform grid of $G_\phi\ge 2$ knots over $I_\phi$ and of $\Phi$ on a uniform grid of $G_\Phi\ge 2$ knots over $I_\Phi$; write
-\[
-h_\phi:=\frac{|I_\phi|}{G_\phi-1},\quad h_\Phi:=\frac{|I_\Phi|}{G_\Phi-1},\quad
-M_{\phi''}:=\|\phi''\|_{L^\infty(I_\phi)},\quad M_{\Phi''}:=\|\Phi''\|_{L^\infty(I_\Phi)}.
-\]
+$$h_\phi:=\frac{|I_\phi|}{G_\phi-1},\quad h_\Phi:=\frac{|I_\Phi|}{G_\Phi-1},\quad
+M_{\phi''}:=\|\phi''\|_{L^\infty(I_\phi)},\quad M_{\Phi''}:=\|\Phi''\|_{L^\infty(I_\Phi)}.$$
 Define $\hat T$ by replacing $(\phi,\Phi)$ with $(\hat\phi,\hat\Phi)$ in $T$ (keeping the same $\lambda,\eta,\alpha,\tau,\omega,\mathcal{N}$). Then, for all $\mathbf{z}\in\mathcal{B}_{\mathrm{in}}$,
 \begin{equation}\label{eq:single_block_sup}
 \|T(\mathbf{z})-\hat T(\mathbf{z})\|_\infty
@@ -894,87 +903,65 @@ L_\Phi\,R_{\mathrm{mix}}\,\|\lambda\|_{1}\,\delta_\phi\;+\;\delta_\Phi,
 \delta_\phi:=\frac{M_{\phi''}}{8}h_\phi^2,\ \ \delta_\Phi:=\frac{M_{\Phi''}}{8}h_\Phi^2,
 \end{equation}
 where $L_\Phi:=\|\Phi'\|_{L^\infty(I_\Phi)}$. Equivalently,
-\[
-\|T(\mathbf{z})-\hat T(\mathbf{z})\|_\infty
+$$\|T(\mathbf{z})-\hat T(\mathbf{z})\|_\infty
 \;\le\;
 K_T\cdot \max\{h_\phi^2,h_\Phi^2\}
 \quad\text{with}\quad
-K_T:=\frac{1}{8}\Bigl(L_\Phi\,R_{\mathrm{mix}}\,\|\lambda\|_{1}\,M_{\phi''}+M_{\Phi''}\Bigr).
-\]
+K_T:=\frac{1}{8}\Bigl(L_\Phi\,R_{\mathrm{mix}}\,\|\lambda\|_{1}\,M_{\phi''}+M_{\Phi''}\Bigr).$$
 The same bounds hold for a block with a (shared) cyclic residual $T_{\mathrm{res}}=T+R$, since $R$ cancels when $T$ and $\hat T$ share the same residual path.
 \end{lemma}
 
 \begin{proof}
 On each subinterval of the uniform grid for $I_\phi$ (resp.\ $I_\Phi$) of length $h_\phi$ (resp.\ $h_\Phi$), the classical bound for piecewise-linear interpolation of a $C^2$ function gives
-\[
-\|\phi-\hat\phi\|_{L^\infty(I_\phi)}\le \frac{M_{\phi''}}{8}h_\phi^2=:\delta_\phi,
+$$\|\phi-\hat\phi\|_{L^\infty(I_\phi)}\le \frac{M_{\phi''}}{8}h_\phi^2=:\delta_\phi,
 \qquad
-\|\Phi-\hat\Phi\|_{L^\infty(I_\Phi)}\le \frac{M_{\Phi''}}{8}h_\Phi^2=:\delta_\Phi.
-\]
+\|\Phi-\hat\Phi\|_{L^\infty(I_\Phi)}\le \frac{M_{\Phi''}}{8}h_\Phi^2=:\delta_\Phi.$$
 For fixed $\mathbf{z}$ and $q$, write $s_q=\sum_i\lambda_i\,\phi(z_i+\eta q)+\alpha q$ and $\hat s_q$ the analogous quantity with $\hat\phi$. Then
-\[
-|s_q-\hat s_q|\;\le\;\sum_{i=1}^{d_{\mathrm{in}}}|\lambda_i|\,\|\phi-\hat\phi\|_{L^\infty(I_\phi)}
-\;\le\;\|\lambda\|_{1}\,\delta_\phi.
-\]
-Define the pre-mixing scalars $\tilde s_q:=s_q+\tau\sum_{j\in\mathcal{N}(q)}\omega_{qj}s_j$ and $\hat{\tilde s}_q:=\hat s_q+\tau\sum_{j\in\mathcal{N}(q)}\omega_{qj}\hat s_j$. Using the triangle inequality and the definition of $B_\omega$,
-\[
-|\tilde s_q-\hat{\tilde s}_q|
+$$|s_q-\hat s_q|\;\le\;\sum_{i=1}^{d_{\mathrm{in}}}|\lambda_i|\,\|\phi-\hat\phi\|_{L^\infty(I_\phi)}
+\;\le\;\|\lambda\|_{1}\,\delta_\phi.$$
+Define the post-mixing scalars $\tilde s_q:=s_q+\tau\sum_{j\in\mathcal{N}(q)}\omega_{qj}s_j$ and $\hat{\tilde s}_q:=\hat s_q+\tau\sum_{j\in\mathcal{N}(q)}\omega_{qj}\hat s_j$. Using the triangle inequality and the definition of $B_\omega$,
+$$|\tilde s_q-\hat{\tilde s}_q|
 \;\le\;
 |s_q-\hat s_q| + |\tau| \sum_{j\in\mathcal{N}(q)}|\omega_{qj}|\,|s_j-\hat s_j|
 \;\le\; R_{\mathrm{mix}}\cdot \sup_{j}|s_j-\hat s_j|
-\;\le\; R_{\mathrm{mix}}\,\|\lambda\|_{1}\,\delta_\phi.
-\]
+\;\le\; R_{\mathrm{mix}}\,\|\lambda\|_{1}\,\delta_\phi.$$
 Next, since a linear interpolant lies in the convex hull of the function values at the grid endpoints, we have
-\[
-\|\hat\phi\|_{L^\infty(I_\phi)} \;\le\; \|\phi\|_{L^\infty(I_\phi)}=M_\phi.
-\]
+$$\|\hat\phi\|_{L^\infty(I_\phi)} \;\le\; \|\phi\|_{L^\infty(I_\phi)}=M_\phi.$$
 Hence $|s_j|\le M_s$ and $|\hat s_j|\le M_s$, which implies $|\tilde s_q|\le R_{\mathrm{mix}}M_s$ and $|\hat{\tilde s}_q|\le R_{\mathrm{mix}}M_s$. Therefore $\tilde s_q,\hat{\tilde s}_q\in I_\Phi$, and
-\[
-|T(\mathbf{z})_q-\hat T(\mathbf{z})_q|
+$$|T(\mathbf{z})_q-\hat T(\mathbf{z})_q|
 =\bigl|\Phi(\tilde s_q)-\hat\Phi(\hat{\tilde s}_q)\bigr|
 \le \underbrace{|\Phi(\tilde s_q)-\Phi(\hat{\tilde s}_q)|}_{\le L_\Phi |\tilde s_q-\hat{\tilde s}_q|}
-+ \underbrace{|\Phi(\hat{\tilde s}_q)-\hat\Phi(\hat{\tilde s}_q)|}_{\le \delta_\Phi}.
-\]
++ \underbrace{|\Phi(\hat{\tilde s}_q)-\hat\Phi(\hat{\tilde s}_q)|}_{\le \delta_\Phi}.$$
 Combining the bounds and taking the maximum over $q$ yields \eqref{eq:single_block_sup}. If a residual path $R$ is present and shared between $T$ and $\hat T$, then $T_{\mathrm{res}}-\hat T_{\mathrm{res}}=(T-\hat T)+(R-R)=(T-\hat T)$, so the same inequalities apply.
 \end{proof}
 
 \begin{lemma}[Lipschitz constant of a Sprecher block]\label{lem:block_lip}
 Assume $\phi$ and $\Phi$ are Lipschitz on $I_\phi$ and $I_\Phi$ with constants $L_\phi:=\|\phi'\|_{L^\infty(I_\phi)}$ and $L_\Phi:=\|\Phi'\|_{L^\infty(I_\Phi)}$, respectively. Then $T$ is $L_T$-Lipschitz on $\mathcal{B}_{\mathrm{in}}$ in the $\ell_\infty$ norm with
-\[
-L_T \;\le\; L_\Phi\,R_{\mathrm{mix}}\,\|\lambda\|_1\,L_\phi,
-\]
+$$L_T \;\le\; L_\Phi\,R_{\mathrm{mix}}\,\|\lambda\|_1\,L_\phi,$$
 where $R_{\mathrm{mix}}=1+|\tau|\,B_\omega$ as in Lemma~\ref{lem:single_block}. If a residual path $R$ (shared between the exact and approximated networks) is present with Lipschitz constant $L_R$ on $\mathcal{B}_{\mathrm{in}}$, then $T_{\mathrm{res}}=T+R$ is $(L_T+L_R)$-Lipschitz.
 \end{lemma}
 
 \begin{proof}
 For $\mathbf{z},\mathbf{z}'\in\mathcal{B}_{\mathrm{in}}$ and each $q$,
-\[
-\bigl|s_q(\mathbf{z})-s_q(\mathbf{z}')\bigr|
+$$\bigl|s_q(\mathbf{z})-s_q(\mathbf{z}')\bigr|
 \le \sum_i |\lambda_i|\,\bigl|\phi(z_i+\eta q)-\phi(z_i'+\eta q)\bigr|
-\le \|\lambda\|_1\,L_\phi\,\|\mathbf{z}-\mathbf{z}'\|_\infty.
-\]
+\le \|\lambda\|_1\,L_\phi\,\|\mathbf{z}-\mathbf{z}'\|_\infty.$$
 Therefore,
-\[
-\bigl|\tilde s_q(\mathbf{z})-\tilde s_q(\mathbf{z}')\bigr|
+$$\bigl|\tilde s_q(\mathbf{z})-\tilde s_q(\mathbf{z}')\bigr|
 \le \Bigl(1+|\tau|\,\sum_{j\in\mathcal{N}(q)}|\omega_{qj}|\Bigr)\,\|\lambda\|_1\,L_\phi\,\|\mathbf{z}-\mathbf{z}'\|_\infty
-\le R_{\mathrm{mix}}\|\lambda\|_1 L_\phi\,\|\mathbf{z}-\mathbf{z}'\|_\infty,
-\]
+\le R_{\mathrm{mix}}\|\lambda\|_1 L_\phi\,\|\mathbf{z}-\mathbf{z}'\|_\infty,$$
 and hence
-\[
-|T(\mathbf{z})_q-T(\mathbf{z}')_q|
+$$|T(\mathbf{z})_q-T(\mathbf{z}')_q|
 \le L_\Phi\,|\tilde s_q(\mathbf{z})-\tilde s_q(\mathbf{z}')|
-\le L_\Phi R_{\mathrm{mix}}\|\lambda\|_1 L_\phi\,\|\mathbf{z}-\mathbf{z}'\|_\infty.
-\]
+\le L_\Phi R_{\mathrm{mix}}\|\lambda\|_1 L_\phi\,\|\mathbf{z}-\mathbf{z}'\|_\infty.$$
 Taking the maximum over $q$ gives the claimed bound for $T$, and adding $L_R$ handles $T_{\mathrm{res}}$ by the triangle inequality.
 \end{proof}
 
 \begin{lemma}[Error composition]\label{lem:error_composition}
 Consider an $L$-block SN (with optional lateral mixing and cyclic residuals at each block). Let $T^{(\ell)}:\mathbb{R}^{d_{\ell-1}}\to\mathbb{R}^{d_{\ell}}$ denote the $\ell$-th block map on the exact network and $\hat T^{(\ell)}$ its spline-approximated counterpart (same $\lambda,\eta,\alpha,\tau,\omega$ but $(\phi,\Phi)$ replaced by $(\hat\phi,\hat\Phi)$). Assume there exist bounded sets $\mathcal{B}_{\ell}\subset\mathbb{R}^{d_{\ell}}$ such that for all inputs $\mathbf{x}\in[0,1]^n$,
-\[
-\mathbf{h}^{(\ell)}(\mathbf{x}) := T^{(\ell)}\!\circ\cdots\circ T^{(1)}(\mathbf{x}) \in \mathcal{B}_{\ell}
+$$\mathbf{h}^{(\ell)}(\mathbf{x}) := T^{(\ell)}\!\circ\cdots\circ T^{(1)}(\mathbf{x}) \in \mathcal{B}_{\ell}
 \quad\text{and}\quad
-\hat{\mathbf{h}}^{(\ell)}(\mathbf{x}) := \hat T^{(\ell)}\!\circ\cdots\circ \hat T^{(1)}(\mathbf{x}) \in \mathcal{B}_{\ell},
-\]
+\hat{\mathbf{h}}^{(\ell)}(\mathbf{x}) := \hat T^{(\ell)}\!\circ\cdots\circ \hat T^{(1)}(\mathbf{x}) \in \mathcal{B}_{\ell},$$
 and suppose each $T^{(\ell)}$ is $L_{T^{(\ell)}}$-Lipschitz on $\mathcal{B}_{\ell-1}$. If $\varepsilon_\ell:=\sup_{\mathbf{z}\in\mathcal{B}_{\ell-1}}\|T^{(\ell)}(\mathbf{z})-\hat T^{(\ell)}(\mathbf{z})\|_\infty$, then for $E_\ell:=\sup_{\mathbf{x}\in[0,1]^n}\|\mathbf{h}^{(\ell)}(\mathbf{x})-\hat{\mathbf{h}}^{(\ell)}(\mathbf{x})\|_\infty$ we have
 \begin{equation}\label{eq:error_composition_result}
 E_\ell \;\le\; \sum_{j=1}^{\ell}\left(\prod_{m=j+1}^{\ell} L_{T^{(m)}}\right)\varepsilon_j,
@@ -998,38 +985,28 @@ and the induction hypothesis gives \eqref{eq:error_composition_result}.
 Let $f:[0,1]^n\to\mathbb{R}$ be realized by an ideal $L$-block SN (possibly with lateral mixing and cyclic residuals) with scalar output. For each block $\ell=1,\dots,L$, let $B_{\mathrm{in}}^{(\ell)}:=\sup\{\|\mathbf{z}\|_\infty:\mathbf{z}\in\mathcal{B}_{\ell-1}\}$. Assume:
 \begin{enumerate}[label=\textup{(\roman*)}]
 \item $\phi^{(\ell)},\Phi^{(\ell)}\in C^2$ on neighborhoods of the intervals
-\[
-I_\phi^{(\ell)} := \bigl[-B_{\mathrm{in}}^{(\ell)}-|\eta^{(\ell)}|(d_{\ell}-1),\; B_{\mathrm{in}}^{(\ell)}+|\eta^{(\ell)}|(d_{\ell}-1)\bigr],
+$$I_\phi^{(\ell)} := \bigl[-B_{\mathrm{in}}^{(\ell)}-|\eta^{(\ell)}|(d_{\ell}-1),\; B_{\mathrm{in}}^{(\ell)}+|\eta^{(\ell)}|(d_{\ell}-1)\bigr],
 \quad
-I_\Phi^{(\ell)} := \bigl[-R_{\mathrm{mix}}^{(\ell)}M_s^{(\ell)},\; R_{\mathrm{mix}}^{(\ell)}M_s^{(\ell)}\bigr],
-\]
+I_\Phi^{(\ell)} := \bigl[-R_{\mathrm{mix}}^{(\ell)}M_s^{(\ell)},\; R_{\mathrm{mix}}^{(\ell)}M_s^{(\ell)}\bigr],$$
 with $M_s^{(\ell)}:=\|\lambda^{(\ell)}\|_{1}\|\phi^{(\ell)}\|_{L^\infty(I_\phi^{(\ell)})}+|\alpha|(d_\ell-1)$ and $R_{\mathrm{mix}}^{(\ell)}:=1+|\tau^{(\ell)}|\,B_\omega^{(\ell)}$, $B_\omega^{(\ell)}:=\sup_q\sum_{j\in\mathcal{N}^{(\ell)}(q)}|\omega^{(\ell)}_{qj}|$;
 \item the structural parameters are bounded: $\|\lambda^{(\ell)}\|_{1}\le \Lambda_1$, $|\eta^{(\ell)}|\le H$, $|\alpha|\le A$, $|\tau^{(\ell)}|\le T$, and $B_\omega^{(\ell)}\le \Omega$;
 \item there exist bounded sets $\mathcal{B}_\ell$ such that the exact and approximated forward passes both remain in $\mathcal{B}_\ell$ for all inputs in $[0,1]^n$ (bounded propagation).
 \end{enumerate}
 Construct $\hat\phi^{(\ell)}$ and $\hat\Phi^{(\ell)}$ as the piecewise-linear interpolants on uniform grids with $G_\phi^{(\ell)}\ge2$ and $G_\Phi^{(\ell)}\ge2$ knots on $I_\phi^{(\ell)}$ and $I_\Phi^{(\ell)}$, respectively, and write $h_\phi^{(\ell)}:=|I_\phi^{(\ell)}|/(G_\phi^{(\ell)}-1)$ and $h_\Phi^{(\ell)}:=|I_\Phi^{(\ell)}|/(G_\Phi^{(\ell)}-1)$. Then, with
-\[
-\delta_\phi^{(\ell)}:=\frac{\|\phi^{(\ell)''}\|_{L^\infty(I_\phi^{(\ell)})}}{8}\,\bigl(h_\phi^{(\ell)}\bigr)^2, \qquad
-\delta_\Phi^{(\ell)}:=\frac{\|\Phi^{(\ell)''}\|_{L^\infty(I_\Phi^{(\ell)})}}{8}\,\bigl(h_\Phi^{(\ell)}\bigr)^2,
-\]
+$$\delta_\phi^{(\ell)}:=\frac{\|\phi^{(\ell)''}\|_{L^\infty(I_\phi^{(\ell)})}}{8}\,\bigl(h_\phi^{(\ell)}\bigr)^2, \qquad
+\delta_\Phi^{(\ell)}:=\frac{\|\Phi^{(\ell)''}\|_{L^\infty(I_\Phi^{(\ell)})}}{8}\,\bigl(h_\Phi^{(\ell)}\bigr)^2,$$
 the blockwise error satisfies
-\[
-\varepsilon_\ell
+$$\varepsilon_\ell
 :=\sup_{\mathbf{z}\in\mathcal{B}_{\ell-1}}\|T^{(\ell)}(\mathbf{z})-\hat T^{(\ell)}(\mathbf{z})\|_\infty
-\ \le\ L_{\Phi}^{(\ell)}\,R_{\mathrm{mix}}^{(\ell)}\,\|\lambda^{(\ell)}\|_{1}\,\delta_\phi^{(\ell)}\;+\;\delta_\Phi^{(\ell)},
-\]
+\ \le\ L_{\Phi}^{(\ell)}\,R_{\mathrm{mix}}^{(\ell)}\,\|\lambda^{(\ell)}\|_{1}\,\delta_\phi^{(\ell)}\;+\;\delta_\Phi^{(\ell)},$$
 where $L_{\Phi}^{(\ell)}:=\|\Phi^{(\ell)'}\|_{L^\infty(I_\Phi^{(\ell)})}$. Consequently, by Lemma~\ref{lem:error_composition},
-\[
-\sup_{\mathbf{x}\in[0,1]^n}|f(\mathbf{x})-\hat f(\mathbf{x})|
+$$\sup_{\mathbf{x}\in[0,1]^n}|f(\mathbf{x})-\hat f(\mathbf{x})|
 \;\le\;
-\sum_{j=1}^{L}\left(\prod_{m=j+1}^{L}L_{T^{(m)}}\right)\Bigl(L_{\Phi}^{(j)}\,R_{\mathrm{mix}}^{(j)}\,\|\lambda^{(j)}\|_{1}\,\delta_\phi^{(j)}+\delta_\Phi^{(j)}\Bigr),
-\]
+\sum_{j=1}^{L}\left(\prod_{m=j+1}^{L}L_{T^{(m)}}\right)\Bigl(L_{\Phi}^{(j)}\,R_{\mathrm{mix}}^{(j)}\,\|\lambda^{(j)}\|_{1}\,\delta_\phi^{(j)}+\delta_\Phi^{(j)}\Bigr),$$
 with $L_{T^{(m)}}$ any Lipschitz constant of the $m$-th block on $\mathcal{B}_{m-1}$ (e.g.\ from Lemma~\ref{lem:block_lip}, plus the residual-path constant when present). In particular, if $G_\phi^{(\ell)}=G_\Phi^{(\ell)}=G$ for all $\ell$, then with $h:=\max_\ell\{|I_\phi^{(\ell)}|,|I_\Phi^{(\ell)}|\}/(G-1)$ we obtain
-\[
-\sup_{\mathbf{x}\in[0,1]^n}|f(\mathbf{x})-\hat f(\mathbf{x})|
+$$\sup_{\mathbf{x}\in[0,1]^n}|f(\mathbf{x})-\hat f(\mathbf{x})|
 \;=\; \mathcal{O}\!\left(h^2\right)
-\;=\; \mathcal{O}\!\left(G^{-2}\right),
-\]
+\;=\; \mathcal{O}\!\left(G^{-2}\right),$$
 with constants depending on $\{\|\lambda^{(\ell)}\|_{1},L_{\phi^{(\ell)}},L_{\Phi}^{(\ell)},R_{\mathrm{mix}}^{(\ell)},\|\phi^{(\ell)''}\|_\infty,\|\Phi^{(\ell)''}\|_\infty,L_{T^{(\ell)}}\}_{\ell=1}^L$ and on the bounded-propagation sets $\{\mathcal{B}_\ell\}$.
 \end{corollary}
 
@@ -1066,10 +1043,10 @@ Proving Conjectures \ref{conj:vector} and \ref{conj:deep_universal} rigorously w
 For practical implementations, we support both piecewise-linear splines and $C^1$ cubic Hermite splines with \textsc{PCHIP} (shape-preserving) slopes for both $\phi^{(\ell)}$ and $\Phi^{(\ell)}$. Piecewise-linear splines are the default when only function values are required (high efficiency, simple evaluation); the cubic option is used when higher-order derivatives must flow through the spline (e.g., the Poisson PINN benchmark, which requires second derivatives). In both cases, a spline with $G$ uniformly spaced knot locations (thus $G-1$ intervals) is parameterized by the values at these $G$ knot locations (thus $O(G)$ parameters per spline); for the cubic case, the \textsc{PCHIP} endpoint slopes are computed deterministically from these knot values. For range propagation, piecewise-linear extrema on an interval occur at the interval endpoints and/or knot points, whereas for cubic splines we additionally consider interior stationary points when computing tight bounds (see Lemma~\ref{lem:domain_prop} and Algorithm~\ref{alg:domain_prop}). Each spline can be defined by a set of knots (x-coordinates) and corresponding coefficients (y-coordinates). A common approach is to use fixed, uniformly spaced knots over the spline's domain, with learnable coefficients. The number of knots is a hyperparameter that affects both expressivity and computational cost.
 
 For the inner spline $\phi^{(\ell)}$, we fix the codomain to $[0,1]$ and enforce \emph{strict} monotonicity of the knot values by parameterizing positive differences. Concretely, let $(v_k)_k$ be unconstrained parameters and set $\Delta_k=\operatorname{softplus}(v_k)>0$; then the coefficients are
-$$c_k \;=\; \frac{1}{\sum_j \Delta_j}\,\sum_{i\le k}\Delta_i,$$
-which yields strictly increasing knot values. Interpolating these knots with piecewise–linear segments or a shape–preserving monotone cubic (\textsc{PCHIP}) scheme which yields strictly increasing knot values and therefore a monotone non-decreasing spline on its domain (piecewise–linear or monotone $C^1$ cubic Hermite/PCHIP, depending on the interpolation). Outside the domain we use constant extension, so $\phi^{(\ell)}(x)=0$ for inputs below the leftmost knot and $\phi^{(\ell)}(x)=1$ above the rightmost knot. The increments are initialized nearly uniform so that $\phi^{(\ell)}$ starts close to linear.
+$$u_k \;=\; \sum_{i\le k}\Delta_i,\qquad c_k \;=\; \frac{u_k}{u_{G-1}+\varepsilon},$$
+with a tiny $\varepsilon>0$ (we use $\varepsilon=10^{-8}$) which yields strictly increasing knot values. Interpolating these knots with either piecewise--linear segments or a shape--preserving monotone $C^1$ cubic Hermite (\textsc{PCHIP}) scheme yields a monotone non-decreasing spline on its domain. Outside the domain we use constant extension, so $\phi^{(\ell)}(x)=0$ for inputs below the leftmost knot and $\phi^{(\ell)}(x)=1$ above the rightmost knot. The increments are initialized nearly uniform so that $\phi^{(\ell)}$ starts close to linear.
 
-The outer spline $\Phi^{(\ell)}$ operates on a domain determined by the block’s bounds, and its codomain is parameterized as an interval $[\,c_c^{(\ell)}-c_r^{(\ell)},\,c_c^{(\ell)}+c_r^{(\ell)}\,]$ with trainable center $c_c^{(\ell)}$ and radius $c_r^{(\ell)}$. We initialize $(c_c^{(\ell)},c_r^{(\ell)})$ from the computed input domain so that $\Phi^{(\ell)}$ is near identity at initialization, and the parameters then adapt the output range during training. Monotonicity is not required for $\Phi^{(\ell)}$.
+The outer spline $\Phi^{(\ell)}$ operates on a domain determined by the block’s bounds, and its codomain is parameterized as an interval $[\,c_c^{(\ell)}-c_r^{(\ell)},\,c_c^{(\ell)}+c_r^{(\ell)}\,]$ with trainable center $c_c^{(\ell)}$ and scale (initialized positive) $c_r^{(\ell)}$. We initialize $(c_c^{(\ell)},c_r^{(\ell)})$ from the computed input domain so that $\Phi^{(\ell)}$ is near identity at initialization, and the parameters then adapt the output range during training. Monotonicity is not required for $\Phi^{(\ell)}$.
 
 \subsection{Shifts, weights, and optimization}
 Each block includes the learnable scalar shift $\eta^{(\ell)}$ and the learnable mixing weight vector $\lambda^{(\ell)} \in \mathbb{R}^{d_{\ell-1}}$. While Sprecher's original construction requires the shift parameter to be positive ($\eta > 0$), practical implementations can relax this constraint. As shown in Lemma~\ref{lem:domain_prop}, the theoretical domain computation handles both positive and negative values of $\eta^{(\ell)}$, allowing it to be trained as an unconstrained parameter initialized to a small positive value.
@@ -1081,17 +1058,19 @@ All learnable parameters (spline coefficients, $\eta^{(\ell)}$, $\lambda^{(\ell)
 \subsection{Memory-efficient forward computation}
 \label{sec:memory_efficient}
 
-A key advantage of SNs' vector-based weight structure extends beyond parameter count to memory footprint, in particular to peak forward-intermediate memory. While dense MLP layers require $O(N^2)$ parameters (and thus memory) for their weight matrices alone, SN blocks have only $O(N)$ vector parameters (plus $O(G)$ spline parameters) and can be evaluated without materializing the full $d_{\mathrm{out}}\times d_{\mathrm{in}}$ outer-product intermediate.
+A key advantage of SNs' vector-based weight structure extends beyond parameter count to memory footprint, in particular to peak forward-intermediate memory. While dense MLP layers require $O(N^2)$ parameters (and thus memory) for their weight matrices alone, SN blocks have only $O(N)$ vector parameters (plus $O(G)$ spline parameters) and can be evaluated without materializing the full $d_{\mathrm{in}}\times d_{\mathrm{out}}$ outer-product intermediate.
 
 The standard forward pass for a Sprecher block naively computes:
 $$\text{shifted}_{b,i,q} = x_{b,i} + \eta q \quad \forall b \in [B], i \in [d_{\mathrm{in}}], q \in [d_{\mathrm{out}}]$$
-storing the full tensor before applying $\phi$, requiring $O(B \cdot d_{\mathrm{in}} \cdot d_{\mathrm{out}})$ memory. However, since each output $q$ is computed independently in the mathematical formulation, we can reformulate this as:
+storing the full tensor before applying $\phi$, requiring $O(B \cdot d_{\mathrm{in}} \cdot d_{\mathrm{out}})$ memory. However, we can compute the \emph{unmixed} pre-activations
 $$s_{b,q} = \sum_{i=1}^{d_{\mathrm{in}}} \lambda_i \phi(x_{b,i} + \eta q) + \alpha q$$
-computed sequentially for $q = 0, \ldots, d_{\mathrm{out}}-1$.
+sequentially for $q = 0, \ldots, d_{\mathrm{out}}-1$ without materializing $\text{shifted}_{b,i,q}$. When lateral mixing is enabled, we then apply
+$$\tilde{s}_{b,q} = s_{b,q} + \tau \sum_{j\in \mathcal{N}(q)} \omega_{q,j}\, s_{b,j}$$
+to the assembled vector $(s_{b,q})_{q=0}^{d_{\mathrm{out}}-1}$ before evaluating $\Phi(\tilde{s}_{b,q})$ (and adding the residual path).
 
 This reformulation reduces peak \emph{forward-intermediate} memory from $O(B \cdot N^2)$ to $O\!\bigl(B \cdot \max(d_{\mathrm{in}}, d_{\mathrm{out}})\bigr)$ during computation, while producing \emph{mathematically identical} results. Combined with SNs' $O(N+G)$ parameter memory per block, the total (parameters + peak forward intermediates) scales as $O\!\bigl(N+G + B \cdot \max(d_{\mathrm{in}}, d_{\mathrm{out}})\bigr)$; for fixed $B$ and $G$, this is $O(N)$, compared to dense MLPs' $O(N^2)$ parameter memory per block. (In standard reverse-mode autodiff frameworks, training may require additional saved state for backpropagation; the bound above refers to forward intermediates/inference, or to training with recomputation/checkpointing.)
 
-In practice, this enables training of architectures that would otherwise be infeasible. For example, a network with layers of width 512 might exhaust 32GB of RAM in parallel computation but trains comfortably with sequential processing. Empirically, we observe substantial activation-memory reductions on wide architectures (often exceeding 40\%), while the runtime impact is workload-dependent and can range from modest overhead to slight speedups on very large inputs.
+In practice, this enables training wider architectures under fixed memory budgets by avoiding materialization of the full $(B\times d_{\mathrm{in}}\times d_{\mathrm{out}})$ tensor of shifted inputs. The runtime impact is workload-dependent: sequential evaluation reduces intra-layer parallelism, but can also improve cache behavior and reduce allocator pressure for very large layers.
 
 \begin{remark}[Preservation of mathematical structure]
 The sequential computation is a pure implementation optimization that is mathematically exact: it produces identical outputs to the naive parallel formulation for any choice of parameters and inputs. It only reduces peak memory by avoiding materialization of the full $(B\times d_{\mathrm{in}}\times d_{\mathrm{out}})$ tensor of shifted inputs; it does not change the function being computed.
@@ -1103,10 +1082,10 @@ Sequential (per-$q$) evaluation reduces peak activation memory from $O(B\,d_{\ma
 
 \subsection{Theoretical domain computation}
 \label{sec:theoretical_domains}
-One advantage of the structured Sprecher architecture is the ability to compute exact theoretical bounds for all intermediate values when using piecewise-linear splines, as the extrema of such functions occur at knot locations. Throughout this analysis, we assume inputs lie in $[0, 1]^n$, though the methodology extends naturally to any bounded domain. This assumption enables principled initialization and can aid in debugging and analysis.
+One advantage of the structured Sprecher architecture is the ability to compute \emph{provably safe} interval bounds for spline inputs and outputs, which we use to adapt spline domains during training. For a fixed input interval to a spline, the exact range of a piecewise-linear spline on that interval is attained at the endpoints and any interior knots; for shape-preserving cubic (PCHIP) splines, stationary points within knot intervals must also be checked. When these per-spline range computations are propagated through multiple blocks using interval arithmetic, the resulting network-level bounds are generally conservative (since correlations between coordinates are ignored), but are typically much tighter than naive global bounds. Throughout this analysis, we assume inputs lie in $[0, 1]^n$, though the methodology extends naturally to any bounded domain. This assumption enables principled initialization and can aid in debugging and analysis.
 
 \begin{lemma}[Domain propagation through Sprecher blocks]\label{lem:domain_prop}
-Consider a Sprecher block where inputs lie in the range $[a,b]^{d_{\mathrm{in}}}$, with shift parameter $\eta$, weights $\lambda_i$, lateral mixing parameters $\tau, \omega$, and output dimension $d_{\mathrm{out}}$. Let us distinguish between a spline's \emph{domain} (the interval of valid inputs) and its \emph{codomain} (the interval of possible outputs). Then:
+Consider a Sprecher block where inputs lie in a box $\prod_{i=1}^{d_{\mathrm{in}}}[a_i,b_i]$ (and define $a:=\min_i a_i$ and $b:=\max_i b_i$), with shift parameter $\eta$, weights $\lambda_i$, lateral mixing parameters $\tau, \omega$, and output dimension $d_{\mathrm{out}}$. Let us distinguish between a spline's \emph{domain} (the interval of valid inputs) and its \emph{codomain} (the interval of possible outputs). Then:
 \begin{enumerate}
 \item The domain required for $\phi$ to handle all possible inputs is:
 $$\mathcal{D}_\phi = \begin{cases}
@@ -1114,7 +1093,7 @@ $$\mathcal{D}_\phi = \begin{cases}
 [a + \eta(d_{\mathrm{out}}-1), b] & \text{if } \eta < 0
 \end{cases}$$
 
-\item Without lateral mixing, monotonicity of $\phi$ implies $\phi(h_i+\eta q)\in[\phi(a+\eta q),\,\phi(b+\eta q)]$ for all $i$ and $q$. Let
+\item Without lateral mixing, monotonicity of $\phi$ implies $\phi(x_i+\eta q)\in[\phi(a+\eta q),\,\phi(b+\eta q)]$ for all $i$ and $q$. Let
 $\lambda^{+}:=\sum_{i:\lambda_i\ge 0}\lambda_i$ and $\lambda^{-}:=\sum_{i:\lambda_i<0}\lambda_i$.
 Then for each head index $q$,
 $$
@@ -1122,30 +1101,38 @@ s_{q}^{\min,\mathrm{unmixed}}=\lambda^{+}\,\phi(a+\eta q)+\lambda^{-}\,\phi(b+\e
 s_{q}^{\max,\mathrm{unmixed}}=\lambda^{+}\,\phi(b+\eta q)+\lambda^{-}\,\phi(a+\eta q)+\alpha q.
 $$
 A valid domain for $\Phi$ is therefore $\mathcal{D}_{\Phi}=\bigl[\min_{q}s_{q}^{\min,\mathrm{unmixed}},\;\max_{q}s_{q}^{\max,\mathrm{unmixed}}\bigr]$.
-(As a coarse bound, one may substitute $\phi(a+\eta q)=0$ and $\phi(b+\eta q)=1$.)
+(As a coarse bound, one may use only that $\phi(\cdot)\in[0,1]$ and thus replace the unknown values $\phi(a+\eta q)$ and $\phi(b+\eta q)$ by $0$ and $1$, respectively.)
 
 \item With lateral mixing, for cyclic mixing with scale $\tau$ and weights $\omega$, the domain for $\Phi$ must account for sign-aware neighbor contributions. Using the \emph{unmixed} bounds from the previous item, for each output $q$ the mixed pre-activation bounds are:
 $$\begin{aligned}
 s^{\min}_q &= s^{\min,\text{unmixed}}_q + (\tau\omega_q)^+ s^{\min,\text{unmixed}}_{(q+1) \bmod d_{\mathrm{out}}} + (\tau\omega_q)^- s^{\max,\text{unmixed}}_{(q+1) \bmod d_{\mathrm{out}}}\\
 s^{\max}_q &= s^{\max,\text{unmixed}}_q + (\tau\omega_q)^+ s^{\max,\text{unmixed}}_{(q+1) \bmod d_{\mathrm{out}}} + (\tau\omega_q)^- s^{\min,\text{unmixed}}_{(q+1) \bmod d_{\mathrm{out}}}
 \end{aligned}$$
-where $a^+ = \max(a,0)$ and $a^- = \min(a,0)$. For bidirectional mixing, add the analogous sign-split terms using $(q-1)\bmod d_{\mathrm{out}}$ and sum the contributions.
+where $a^+ = \max(a,0)$ and $a^- = \min(a,0)$. For bidirectional mixing, apply the analogous sign-split bound to each neighbor contribution $(\tau\omega_{q,\text{fwd}})\,s_{(q+1)\bmod d_{\mathrm{out}}}$ and $(\tau\omega_{q,\text{bwd}})\,s_{(q-1)\bmod d_{\mathrm{out}}}$, and sum the contributions.
 
-\item If $\Phi$ has trainable codomain parameters $(c_c, c_r)$ defining codomain $[c_c - c_r, c_c + c_r]$, then tight output bounds over an input interval require checking all candidate extrema of the spline on that interval. For piecewise linear splines, extrema occur at interval endpoints and knot points, so it suffices to evaluate $\Phi$ at those locations. For cubic (PCHIP) splines, extrema may also occur at interior critical points where the derivative is zero; thus one must additionally evaluate $\Phi$ at all such critical points within the interval. This yields correct range propagation even for oscillatory $\Phi$.
+\item Tight output bounds require checking all candidate extrema of $\Phi$ over the interval. For piecewise linear $\Phi$, extrema occur at endpoints and knot points, so it suffices to evaluate $\Phi$ at interval endpoints and all knots within the interval. For cubic $\Phi$ (PCHIP), extrema may also occur at internal critical points where $\Phi'$ is zero, requiring evaluation at those points. (If an affine codomain reparameterization $(c_c,c_r)$ is used, it is an affine map of the underlying spline values; it does not change the set of candidate points for extrema, only rescales and shifts the resulting values.) This yields correct range propagation even for oscillatory $\Phi$.
 
-\item When residual connections are present, the output range must be adjusted by the residual contribution. For a scalar residual weight $w$, if $w \geq 0$, the residual adds $[wa, wb]$ to the range. If $w < 0$, it adds $[wb, wa]$ (note the reversal). For Cyclic residuals:
+\item When residual connections are present, the output range must be adjusted by the residual contribution. For a scalar residual weight $w$ (the $d_{\mathrm{in}}=d_{\mathrm{out}}$ case), the residual term in coordinate
+$q$ is $r_q=w x_{q+1}$ and lies in $[\min\{w a_{q+1},w b_{q+1}\},\max\{w a_{q+1},w b_{q+1}\}]$. For a linear residual projection matrix $W\in\mathbb{R}^{d_{\mathrm{in}}\times d_{\mathrm{out}}}$ (the $d_{\mathrm{in}}\neq d_{\mathrm{out}}$ case), the residual term in coordinate $q$ is $r_q=\sum_{i=1}^{d_{\mathrm{in}}}W_{i,q}x_i$ and lies in:
+$$r_q^{\min}=\sum_{i=1}^{d_{\mathrm{in}}}\bigl(W^{+}_{i,q}a_i+W^{-}_{i,q}b_i\bigr),\qquad
+r_q^{\max}=\sum_{i=1}^{d_{\mathrm{in}}}\bigl(W^{+}_{i,q}b_i+W^{-}_{i,q}a_i\bigr),$$
+where $W^{+}=\max(W,0)$ and $W^{-}=\min(W,0)$ elementwise. These adjustments can be applied elementwise. For Cyclic residuals:
+
    \begin{itemize}
-   \item \textbf{Broadcast}: Each output $q$ receives $w_q^{\text{bcast}} \cdot x_{q \bmod d_{\mathrm{in}}}$
-   \item \textbf{Pooling}: With assignment $i \mapsto q(i)$ and weights $w_i$, the contribution to output $q$ is:
-   $$r^{\min}_q = \sum_{i: q(i)=q} \min\{w_i a, w_i b\}, \quad r^{\max}_q = \sum_{i: q(i)=q} \max\{w_i a, w_i b\}$$
+   \item
+ \textbf{Broadcast}: Each output $q$ receives $w_q^{\text{bcast}} \cdot x_{1+(q \bmod d_{\mathrm{in}})}$
+   \item 
+\textbf{Pooling}: With assignment $i \mapsto q(i)$ and weights $w_i$, the contribution to output $q$ is:
+   $$
+r^{\min}_q = \sum_{i: q(i)=q} \min\{w_i a_i, w_i b_i\}, \quad r^{\max}_q = \sum_{i: q(i)=q} \max\{w_i a_i, w_i b_i\}$$
    \end{itemize}
 
 \item \textbf{Out-of-domain extension:} When inputs fall outside the spline's domain:
    \begin{itemize}
    \item $\phi$ (monotonic): Uses \emph{constant} extension (zero slope) outside its domain: for $x<\min\mathcal{D}_\phi$, set $\phi(x)=0$; for $x>\max\mathcal{D}_\phi$, set $\phi(x)=1$. This preserves the codomain $[0,1]$ and aligns with the monotone-increments parameterization.
-   \item $\Phi$ (general): Uses \emph{linear} extrapolation based on the boundary \emph{derivative} of the spline interpolation (piecewise-linear: slope of the first/last segment; cubic \textsc{PCHIP}: endpoint derivative from the \textsc{PCHIP} slope rule). If $\Phi$'s codomain is parameterized by $(c_c,c_r)$ with $\operatorname{cod}(\Phi)=[c_c-c_r,\,c_c+c_r]$, extrapolation is computed in the unnormalized coefficient space and then mapped by
-   $$t \;\mapsto\; c_c - c_r \;+\; 2c_r \cdot \frac{t - t_{\min}}{t_{\max}-t_{\min}}\,,$$
-   with the boundary derivatives scaled by the same factor $2c_r/(t_{\max}-t_{\min})$.
+   \item $\Phi$ (general): Uses \emph{linear} extrapolation based on the boundary \emph{derivative} of the spline interpolation (piecewise-linear: slope of the first/last segment; cubic \textsc{PCHIP}: endpoint derivative from the \textsc{PCHIP} slope rule). If $\Phi$'s codomain is parameterized by $(c_c,c_r)$ with $\operatorname{cod}(\Phi)=[c_c-c_r,\,c_c+c_r]$, we first evaluate the \emph{unnormalized} spline $\tilde{\Phi}$ (including its linear extrapolation) in coefficient space, then map its value $t=\tilde{\Phi}(x)$ by
+   $$t \;\mapsto\; c_c - c_r \;+\; 2c_r \cdot \frac{t - t_{\min}}{t_{\max}-t_{\min}+\epsilon}\,,$$
+   where $t_{\min}=\min_k \tilde{\Phi}(u_k)$ and $t_{\max}=\max_k \tilde{\Phi}(u_k)$ are the minimum/maximum unnormalized knot values (with $\{u_k\}$ the knot locations) and $\epsilon>0$ is a small constant. The boundary derivatives are scaled by the same factor $2c_r/(t_{\max}-t_{\min}+\epsilon)$.
    \end{itemize}
 \end{enumerate}
 \end{lemma}
@@ -1159,7 +1146,7 @@ s_q^{\max} &= \sum_i \bigl(\lambda_i^+ \phi(b_i + \eta q) + \lambda_i^- \phi(a_i
 where $\lambda_i^+ = \max(\lambda_i, 0)$ and $\lambda_i^- = \min(\lambda_i, 0)$. These per-$q$ bounds then undergo sign-aware lateral mixing as in Lemma \ref{lem:domain_prop}.
 \end{corollary}
 
-This lemma enables a forward propagation algorithm for computing all spline domains throughout the network. The algorithm can optionally apply a domain safety margin (default 0) to reduce edge hits during training. Crucially, the algorithm's efficiency relies on the fact that spline extrema over compact intervals can be found by evaluating a small, explicit candidate set: for piecewise-linear splines, the interval endpoints and any knots inside the interval; for piecewise-cubic Hermite/PCHIP splines, the same candidates plus any interior critical points where the derivative vanishes (one quadratic solve per segment).
+This lemma enables a forward propagation algorithm for computing all spline domains throughout the network. The algorithm can optionally apply a small relative domain safety margin (e.g., 1\%) to reduce edge hits during training; setting the margin to 0 yields the tightest domains. Crucially, the algorithm's efficiency relies on the fact that spline extrema over compact intervals can be found by evaluating a small, explicit candidate set: for piecewise-linear splines, the interval endpoints and any knots inside the interval; for piecewise-cubic Hermite/PCHIP splines, the same candidates plus any interior critical points where the derivative vanishes (one quadratic solve per segment).
 
 \begin{figure}[ht]
     \centering
@@ -1226,25 +1213,25 @@ This lemma enables a forward propagation algorithm for computing all spline doma
             % 2. x=1.2 (Seg 2): y ~ 1.03
             % 3. x=1.8 (Seg 3): y ~ 1.47
             % 4. x=2.4 (Seg 4): y ~ 1.40
-            % 5. x=3.0 (Extrap): y ~ 0.80
+            % 5. x=3.0 (Clamped): y ~ 1.20
             
-            \draw[thick, sprechergreen] (0.6,1.17) -- (1.2,1.03) -- (1.8,1.47) -- (2.4,1.40) -- (3.0,0.80);
+            \draw[thick, sprechergreen] (0.6,1.17) -- (1.2,1.03) -- (1.8,1.47) -- (2.4,1.40) -- (3.0,1.20);
             
             % New Knots (5 count)
-            \foreach \p in {(0.6,1.17), (1.2,1.03), (1.8,1.47), (2.4,1.40), (3.0,0.80)}
+            \foreach \p in {(0.6,1.17), (1.2,1.03), (1.8,1.47), (2.4,1.40), (3.0,1.20)}
                 \fill[sprechergreen] \p circle (2pt);
                 
             % Label moved safely below the tail
-            \node[font=\scriptsize, sprechergreen, anchor=north] at (3.0, 0.7) {resampled};
+            \node[font=\scriptsize, sprechergreen, anchor=north] at (3.0, 1.1) {resampled};
             
             % Success Text: Centered
             \node[anchor=north, align=left, font=\footnotesize, text=sprechergreen] at (2.4, -0.6) {
-                \ding{51} Function shape preserved\\
+                \ding{51} Function shape approximately preserved\\
                 \ding{51} $C^0$ continuity maintained
             };
         \end{scope}
     \end{tikzpicture}
-    \caption{Spline domain resampling during training (applied to the outer spline $\Phi$). As parameters $\lambda$ and $\eta$ evolve, induced spline input ranges shift dynamically. \textbf{Left:} Naive horizontal rescaling distorts the learned function by stretching and shifting the shape to fit the new domain. \textbf{Right:} Our resampling evaluates the previous spline at the new knot positions (preserving its values at those knots over the overlapping domain) and extrapolates linearly elsewhere.}
+    \caption{Spline domain resampling during training (applied to the outer spline $\Phi$). As parameters $\lambda$ and $\eta$ evolve, induced spline input ranges shift dynamically. \textbf{Left:} Naive horizontal rescaling distorts the learned function by stretching and shifting the shape to fit the new domain. \textbf{Right:} Our resampling evaluates the previous spline at the new knot positions (for piecewise-linear $\Phi$, query points are clamped to the previous domain when a new knot lies outside it; for cubic/\textsc{PCHIP} $\Phi$, the previous spline's linear extrapolation is used), approximately preserving the function values at the new knots that lie within the previous domain; the updated $\Phi$ still uses linear extrapolation outside its \emph{new} domain.}
     \label{fig:resampling}
 \end{figure}
 
@@ -1252,12 +1239,13 @@ This lemma enables a forward propagation algorithm for computing all spline doma
 \caption{Forward domain propagation with lateral mixing and per-dimension tracking}
 \label{alg:domain_prop}
 \begin{algorithmic}[1]
-    \State \textbf{Input:} Network parameters $\{\lambda^{(\ell)}, \eta^{(\ell)}, \phi^{(\ell)}, \Phi^{(\ell)}, \tau^{(\ell)}, \omega^{(\ell)}\}_{\ell=1}^L$, input domain $[0,1]^n$
+    \State \textbf{Input:} Network parameters $\{\lambda^{(\ell)}, \eta^{(\ell)}, \phi^{(\ell)}, \Phi^{(\ell)}, \tau^{(\ell)}, \omega^{(\ell)}, R^{(\ell)}\}_{\ell=1}^{L_{\text{blocks}}}$, input domain $[0,1]^n$
+    \State \textbf{(Here $L_{\text{blocks}}$ is the number of Sprecher blocks: $L_{\text{blocks}}=L$ for scalar outputs, and $L_{\text{blocks}}=L{+}1$ for vector outputs.)}
     \State \textbf{Output:} Domains and ranges for all splines
     \State Initialize current range $\mathcal{R}_0 \leftarrow [0,1]^n$ (per-dimension when available)
-    \For{each block $\ell = 1, \ldots, L$}
+    \For{each block $\ell = 1, \ldots, L_{\text{blocks}}$}
         \If{normalization is applied \emph{before} block $\ell$}
-            \State Apply normalization bounds to $\mathcal{R}_{\ell-1}$ (training: conservative $[-4,4]$; eval: use running stats and affine), updating per-dimension intervals when available
+            \State Apply normalization bounds to $\mathcal{R}_{\ell-1}$ (training: conservative shared bound derived from standardized $[-4,4]$; eval: use running stats and affine)
         \EndIf
         \State $\mathcal{D}_\phi^{(\ell)} \leftarrow$ apply Lemma \ref{lem:domain_prop} part (1) to the current input range
         \If{per-dimension intervals available}
@@ -1268,12 +1256,17 @@ This lemma enables a forward propagation algorithm for computing all spline doma
         \State Apply sign-aware lateral mixing (part 3) to get final $s^{\min}_q, s^{\max}_q$
         \State $\mathcal{D}_\Phi^{(\ell)} \leftarrow [\min_q s^{\min}_q, \max_q s^{\max}_q]$
         \State Evaluate $\Phi^{(\ell)}$ on each interval $[s^{\min}_q, s^{\max}_q]$ at (i) the endpoints, (ii) all $\Phi$-knots lying inside the interval, and (iii) for cubic/PCHIP $\Phi$, all interior critical points where $\frac{d}{dx}\Phi(x)=0$
-        \State $\mathcal{R}_\ell \leftarrow$ union of per-$q$ output ranges
+        \State Let $[y_q^{\min},y_q^{\max}]$ denote the range of $\Phi^{(\ell)}$ on $[s_q^{\min},s_q^{\max}]$
         \If{block $\ell$ has residual connections}
-            \State Adjust $\mathcal{R}_\ell$ according to Lemma \ref{lem:domain_prop} part (5)
+            \State Adjust each $[y_q^{\min},y_q^{\max}]$ according to Lemma \ref{lem:domain_prop} part (5)
+        \EndIf
+        \If{$\ell=L_{\text{blocks}}$ and the network output is scalar (sum over $q$)}
+            \State $\mathcal{R}_\ell \leftarrow \Bigl[\sum_{q=0}^{d_\ell-1} y_q^{\min},\,\sum_{q=0}^{d_\ell-1} y_q^{\max}\Bigr]$
+        \Else
+            \State $\mathcal{R}_\ell \leftarrow \prod_{q=0}^{d_\ell-1} [y_q^{\min},y_q^{\max}]$
         \EndIf
         \If{normalization is applied \emph{after} block $\ell$}
-            \State Apply normalization bounds (training: conservative $[-4,4]$; eval: use running stats and affine), updating per-dimension intervals when available
+            \State Apply normalization bounds (training: conservative shared bound derived from standardized $[-4,4]$; eval: use running stats and affine)
         \EndIf
     \EndFor
 \end{algorithmic}
@@ -1282,17 +1275,17 @@ This lemma enables a forward propagation algorithm for computing all spline doma
 \begin{remark}[Dynamic spline updates and function preservation]
 A critical challenge in training Sprecher Networks is that the domains of the splines $\phi^{(\ell)}$ and $\Phi^{(\ell)}$ evolve as the parameters $\eta^{(\ell)}$, $\lambda^{(\ell)}$, and lateral mixing parameters are updated. To maintain theoretical fidelity to Sprecher's formula while adapting to evolving domains, we employ a selective function-preserving resampling strategy:
 
-\paragraph{General Splines ($\Phi^{(\ell)}$):} When the domain of a $\Phi^{(\ell)}$ spline changes, new knot locations are established (typically uniformly spaced across the new computed domain). The original spline is treated as a continuous function and evaluated at these new knot locations to yield updated knot coefficients. This effectively ``resamples'' the learned shape onto the new domain: it preserves the function values at the new knots. For piecewise-linear $\Phi^{(\ell)}$, this procedure is exact whenever the new knot set contains the old knots; for cubic (PCHIP) $\Phi^{(\ell)}$, it matches the old spline at the resampled knots but can (slightly) change derivatives between knots, while still avoiding abrupt resets.
+\paragraph{General Splines ($\Phi^{(\ell)}$):} When the domain of a $\Phi^{(\ell)}$ spline changes, new knot locations are established (typically uniformly spaced across the new computed domain). The original spline is treated as a continuous function and evaluated at these new knot locations to yield updated knot coefficients (for piecewise-linear $\Phi^{(\ell)}$, query points are clamped to the previous domain so any new knot outside the old domain uses the nearest boundary value; for cubic/\textsc{PCHIP} $\Phi^{(\ell)}$, the previous spline's linear extrapolation is used outside the old domain). This effectively ``resamples'' the learned shape onto the new domain: it preserves the \emph{values} of the old spline at the new knot locations that lie within the previous domain (and therefore preserves the function exactly on the overlap whenever the old spline is linear on each new knot interval, e.g.\ when the new knot set contains the old knots). For piecewise-linear $\Phi^{(\ell)}$, this procedure is exact whenever the new knot set contains the old knots; for cubic (PCHIP) $\Phi^{(\ell)}$, it matches the old spline at the resampled knots but can (slightly) change derivatives between knots, while still avoiding abrupt resets. Optionally, one may additionally apply a cheap post-update refresh that adjusts knot \emph{locations} without resampling coefficients; this is not function-preserving (it amounts to a mild horizontal rescaling), so it is best reserved for small domain changes where the primary goal is to keep bound propagation synchronized after parameter updates.
 
 \paragraph{Monotonic Splines ($\phi^{(\ell)}$):} For the monotonic splines, whose purpose is to provide an increasing map to $[0,1]$, complex resampling is not required. Their learnable parameters define relative increments between knots, not an arbitrary shape. Therefore, a straightforward update of the knot positions to the new theoretical domain is sufficient and computationally efficient.
 
-This targeted approach avoids the most direct sources of information loss and instability from domain changes. In engineering ablations on Toy-2D (Sec.~\ref{sec:toy2d}), disabling $\Phi$-resampling typically led to oscillatory or unstable training as domains shifted, while disabling dynamic domain updates caused spline inputs to drift far outside their learned ranges (forcing $\phi$ into saturation and $\Phi$ into extrapolation). We therefore treat dynamic domains and $\Phi$-resampling as default components unless explicitly stated otherwise (e.g., the PINN setting in Sec.~\ref{sec:pinn_poisson}). The fundamental challenge of optimizing splines within dynamically shifting domains remains, but this mitigation strategy has proven effective in practice.
+This targeted approach avoids the most direct sources of information loss and instability from domain changes. In engineering ablations on Toy-2D (Table~\ref{tab:component_ablations}), disabling $\Phi$-resampling typically led to oscillatory or unstable training as domains shifted, while disabling dynamic domain updates caused spline inputs to drift far outside their learned ranges (forcing $\phi$ into saturation and $\Phi$ into extrapolation). We therefore treat dynamic domains and $\Phi$-resampling as default components unless explicitly stated otherwise (e.g., the PINN setting in Sec.~\ref{sec:pinn_poisson}). The fundamental challenge of optimizing splines within dynamically shifting domains remains, but this mitigation strategy has proven effective in practice.
 \end{remark}
 
-One particularly useful application of domain computation is the initialization of $\Phi^{(\ell)}$ splines. By computing each $\Phi^{(\ell)}$'s theoretical domain before training begins, we can initialize both its domain and codomain parameters to match this computed range, making each $\Phi^{(\ell)}$ start as an approximate identity function on its natural operating range. This provides a principled initialization strategy that ensures the initial network performs a series of near-identity transformations.
+One particularly useful application of domain computation is the initialization of $\Phi^{(\ell)}$ splines. When $\Phi$ codomain scaling $(c_c^{(\ell)},c_r^{(\ell)})$ is enabled, we compute each $\Phi^{(\ell)}$'s theoretical domain before training and (i) set its knot domain to this interval, (ii) initialize its knot coefficients to a linear ramp over that same interval so that the underlying spline represents the identity map on the interval (for both linear and cubic/\textsc{PCHIP} interpolation), and (iii) initialize $(c_c^{(\ell)},c_r^{(\ell)})$ to the domain center and radius so that the affine codomain reparameterization preserves this identity map. This provides a principled initialization strategy that ensures the initial network performs a series of near-identity transformations.
 
 \begin{remark}[Practical benefits]
-The ability to compute exact domains through interval arithmetic provides several practical benefits: (i) it enables theoretically grounded initialization without arbitrary hyperparameters, (ii) it can help diagnose training issues by detecting when values fall outside expected ranges, (iii) it ensures numerical stability by keeping spline evaluations within their intended operating regions, and (iv) it allows for adaptive domain adjustments that account for lateral mixing dynamics. These benefits distinguish Sprecher Networks from architectures with less structured internal representations.
+The ability to compute \emph{provably safe} (typically conservative) domain and range bounds through interval arithmetic provides several practical benefits: (i) it enables theoretically grounded initialization without arbitrary hyperparameters, (ii) it can help diagnose training issues by detecting when values fall outside expected ranges, (iii) it promotes numerical stability by encouraging spline evaluations to remain within their well-resolved knot regions (with explicit extension/extrapolation behavior outside the knot domain), and (iv) it allows for adaptive domain adjustments that account for lateral mixing dynamics. These benefits distinguish Sprecher Networks from architectures with less structured internal representations.
 \end{remark}
 
 \begin{table}[t]
@@ -1305,12 +1298,12 @@ Component ablated & Typical observed effect \\
 Disable domain resampling & Training can become unstable when pre-activations drift beyond initial spline domains, increasing extrapolation error. \\
 Disable domain updates & Intermediate pre-activations may drift outside predicted bounds, reducing effective capacity via saturation/clipping effects. \\
 Remove normalization & Pre-activations become poorly scaled, making spline-domain management harder and slowing optimization. \\
-Remove output scaling $(c_c,c_r)$ & Forces $\Phi$ to learn both scale and shape, often slowing convergence and degrading final accuracy. \\
+Remove $\Phi$ codomain scaling $(c_c,c_r)$ & Forces $\Phi$ to learn both scale and shape, often slowing convergence and degrading final accuracy. \\
 Remove cyclic residuals & Deep networks become harder to train, with degraded accuracy and occasional divergence. \\
 Remove lateral mixing & Wide shallow networks can plateau due to shared-weight symmetries (cf.\ Remark above). \\
 \bottomrule
 \end{tabular}
-\caption{Qualitative summary of component ablations observed across our experiments. These effects align with each component's motivation: domain management for numerical stability, normalization and output scaling for conditioning, residual connections for depth, and lateral mixing for breaking shared-weight symmetries.}
+\caption{Qualitative summary of component ablations observed across our experiments. These effects align with each component's motivation: domain management for numerical stability, normalization and $\Phi$ codomain scaling for conditioning, residual connections for depth, and lateral mixing for breaking shared-weight symmetries.}
 \label{tab:component_ablations}
 \end{table}
 
@@ -1318,9 +1311,10 @@ Remove lateral mixing & Wide shallow networks can plateau due to shared-weight s
 While comprehensive benchmarking remains future work, we provide initial empirical demonstrations to illustrate the feasibility and characteristics of SNs, including the impact of lateral mixing connections. \\
 
 \paragraph{Benchmarks used in this work.}
+
 We evaluate Sprecher Networks on synthetic supervised regression tasks and on a physics-informed Poisson problem.
 
-\textbf{Poisson PINN benchmark (manufactured solution).}
+\paragraph{Poisson PINN benchmark (manufactured solution).}\label{sec:pinn_poisson}
 We solve the Dirichlet problem
 $$\Delta f(\mathbf{x}) = g(\mathbf{x}) \quad \text{for } \mathbf{x}\in \Omega,\qquad
 f(\mathbf{x})=0 \quad \text{for } \mathbf{x}\in \partial\Omega,$$
@@ -1342,54 +1336,56 @@ To isolate the spline parameterization itself, we compare a \textbf{barebones Sp
 For the Sprecher Network, inputs are linearly rescaled from $[-1,1]^2$ to $[0,1]^2$ before the first spline evaluation, matching the $[0,1]$ spline-domain convention used for SNs in this work; the KAN baseline operates directly on $[-1,1]^2$. In both cases, derivatives are taken with respect to the original coordinates via automatic differentiation (for SN this is through the rescaling map).
 
 \emph{Optimization and evaluation.}
-We train in \texttt{torch.float64} using Adam with $10^{-3}$ learning rate, cosine learning rate decay to $10^{-5}$, and gradient-norm clipping 1.0. We report two parameter budgets: an $\approx$1200-parameter model trained for 5{,}000 epochs (mean $\pm$ std over 5 seeds), and an $\approx$3000-parameter model trained for 20{,}000 epochs (1 seed). We evaluate both models on a dense grid and report: (i) PDE residual MSE, (ii) boundary MSE, and (iii) MSE against the manufactured solution.
+We train in \texttt{torch.float64} using Adam with $10^{-3}$ learning rate, cosine learning rate decay to $10^{-5}$, and gradient-norm clipping 1.0. We report two parameter budgets: an $\approx$1200-parameter model trained for 5{,}000 epochs (mean $\pm$ std over 5 seeds), and an $\approx$3000-parameter model trained for 20{,}000 epochs (1 seed). We evaluate both models on a uniform $101\times101$ grid over $\Omega=[-1,1]^2$ and report: (i) PDE residual MSE (interior grid points), (ii) boundary MSE (boundary grid points), and (iii) $L^2$ MSE against the manufactured solution (full grid).
 
 \begin{table}[t]
   \centering
-  \caption{\textbf{Poisson PINN results (manufactured solution).} We report PDE residual MSE on a dense interior grid, boundary MSE on a dense boundary grid, and MSE against the manufactured solution (all lower is better). For the $\approx$1200-parameter setting we report mean $\pm$ std over 5 seeds; the $\approx$3000-parameter setting is reported for 1 seed due to cost.}
+  \caption{\textbf{Poisson PINN results (manufactured solution).} Metrics are evaluated on a uniform $101\times101$ grid over $\Omega=[-1,1]^2$: PDE residual MSE is computed on the interior grid points, boundary MSE on the boundary grid points, and $L^2$ MSE against the manufactured solution on the full grid (all lower is better). For the $\approx$1200-parameter setting we report mean $\pm$ std over 5 seeds; the $\approx$3000-parameter setting is reported for 1 seed due to cost.}
   \label{tab:poisson-pinn}
   \begin{tabular}{lrrr}
     \toprule
     Model & PDE MSE & Bndry MSE & $L^2$ MSE \\
     \midrule
     \multicolumn{4}{l}{\textbf{$\approx$1200 params, 5{,}000 epochs (5 seeds)}} \\
-    SN  & $1.4\times 10^{2} \pm 2.6$ & $7.8\times 10^{-2} \pm 2.5\times 10^{-2}$ & $\mathbf{4.1\times 10^{-2} \pm 1.3\times 10^{-2}}$ \\
-    KAN & $1.5\times 10^{2} \pm 4.9$ & $\mathbf{1.4\times 10^{-2} \pm 4.0\times 10^{-3}}$ & $1.1\times 10^{-1} \pm 4.2\times 10^{-2}$ \\
+    SN  & $\mathbf{1.36\times 10^{2} \pm 3.69}$ & $7.85\times 10^{-2} \pm 7.22\times 10^{-3}$ & $\mathbf{6.55\times 10^{-2} \pm 1.75\times 10^{-3}}$ \\
+    KAN & $2.41\times 10^{3} \pm 1.78\times 10^3$ & $\mathbf{2.06\times 10^{-4} \pm 4.53\times 10^{-5}}$ & $1.70\times 10^{-1} \pm 4.33\times 10^{-3}$ \\
     \midrule
     \multicolumn{4}{l}{\textbf{$\approx$3000 params, 20{,}000 epochs (1 seed)}} \\
-    SN  & $\mathbf{3.4\times 10^{-2}}$ & $6.1\times 10^{-6}$ & $\mathbf{6.0\times 10^{-6}}$ \\
-    KAN & $3.8\times 10^{-1}$ & $\mathbf{3.1\times 10^{-6}}$ & $1.6\times 10^{-4}$ \\
+    SN  & $\mathbf{1.38\times 10^2}$ & $4.76\times 10^{-2}$ & $\mathbf{1.05\times 10^{-1}}$ \\
+    KAN & $1.09\times 10^4$ & $\mathbf{8.42\times 10^{-4}}$ & $1.32\times 10^{-1}$ \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \subsection{Basic function approximation}
-We train SNs on datasets sampled from known target functions $f$. The network learns the parameters ($\eta^{(\ell)}$, $\lambda^{(\ell)}$), spline coefficients ($\phi^{(\ell)}$, $\Phi^{(\ell)}$), and when enabled, lateral mixing parameters ($\tau^{(\ell)}$, $\omega^{(\ell)}$) via gradient descent (Adam optimizer, typically $O(10^4-10^5)$ iterations) using MSE loss plus optional regularization.
+We train SNs on datasets sampled from known target functions $f$. The network learns the parameters ($\eta^{(\ell)}$, $\lambda^{(\ell)}$), spline coefficients ($\phi^{(\ell)}$, $\Phi^{(\ell)}$), and when enabled, lateral mixing parameters ($\tau^{(\ell)}$, $\omega^{(\ell)}$) via gradient descent (Adam optimizer) using an MSE objective.
 
-For 1D functions $f(x)$ on $[0,1]$, an SN like $1 \to [W] \to 1$ (one block) learns $\phi^{(1)}$ and $\Phi^{(1)}$ that accurately interpolate $f$, effectively acting as a learnable spline interpolant structured according to Sprecher's formula. Figure~\ref{fig:onevar_example} provides an example where an SN is trained on data generated from a known Sprecher structure. While the network achieves a very accurate approximation of the overall function $f(x)$, the learned components (splines $\hat{\phi}, \hat{\Phi}$, weights $\hat{\lambda}$, shift $\hat{\eta}$) only partially resemble the ground truth functions and parameters used to generate the data. Perfect recovery of internal components is generally not guaranteed, as multiple parameter combinations might yield similar final outputs. Note that lateral mixing is typically not beneficial for 1D problems due to the limited diversity in output dimensions.
+For 1D functions $f(x)$ on $[0,1]$, an SN like $1 \to [W] \to 1$ (one block) learns $\phi^{(1)}$ and $\Phi^{(1)}$ that accurately approximate $f$, effectively acting as a learnable spline
+interpolant structured according to Sprecher's formula. Figure~\ref{fig:onevar_example} provides an example where an SN is trained on data generated from a known Sprecher-style superposition. While the network achieves a very accurate approximation of the overall function $f(x)$, the learned components (splines $\hat{\phi}, \hat{\Phi}$, weights $\hat{\lambda}$, shift $\hat{\eta}$) only partially resemble the ground truth functions and parameters used to generate the data. This is expected: the internal decomposition is generally not identifiable, and in particular the learned outer spline $\hat{\Phi}$ can become strongly oscillatory/jagged even when the ground-truth outer function $\Phi$ is smooth.
 
-Moving to multivariate functions, consider the 2D scalar case $f(x,y) = (\exp(\sin(\pi x)+y^2)-1)/7$. A network like $2\to[5,8,5]\to1$ (3 blocks) can achieve high accuracy. Figure \ref{fig:twovarsprecher_revised} shows the interpretable layerwise spline plots and the final fit quality. When lateral mixing is enabled for this architecture, we observe smoother $\Phi^{(\ell)}$ splines with reduced oscillations, suggesting that lateral communication allows the network to distribute the transformation burden more evenly across output dimensions.
+Moving to multivariate functions, consider the 2D scalar case $f(x,y) = \exp(\sin(11x)) + 3y + 4\sin(8y)$. A network like $2\to[5,8,5]\to1$ (3 blocks) can achieve high accuracy. Figure
+\ref{fig:twovarsprecher_revised} shows the interpretable layerwise spline plots and the final fit quality. When lateral mixing is enabled for this architecture, we often observe a different allocation of complexity across channels and layers; however, the learned $\Phi^{(\ell)}$ splines can still be highly oscillatory, so we treat the spline plots as qualitative rather than expecting smoothness.
 
-For 2D vector-valued functions $f(x,y)=(f_1(x,y), f_2(x,y))$, deeper networks like $2\to[20, \dots, 20]\to2$ (e.g., 5 hidden layers, requiring 6 blocks) are used. Figure \ref{fig:twovarsprechervector_revised} illustrates the learned splines and the approximation of both output surfaces. Lateral mixing proves particularly beneficial here, reducing the final RMSE by 20-30\% compared to the same architecture without mixing.
+For 2D vector-valued functions $f(x,y)=(f_1(x,y), f_2(x,y))$, we use an SN of the form $2\to[20,20]\to2$ (2 hidden layers plus a final block for the vector-valued output; 3 blocks total). Figure \ref{fig:twovarsprechervector_revised} illustrates the learned splines and the approximation of both output surfaces. Lateral mixing can be beneficial here by breaking output symmetry across channels, so we enable it in this example.
 
-\begin{figure}[ht]
+\begin{figure}[htbp]
 \centering
-\includegraphics[width=\textwidth]{Figures/OneVarOneBlock.png}
-\caption{Visualization of a trained Sprecher Network with architecture \texorpdfstring{$1\to[5]\to1$}{1 -> [5] -> 1} (one block) trained on data sampled from $f(x) = \sum_{q=0}^{4} \Phi(a_q \phi(x+\eta q)+q)$, where the ground truth functions were $\phi(x) = (e^x-1)/(e-1)$ and $\Phi(x)=\sin{x}$, with shift $\eta=1/10$ and channel coefficients $\{a_q\}_{q=0}^{4} = \{1/2, -4/5, 1, 1/5, -6/5\}$. Top row: Network structure, learned monotonic spline $\phi^{(1)}$ (cyan), learned general spline $\Phi^{(1)}$ (magenta). Bottom row: Comparison between the target function $f(x)$ (dashed black) and the network output (solid red). This network was trained with regularization terms to encourage smoother splines. Lateral mixing was not used as it provides minimal benefit for 1D problems.}
+\includegraphics[width=0.8\textwidth]{Figures/Toy1DComplex-OneBlock.png}
+\caption{Visualization of a trained Sprecher Network with architecture \texorpdfstring{$1\to[5]\to1$}{1 -> [5] -> 1} (one block) trained on data sampled from $f(x) = \sum_{q=0}^{4} \Phi(a_q \phi(x+\eta q)+q)$, where the ground truth functions were $\phi(x) = (e^x-1)/(e-1)$ and $\Phi(x)=\sin{x}$, with shift $\eta=1/10$ and channel coefficients $\{a_q\}_{q=0}^{4} = \{1/2, -4/5, 1, 1/5, -6/5\}$. Top row: Network structure, learned monotonic spline $\phi^{(1)}$ (cyan), learned general spline $\Phi^{(1)}$ (magenta). Bottom row: Comparison between the target function $f(x)$ (dashed black) and the network output (solid red). Even though the ground-truth outer function $\Phi$ here is smooth, the learned outer spline $\Phi^{(1)}$ can become highly oscillatory/jagged while still yielding an accurate composite approximation, consistent with the role of $\Phi$ in Sprecher-style constructions. (This run uses the default cyclic lateral mixing; for 1D targets it typically has only a minor effect.)}
 \label{fig:onevar_example}
 \end{figure}
 
-\begin{figure}[ht]
+\begin{figure}[htbp]
 \centering
-\includegraphics[width=\textwidth]{Figures/TwoVarsThreeBlocks.png}
-\caption{Visualization of a trained \texorpdfstring{$2\to[5,8,5]\to1$}{2 -> [5,8,5] -> 1} Sprecher Network (3 blocks) approximating the scalar 2D target function $z = f(x,y) = (\exp(\sin(\pi x)+y^2)-1)/7$. Top row: Learned spline functions for each block --- monotonic splines $\phi^{(\ell)}$ (cyan) and general splines $\Phi^{(\ell)}$ (magenta). Bottom row: Comparison between the target function surface (left) and the network approximation (right). This network was trained with regularization terms and cyclic lateral mixing enabled, resulting in smoother $\Phi^{(\ell)}$ splines compared to the non-mixing variant.}
+\includegraphics[width=0.8\textwidth]{Figures/Toy2DComplex-ThreeBlocks.png}
+\caption{Example of SN approximating the scalar 2D target function $z = f(x,y) = \exp(\sin(11x)) + 3y + 4\sin(8y)$ on $(x,y)\in[0,1]^2$ using architecture \texorpdfstring{$2\to[5,8,5]\to1$}{2 -> [5,8,5] -> 1} (3 blocks). Top row: Learned spline functions for each block --- monotonic splines $\phi^{(\ell)}$ (cyan) and general splines $\Phi^{(\ell)}$ (magenta). Bottom row: Comparison between the target function surface (left) and the network approximation (right). This run uses cyclic lateral mixing (default); the learned outer splines $\Phi^{(\ell)}$ can be highly oscillatory/jagged even when the overall fit is accurate, so the per-layer spline plots should be interpreted qualitatively.}
 \label{fig:twovarsprecher_revised}
 \end{figure}
 
-\begin{figure}[ht]
+\begin{figure}[htbp]
 \centering
-\includegraphics[width=\textwidth]{Figures/TwoVarsSixBlocks.png}
-\caption{Visualization of a trained Sprecher Network with architecture \texorpdfstring{$2\to[20,20,20,20,20]\to2$}{2 -> [20,...] -> 2} (5 hidden layers, 6 blocks total), approximating a vector-valued function $f(x,y)=((\exp(\sin(\pi x)+y^2)-1)/7,\; \frac{1}{4}y+\frac{1}{5}y^2-x^3+\frac{1}{5}\sin(7x))$. Top row: Learned spline functions for each block ($\phi^{(\ell)}$ in cyan, $\Phi^{(\ell)}$ in magenta). Bottom row: Comparison between the target surfaces and the network outputs for both output dimensions (dim 0 left, dim 1 right; target=viridis/blue-green, prediction=autumn/red-yellow overlay). Bidirectional lateral mixing was enabled, improving convergence speed and final accuracy.}
+\includegraphics[width=0.8\textwidth]{Figures/Toy2DVector-ThreeBlocks.png}
+\caption{Example of SN approximating a 2D vector-valued function $f:[0,1]^2\to\mathbb{R}^2$ with components $f_1(x,y) = \frac{\exp(\sin(\pi x) + y^2)-1}{7}$ and $f_2(x,y) = \frac{1}{4}y + \frac{1}{5}y^2 - x^3 + \frac{1}{5}\sin(7x)$. The network architecture is \texorpdfstring{$2\to[20,20]\to2$}{2 -> [20,20] -> 2} (2 hidden layers plus an additional output block; 3 blocks total). The first row shows the learned monotonic splines $\phi^{(\ell)}$ (cyan) and general splines $\Phi^{(\ell)}$ (magenta) for each block. The second row shows, for each output component (left: $f_1$, right: $f_2$), the target surface overlaid with the corresponding network output surface. Lateral mixing was enabled (cyclic in this run); as in other examples, the learned $\Phi^{(\ell)}$ splines can be highly oscillatory/jagged even when the overall fit is accurate.}
 \label{fig:twovarsprechervector_revised}
 \end{figure}
 
@@ -1400,19 +1396,27 @@ To evaluate the contribution of lateral mixing, we conducted ablation studies co
 
 \paragraph{Scalar outputs:} For many scalar-output regression tasks with moderate widths, lateral mixing yields only modest gains. However, scalar-output SNs can still benefit substantially in regimes where the shared-weight constraint induces strong symmetry across channels (e.g., very wide shallow networks), where lateral mixing provides lightweight cross-channel interaction that can break optimization plateaus (see the $2\to[120]\to1$ example above). Note that the final summation is a fixed linear readout \emph{after} applying $\Phi$ channelwise; it does not provide pre-$\Phi$ cross-channel communication, so lateral mixing remains a distinct (and sometimes crucial) mechanism even when the network output is scalar.
 
-\paragraph{Vector outputs:} On vector-valued regression tasks, networks with lateral mixing (cyclic variant) achieved 15-30\% lower RMSE with only a marginal increase in parameters (<5\%). The improvement was most pronounced for functions where output dimensions exhibit strong correlations, suggesting that lateral mixing enables the network to learn these dependencies despite the constraint of shared splines.
+\paragraph{Vector outputs:} On vector-valued regression tasks, networks with lateral mixing (cyclic variant) often achieved lower RMSE with only a marginal increase in parameters (one additional per-channel weight plus a shared scale). The improvement was most pronounced for functions where output dimensions exhibit strong correlations, suggesting that lateral mixing can help the network capture cross-output dependencies despite the constraint of shared splines.
 
-\paragraph{Convergence speed:} Networks with lateral mixing often converged faster during training, requiring 20-40\% fewer iterations to reach the same loss threshold. This suggests that lateral connections provide beneficial gradient pathways that accelerate optimization.
+\paragraph{Convergence speed:} Networks with lateral mixing often converged faster during training in our ablations, reaching the same loss threshold in fewer iterations. This suggests that lateral connections can provide beneficial gradient pathways that accelerate optimization, although the effect is task-dependent.
 
-\paragraph{Spline smoothness:} Visual inspection of learned splines reveals that lateral mixing tends to produce smoother $\Phi^{(\ell)}$ functions with reduced oscillations, particularly in deeper networks. This smoothing effect may contribute to better generalization on held-out test data.
+\paragraph{Spline behavior:} Visual inspection of learned splines suggests that lateral mixing can change how complexity is distributed across output channels. In particular, the learned outer splines $\Phi^{(\ell)}$ can remain highly oscillatory even when the overall fit is accurate, which is consistent with Sprecher's original construction. KANs are often motivated by interpretability because each edge carries an explicit learned univariate function \cite{liu2024kan}; however, as Figure~\ref{fig:sn_vs_kan_splines} illustrates, these learned edge functions can also be jagged/noisy under parameter parity, so visual interpretability does not automatically imply smoothness.
 
 \subsection{Baseline apples-to-apples comparisons: SNs vs.\ KANs}\label{sec:sn-kan-baselines}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\textwidth]{Figures/SNvsKAN-Splines.png}
+\caption{Side-by-side comparison of learned functions and internal univariate splines for an SN and a KAN on the Toy-2D benchmark ($f(x,y)=\exp(\sin(\pi x)+y^2)$) under parameter parity ($\approx 1200$ parameters). For this figure we use a spline-isolation setting (no residual connections, no normalization, no lateral mixing, fixed spline domains) to make the learned univariate functions directly comparable. In the representative run shown, the SN (left; $\text{arch}=[3,3,3]$, $1201$ params) attains MSE $4.334\times 10^{-2}$ and the KAN (right; width=3, layers=4, $1198$ params) attains MSE $5.279\times 10^{-2}$. KANs are often motivated by interpretability because each edge carries an explicit learned univariate function \cite{liu2024kan}, yet the learned edge functions (27 total here, one per edge) can still be jagged/noisy in practice. In contrast, the SN achieves a comparable fit using one shared pair $(\phi^{(\ell)},\Phi^{(\ell)})$ per block --- $6$ shared splines total across three blocks --- with similarly oscillatory outer splines $\Phi^{(\ell)}$, consistent with the role of $\Phi$ in Sprecher-style superpositions.}
+
+\label{fig:sn_vs_kan_splines}
+\end{figure}
 
 \paragraph{Rationale.}
 The goal of this subsection is to provide simple, controlled, apples-to-apples tests where Sprecher Networks (SNs) and Kolmogorov–Arnold Networks (KANs) are trained under the same budget and with matched modeling capacity, so that we can isolate architectural inductive biases rather than hyperparameter tuning. We do \emph{not} claim that SNs dominate KANs on every task; rather, we highlight representative settings where SNs perform as well or better, sometimes substantially so, while keeping the comparison fair.
 
 \paragraph{Protocol (fairness constraints).}
-Unless otherwise stated, each head-to-head uses exactly $4000$ training epochs for both architectures. Both models use a standard learned linear residual projection (a dense matrix when $d_{\mathrm{in}}\neq d_{\mathrm{out}}$, or a learned scalar weight when $d_{\mathrm{in}}=d_{\mathrm{out}}$). KANs use cubic ($\deg=3$) spline bases. SNs use domain warmup early in training (300–400 epochs depending on the task) and then freeze the learned domains; no lateral mixing or other SN-specific auxiliaries are enabled. We match parameter counts by choosing the KAN basis size $K$ to be as close as possible (preferring $\leq$) to the SN parameter count, and we keep batch-normalization (BN) semantics aligned at test time with the training semantics. Seeds, datasets, and train/test splits are identical across models. Training is full-batch (no mini-batching): each epoch uses the entire training set. Primary metrics are test set RMSE or MSE (reported per task below); for multi-head monotone problems we also report a monotonicity-violation rate and a correlation-structure error.
+Unless otherwise stated (e.g., Figure~\ref{fig:sn_vs_kan_splines}), each head-to-head uses exactly $4000$ training epochs for both architectures. Both models use the same \emph{linear} residual style: a learned scalar gate when $d_{\mathrm{in}}=d_{\mathrm{out}}$, and a learned projection matrix $W\in\mathbb{R}^{d_{\mathrm{in}}\times d_{\mathrm{out}}}$ when $d_{\mathrm{in}}\neq d_{\mathrm{out}}$. KANs use shape-preserving cubic Hermite (PCHIP; $\deg=3$) edge splines. SNs use domain warmup early in training (300–400 epochs depending on the task; relative domain safety margin $0.01$) and then freeze the learned domains; lateral mixing is disabled (i.e., $\tau^{(\ell)}=0$) in these parity runs. We match parameter counts by choosing the KAN spline size $K$ (the number of learnable knot values / spline coefficients per univariate edge spline) to be as close as possible (preferring $\leq$) to the SN parameter count, and we keep batch-normalization (BN) semantics aligned at test time with the training semantics. Seeds, datasets, and train/test splits are identical across models. Training is full-batch (no mini-batching): each epoch uses the entire training set. Primary metrics are test set RMSE or MSE (reported per task below); for multi-head monotone problems we also report a monotonicity-violation rate and a correlation-structure error.
 
 \paragraph{Reporting conventions (and what we \emph{do not} report).}
 To avoid confounds from implementation-level vectorization (e.g., a highly vectorized KAN forward vs.\ a less vectorized SN implementation), we \emph{do not} treat wall-clock time as a primary figure of merit here. We record and report it for completeness, but treat it as secondary and highly implementation-dependent; we therefore do not draw algorithmic conclusions from wall-clock time.
@@ -1426,16 +1430,16 @@ To avoid confounds from implementation-level vectorization (e.g., a highly vecto
 \paragraph{Setup.}
 We sample inputs $\mathbf{x}\sim \mathrm{Unif}([0,1]^D)$ with $D=20$ and define $m=9$ heads at quantile levels
 $\tau_j=\mathrm{linspace}(0.1,0.9)$, with $z_j=\Phi_{\mathcal{N}}^{-1}(\tau_j)=\sqrt{2}\,\mathrm{erf}^{-1}(2\tau_j-1)$, where $\Phi_{\mathcal{N}}$ is the standard normal CDF (to avoid confusion with the outer spline $\Phi$).
-For each coordinate, define a strictly increasing feature
+For each coordinate, define a monotone sigmoid feature
 $$h_i(x_i)=\operatorname{sigmoid}\!\bigl(a_i(x_i-c_i)\bigr),$$
 where $\operatorname{sigmoid}(z)=\frac{1}{1+e^{-z}}$, $a_i\sim \mathrm{Unif}[2,8]$, and $c_i\sim \mathrm{Unif}[0.2,0.8]$.
 Draw raw positive weights $w_i^{\mathrm{raw}},v_i^{\mathrm{raw}}\sim \mathrm{Unif}[0,1]$ and normalize
 $w_i=w_i^{\mathrm{raw}}/\sum_k w_k^{\mathrm{raw}}$ and
 $v_i=v_{\mathrm{scale}}\,v_i^{\mathrm{raw}}/\sum_k v_k^{\mathrm{raw}}$ with $v_{\mathrm{scale}}=0.25$.
 Let $s_0=0.15$ and define
-$$\sigma(\mathbf{x})=\max\!\Bigl(10^{-5},\,s_0+\sum_{i=1}^{D} v_i\,h_i(x_i)\Bigr).$$
+$$\sigma(\mathbf{x})=s_0+\max\!\Bigl(10^{-5},\,\sum_{i=1}^{D} v_i\,h_i(x_i)\Bigr).$$
 To introduce controlled head correlations while preserving monotonicity, we add positive pairwise terms:
-choose $n_{\mathrm{pairs}}=\max(1,\mathrm{round}(0.15D))$ random distinct pairs $(i,j)$ and set
+choose $n_{\mathrm{pairs}}=\mathrm{round}(0.15D)$ disjoint index pairs $(i,j)$ (implemented by sampling $2n_{\mathrm{pairs}}$ distinct indices without replacement and grouping them into pairs) and set
 $$\mu(\mathbf{x})=\sum_{i=1}^{D} w_i\,h_i(x_i)\;+\;0.08\sum_{(i,j)} h_i(x_i)\,h_j(x_j).$$
 Finally, outputs are
 $$y_j=\tanh\,\!\bigl(\beta(\mu(\mathbf{x})+\sigma(\mathbf{x})z_j)\bigr),\qquad \beta=0.8,$$
@@ -1454,19 +1458,26 @@ Best seed (minimum over seeds of mean RMSE): SN $=4.47\times 10^{-3}$, KAN $=6.5
 \paragraph{Discussion.}
 This MQSI family is structurally aligned with an SN block $s_q=\sum_i \lambda_i\,\phi(x_i+\eta q)+\cdots$ followed by $\Phi$, so the learned $q$‑shift and monotone $\phi$ produce heads that are smooth shifts of a shared latent index; $\Phi$ handles squashing. KANs can approximate this but lack that inductive bias and rely on fixed grids. Under parameter parity and matched BN semantics, the bias yields lower head‑averaged error and markedly better preservation of cross‑head correlations, with no practical loss of monotonicity. KAN trained faster on CPU in this setting but at higher error.
 
-\subsubsection{Dense-head shifts (12D, $m{=}64$): SN vs.\ KAN}
+\subsubsection{Dense-head shifts (DenseHeadShift; 12D, $m{=}64$): SN vs.\ KAN}
 \label{subsubsec:dense-head-shift-12d-64h}
 
 \textbf{Task.} Multi-head regression in which each output head is a smoothly shifted version of a shared latent index (we denote the \emph{task}'s head-shift coefficient by $a_{\mathrm{shift}}$ to avoid confusion with the SN channel-spacing constant $\alpha$):
-\[
-y_j(x)\;=\;\tanh\!\Big(\beta\big[\mu(x)+\sigma(x)z_j+a_{\mathrm{shift}}\,q_j + q_{\mathrm{bias}}\,q_j\big]\Big),
-\]
-with $x\in[0,1]^D$, $j=0,\dots,m{-}1$, $q_j\in[-1,1]$ on a uniform grid, and $z_j=\Phi_{\mathcal{N}}^{-1}(\tau_j)$. Here $\mu(\mathbf{x})$ and $\sigma(\mathbf{x})$ are constructed exactly as in the MQSI benchmark above (same $h_i$, weight normalization, and positive pairwise interactions), but with $D=12$ and $m=64$ heads. We use $\tau_j=\mathrm{linspace}(0.1,0.9)$ and $q_j$ as a uniform grid on $[-1,1]$. We retain the parity/eval protocol from the parity benches (parameter matching and BN evaluation mode).
+$$y_j(x)\;=\;\tanh\!\Big(\beta\big[\mu(x)+\sigma(x)z_j+a_{\mathrm{shift}}\,q_j + q_{\mathrm{bias}}\,q_j\big]\Big),$$
+with $x\in[0,1]^D$, $j=0,\dots,m{-}1$, $q_j\in[-1,1]$ on a uniform grid, and $z_j=\Phi_{\mathcal{N}}^{-1}(\tau_j)$. Here we set $D=12$ and $m=64$ and construct $\mu(\mathbf{x})$ and $\sigma(\mathbf{x})$ as follows.
+For each coordinate,
+$$h_i(x_i)=\operatorname{sigmoid}\!\bigl(a_i(x_i-c_i)\bigr),$$
+where $\operatorname{sigmoid}(z)=\frac{1}{1+e^{-z}}$, $a_i\sim \mathrm{Unif}[2,8]$, and $c_i\sim \mathrm{Unif}[0.2,0.8]$.
+Draw raw positive weights $w_i^{\mathrm{raw}},v_i^{\mathrm{raw}}\sim \mathrm{Unif}[0,1]$ and normalize
+$w_i=w_i^{\mathrm{raw}}/\sum_k w_k^{\mathrm{raw}}$ and
+$v_i=v_{\mathrm{scale}}\,v_i^{\mathrm{raw}}/\sum_k v_k^{\mathrm{raw}}$ with $v_{\mathrm{scale}}=0.25$.
+Let $\mathcal{P}$ be a set of $\max(1,\mathrm{round}(0.15D))$ random distinct pairs $(i,k)$ with $1\le i<k\le D$, and set $s_0=0.15$. Then
+$$\sigma(\mathbf{x})=s_0+\max\!\Bigl(10^{-5},\sum_{i=1}^D v_i h_i(x_i)\Bigr),$$
+$$\mu(\mathbf{x})=\sum_{i=1}^D w_i h_i(x_i)+0.08\sum_{(i,k)\in\mathcal{P}} h_i(x_i)h_k(x_k).$$ We use $\tau_j=\mathrm{linspace}(0.1,0.9)$ and $q_j$ as a uniform grid on $[-1,1]$. We use the same evaluation protocol throughout this subsection: all metrics are computed at test time; when BatchNorm is enabled, we use per-batch normalization statistics while freezing the running-statistics buffers.
 
-\textbf{Setup.} $D{=}12$, $m{=}64$, $a_{\mathrm{shift}}{=}0.08$, $\beta{=}0.7$, $q_{\mathrm{bias}}{=}0.15$; train for 4000 epochs on CPU on a fixed i.i.d.\ training set of $n_{\mathrm{train}}{=}1024$ samples; $n_{\mathrm{test}}{=}50{,}000$. BN evaluation uses per-batch statistics while freezing the running-statistics buffers (i.e., no running-mean/variance updates during evaluation). Parameter parity was enforced by choosing the KAN basis size $K$ to be as close as possible to (and not exceeding) the SN parameter count, yielding \#params $\approx 3072$ for both models; the resulting KAN basis size was $K{=}4$. The specific model configurations were:
+\textbf{Setup.} $D{=}12$, $m{=}64$, $a_{\mathrm{shift}}{=}0.7$, $\beta{=}0.8$, $q_{\mathrm{bias}}{=}0.6$; train for 4000 epochs on CPU on a fixed i.i.d.\ training set of $n_{\mathrm{train}}{=}1024$ samples; $n_{\mathrm{test}}{=}50{,}000$. BN evaluation uses per-batch statistics while freezing the running-statistics buffers (i.e., no running-mean/variance updates during evaluation). Parameter parity was enforced by choosing the KAN basis size $K$ to be as close as possible to (and not exceeding) the SN parameter count, yielding \#params $\approx 3072$ for both models; the resulting KAN basis size was $K{=}4$. The specific model configurations were:
 \begin{itemize}
 \item \textbf{SN:} Two hidden Sprecher blocks of width $32$ (architecture $12\to32\to32\to64$), with $60$ knots for each inner spline $\phi$ and each outer spline $\Phi$; BatchNorm after each block except the first; linear residual connections; no lateral mixing; and dynamic spline-domain updates for the first $400$ epochs, frozen thereafter.
-\item \textbf{KAN baseline:} A lightweight edge-wise KAN with hidden widths $(3,24,4)$ (architecture $12\to3\to24\to4\to64$), degree-$3$ splines with $K{=}4$ basis functions per edge; BatchNorm after each layer except the first; linear residual connections; and linear extrapolation outside the knot interval.
+\item \textbf{KAN baseline:} A lightweight edge-wise KAN with hidden widths $(3,24,4)$ (architecture $12\to3\to24\to4\to64$), degree-$3$ splines with $K{=}4$ learnable spline coefficients per edge; BatchNorm after each layer except the first; linear residual connections; and linear extrapolation outside the knot interval.
 \end{itemize}
 
 \textbf{Metric.} Mean per-head RMSE over the $m{=}64$ heads on the held-out test set (we report both best-of-10 seeds and across-seed aggregates).
@@ -1479,10 +1490,10 @@ with $x\in[0,1]^D$, $j=0,\dots,m{-}1$, $q_j\in[-1,1]$ on a uniform grid, and $z_
 \item \emph{Wall-clock (train time; CPU).} Averaging the ten recorded wall-clock training times: KAN $\,\approx$ \textbf{476\,s}, SN $\,\approx$ \textbf{1{,}433\,s}. For reference, KAN runs were in the $\sim[338,624]$\,s range and SN runs in the $\sim[1{,}241,1{,}607]$\,s range.
 \end{itemize}
 
-\textbf{Takeaways.} On this dense-head shift task—whose structure matches SN's shared-$\phi/\Phi$ plus head-wise shift inductive bias—SN attains markedly lower error (best-of-10 $2.04\times$ better, and $\approx27\%$ lower RMSE on average) under strict parameter parity ($\sim$3k parameters each, KAN $K{=}4$). KAN trains $\approx3\times$ faster on CPU but shows consistently higher RMSE in this setting. The occasional SN monotonicity violations suggest that adding an explicit head-order regularizer or constraint would likely remove those outliers without changing the overall accuracy picture.
+\textbf{Takeaways.} On this dense-head shift task, whose structure matches SN's shared-$\phi/\Phi$ plus head-wise shift inductive bias, SN attains markedly lower error (best-of-10 $2.04\times$ better, and $\approx21\%$ lower RMSE on average (equivalently, KAN is $\approx27\%$ higher)) under strict parameter parity ($\sim$3k parameters each, KAN $K{=}4$). KAN trains $\approx3\times$ faster on CPU but shows consistently higher RMSE in this setting. The occasional SN monotonicity violations suggest that adding an explicit head-order regularizer or constraint would likely remove those outliers without changing the overall accuracy picture.
 
 \paragraph{Summary across baseline tasks.}
-Table~\ref{tab:baseline-summary} collates the head-to-heads above. In both cases we observe SNs outperform KANs at matched parameter budgets and training epochs. The MQSI task, which directly matches the SN compositional/shift bias, shows the clearest gap (including fewer monotonicity violations); the DenseHeadShift task is closer, with SNs typically ahead by a modest margin.
+Table~\ref{tab:baseline-summary} collates the head-to-heads above. In both cases we observe SNs outperform KANs at matched parameter budgets and training epochs. The MQSI task, which directly matches the SN compositional/shift bias, shows the clearest gap in correlation-structure fidelity; the DenseHeadShift task is closer, with SNs typically ahead by a modest margin.
 
 \begin{table}[h!]
 \centering
@@ -1503,7 +1514,7 @@ DenseHeadShift (12D, 64 heads) & Mean RMSE $\downarrow$ (10 seeds) & $5.47\times
 
 \paragraph{Reproducibility checklist (concise).}
 \begin{itemize}[leftmargin=*,nosep]
-\item \textbf{Epochs/optimizer:} $4000$ epochs for both models. We use Adam with gradient-norm clipping $1.0$. For SNs we use learning rate $3\times 10^{-4}$ for all non-codomain parameters and (when enabled) $10^{-3}$ for $(c_c,c_r)$ codomain parameters; weight decay $10^{-7}$. For KANs we use learning rate $10^{-3}$ and weight decay $10^{-6}$ (no other tuning beyond the fairness knobs).
+\item \textbf{Epochs/optimizer:} $4000$ epochs for both models. We use Adam with gradient-norm clipping $1.0$. For SNs we use learning rate $3\times 10^{-4}$ for the main parameters, $5\times 10^{-4}$ for lateral-mixing parameters (when enabled), and $10^{-3}$ for $(c_c,c_r)$ codomain parameters (when enabled); weight decay $10^{-7}$. For KANs we use learning rate $10^{-3}$ and weight decay $10^{-6}$ (no other tuning beyond the fairness knobs).
 \item \textbf{Residuals/BN:} Linear residuals in both; BatchNorm layers placed ``after'' each layer/block, and evaluated using per-batch statistics without updating running-mean/variance buffers.
 \item \textbf{Parity:} Parameter matching via a closed-loop count of KAN parameters as a function of $K$ (prefer $\leq$).
 \item \textbf{Data:} Identical $(x_{\text{train}},y_{\text{train}})$ and test sets across models per task; fixed seeds.
@@ -1512,88 +1523,8 @@ DenseHeadShift (12D, 64 heads) & Mean RMSE $\downarrow$ (10 seeds) & $5.47\times
 \paragraph{Takeaways.}
 These controlled baselines demonstrate that there exist natural tasks, particularly those exhibiting shared-index families or smooth saturations, on which SNs achieve lower test error than parameter-matched KANs under equal training budgets. The observed margins range from modest to substantial (especially on structured multi-head problems); we expect this picture to sharpen as we expand the suite with $\sim$8 additional tasks in the same format.
 
-\subsection{Ablation study: role of the shift $\eta$}\label{sec:ablation_eta}
-To empirically validate the importance of the internal shift parameter $\eta^{(\ell)}$ noted in Remark \ref{rem:shiftneeded}, ablation studies can be performed. Training SNs with $\eta^{(\ell)}$ fixed to 0 across all blocks typically results in significantly higher final RMSE (often 1-2 orders of magnitude worse) and potentially slower convergence or saturation at poorer loss values, especially for deeper networks. This confirms that the $\eta q$ shift inside $\phi^{(\ell)}$ is not redundant and plays a crucial role in the expressivity or optimization dynamics of multi-layer SNs. Interestingly, the degradation is less severe when lateral mixing is enabled, suggesting that lateral connections may partially compensate for the loss of shift-based diversity.
-
-\paragraph{Dataset.}\label{sec:toy4to5}
-We consider a synthetic smooth regression problem with four inputs $\mathbf{x}=(x_1,x_2,x_3,x_4)\sim \mathrm{Unif}([0,1]^4)$ and five outputs $\mathbf{y}(\mathbf{x})=(y_1,\dots,y_5)\in\mathbb{R}^5$ defined by
-\begin{align*}
-y_1(\mathbf{x}) &= \sin(2\pi x_1)\cos(\pi x_2),\\
-y_2(\mathbf{x}) &= \exp\!\big(-2(x_1^2+x_2^2)\big),\\
-y_3(\mathbf{x}) &= x_3^3 - x_4^2 + \tfrac{1}{2}\sin(5x_3),\\
-y_4(\mathbf{x}) &= \operatorname{sigmoid}\!\big(3(x_1+x_2-x_3+x_4)\big),\\
-y_5(\mathbf{x}) &= \tfrac{1}{2}\sin(4\pi x_1 x_4) + \tfrac{1}{2}\cos(3\pi x_2 x_3),
-\end{align*}
-where $\operatorname{sigmoid}(t)=1/(1+e^{-t})$. We train on a fixed i.i.d.\ training set of size $n_{\mathrm{train}}=1024$ and report all metrics on a held-out i.i.d.\ test set of size $n_{\mathrm{test}}=50{,}000$ from the same distribution.
-
-\paragraph{Metrics.}
-For predicted outputs $\widehat{Y}\in\mathbb{R}^{N\times d}$ and ground truth $Y\in\mathbb{R}^{N\times d}$ on the test set ($N$ points, $d=5$ heads), we report:
-
-$$\mathrm{RMSE}_j \;:=\; \Big(\tfrac{1}{N}\sum_{n=1}^{N}(\widehat{y}_{nj}-y_{nj})^2\Big)^{\!1/2},
-\qquad
-\overline{\mathrm{RMSE}} \;:=\; \tfrac{1}{d}\sum_{j=1}^{d}\mathrm{RMSE}_j,$$
-
-and a \emph{correlation-structure error}
-
-$$\Delta_{\mathrm{corr}}
-\;:=\;
-\big\|\mathrm{Corr}(Y)-\mathrm{Corr}(\widehat{Y})\big\|_{F},$$
-
-i.e., the Frobenius norm of the difference between the empirical Pearson correlation matrices of the true and predicted outputs.\footnote{
-$\mathrm{Corr}(Y)\in\mathbb{R}^{d\times d}$ is computed by standardizing each output head across the test set and forming the head-by-head correlation matrix; $\|\cdot\|_{F}$ denotes the Frobenius norm. Thus $\Delta_{\mathrm{corr}}$ is scale-invariant and isolates how well a model captures \emph{inter-head} structure. All five heads had non-negligible variance in these runs, so all were included in $\Delta_{\mathrm{corr}}$.}
-
-\paragraph{Architectures, budgets, and caveats.}
-SN uses two hidden blocks of width $15$ (total of $514$ trainable parameters).
-Our KAN baselines vary width and per-edge spline resolution $K$ to be in a similar parameter range.
-To keep the comparison transparent, we used a minimal KAN-style layer with \emph{edge-wise} learned univariate activation
-
-$$\phi(x)\;=\;w_b\,\mathrm{silu}(x)\;+\;w_s\,\text{spline}(x),$$
-
-matching the residual design advocated for KANs,\footnote{KANs place learnable 1D functions on edges and (in many KAN implementations) add a small residual base activation; see, e.g., Eqs.~(2.10)--(2.12) and surrounding discussion in \cite{liu2024kan}.}
-but with the following simplifications vs.\ the full \emph{pykan} setup:
-\begin{itemize}
-  \item the spline is a \textbf{1D piecewise-linear} lookup on a \textbf{fixed, uniform grid} (no B-spline basis, no grid-extension or grid-updating during training);
-  \item training uses standard Adam on the full training set (no LBFGS stages);
-  \item no sparsification/pruning or manual symbolification;
-  \item inputs are passed through unchanged (no per-edge input normalization or domain adaptation), so both models receive identical raw features.
-\end{itemize}
-These choices make our KAN baseline easy to audit and reproducible, but they are not necessarily optimal on several benchmarks.\footnote{Grid extension and other KAN implementation details (Sec.~2.4 of \cite{liu2024kan}) are known to improve accuracy/speed trade-offs on several benchmarks.}
-
-\begin{table}[t]
-\centering
-\setlength{\tabcolsep}{7pt}
-\renewcommand{\arraystretch}{1.15}
-\begin{tabular}{lrrrrr}
-\hline
-Model \& shape & Params & Train MSE & $\overline{\mathrm{RMSE}}$ & $\Delta_{\mathrm{corr}}$ & Train time (s)\\
-\hline
-\multicolumn{6}{l}{\emph{Run 1} (4000 epochs, CPU)} \\
-SN $[15,15]$ & 514  & 0.02555 & 0.17994 & 0.37600 & 85.87 \\
-KAN $[7,7],\,K{=}2$ & 458  & 0.11152 & 0.33092 & 3.56547 & 66.30 \\
-\hline
-\multicolumn{6}{l}{\emph{Run 2} (4000 epochs, CPU)} \\
-SN $[15,15]$ & 514  & 0.02162 & 0.16480 & 0.33417 & 81.42 \\
-KAN $[10,10],\,K{=}4$ & 1150 & 0.07975 & 0.28114 & 1.75026 & 105.70 \\
-\hline
-\end{tabular}
-\caption{\textbf{SN vs.\ KAN on a 4$\to$5 smooth synthetic regression.}
-Each row reports a single training run under the same protocol; SN uses $514$ parameters in both runs.
-Across comparable or even larger budgets, SN attains $\approx\!1.84\times$ (Run 1) and $\approx\!1.71\times$ (Run 2) lower mean test RMSE and a $5$--$9.5\times$ smaller correlation-structure error.
-Wall-clock times are broadly comparable in this unoptimized setting.}
-\label{tab:sn-vs-kan-4d5}
-\end{table}
-
-\paragraph{Takeaways.}
-(i) At similar parameter scale, SN reduces the average test RMSE by a factor of $\sim$1.7--1.8 relative to our KAN baseline on this coupled multi-output task.
-(ii) The $5$--$9.5\times$ reduction in $\Delta_{\mathrm{corr}}$ shows that SNs capture \emph{inter-head} dependencies far more faithfully here.
-(iii) Increasing KAN width and $K$ (Run 002) narrows the gap somewhat in $\Delta_{\mathrm{corr}}$ but does not reverse it; the mean RMSE gap also persists.
-(iv) Timing is mixed but similar (SN slower in Run 1, faster in Run 2) and reflects basic, non-optimized PyTorch code for both models; we did not employ KAN-specific speedups such as grid extension or pruning.
-
-\medskip
-\noindent\textbf{Reproducibility.} All numbers in Table~\ref{tab:sn-vs-kan-4d5} were produced using the same fixed train/test split (per seed) and identical optimization and evaluation settings for both models.
-
 \section{Limitations and future work}
-The primary limitation of this work is the gap between our theoretically-grounded single-layer model and our empirically-driven deep architecture. While single-layer SNs inherit universal approximation properties directly from Sprecher's theorem, the universality and approximation bounds of deep, compositional SNs remain open theoretical questions (Conjectures \ref{conj:vector} and \ref{conj:deep_universal}). The role of lateral mixing in these theoretical properties is particularly unclear—while it empirically improves performance, its theoretical justification within the Sprecher framework remains elusive.
+The primary limitation of this work is the gap between our theoretically-grounded single-layer model and our empirically-driven deep architecture. While single-layer SNs inherit universal approximation properties directly from Sprecher's theorem, the universality and approximation bounds of deep, compositional SNs remain open theoretical questions (Conjectures \ref{conj:vector} and \ref{conj:deep_universal}). The role of lateral mixing in these theoretical properties is particularly unclear, while it empirically improves performance, its theoretical justification within the Sprecher framework remains elusive.
 
 The Sprecher block design imposes strong constraints: forcing all feature interactions through two shared splines and using weight vectors rather than matrices heavily restricts expressive power compared to standard architectures. While lateral mixing partially alleviates this constraint by enabling limited cross-dimensional communication, it represents an ad-hoc enhancement rather than a principled extension of Sprecher's theory. This represents a fundamental trade-off between parameter efficiency and flexibility that may limit performance on functions not aligned with this compositional structure.
 
@@ -1605,16 +1536,16 @@ Beyond addressing these immediate challenges, SNs open several intriguing resear
 
 The architecture's properties suggest unique opportunities in scientific machine learning where both interpretability and parameter efficiency are valued. One particularly compelling possibility is dimensionality discovery: the architecture's sensitive dependence on input dimension could enable inference of the intrinsic dimensionality of data-generating processes. By training SNs with varying $d_{\mathrm{in}}$ and using model selection criteria that balance fit quality against complexity, researchers might determine the true number of relevant variables in systems where this is unknown, a valuable capability in many scientific domains. The lateral mixing patterns learned by the network could additionally reveal structural relationships between output dimensions, potentially uncovering hidden symmetries or conservation laws in physical systems. Furthermore, the explicit structure of learned splines could enable integration with symbolic regression tools to extract closed-form expressions for the learned $\phi^{(\ell)}$ and $\Phi^{(\ell)}$ functions, potentially revealing underlying mathematical relationships in data.
 
-Architectural enhancements also merit exploration. Unlike KANs where edge pruning can significantly reduce parameters, SNs' vector structure suggests different optimization strategies. Automatic pruning of entire Sprecher blocks based on their contribution to network output could yield more compact architectures. The learned lateral mixing weights could guide this pruning—blocks with near-zero mixing weights might be candidates for removal. For very high-dimensional problems where even $O(N)$ scaling becomes prohibitive, hybrid approaches using low-rank approximations for $\lambda^{(\ell)}$ or replacing splines with small neural sub-networks in certain blocks could maintain efficiency while improving expressivity. Alternatively, hierarchical lateral mixing patterns (e.g., mixing within local groups before global mixing) could provide a middle ground between full connectivity and the current nearest-neighbor approach.
+Architectural enhancements also merit exploration. Unlike KANs where edge pruning can significantly reduce parameters, SNs' vector structure suggests different optimization strategies. Automatic pruning of entire Sprecher blocks based on their contribution to network output could yield more compact architectures. The learned lateral mixing weights could guide this pruning: blocks with near-zero mixing weights might be candidates for removal. For very high-dimensional problems where even $O(N)$ scaling becomes prohibitive, hybrid approaches using low-rank approximations for $\lambda^{(\ell)}$ or replacing splines with small neural sub-networks in certain blocks could maintain efficiency while improving expressivity. Alternatively, hierarchical lateral mixing patterns (e.g., mixing within local groups before global mixing) could provide a middle ground between full connectivity and the current nearest-neighbor approach.
 
 The interaction between lateral mixing and other architectural components deserves systematic investigation. How do different mixing topologies (cyclic, bidirectional, or more complex patterns) interact with network depth? Can theoretical guarantees be established for specific mixing patterns? Is there an optimal ratio between the lateral scale $\tau$ and the main transformation strength? These questions highlight how theorem-inspired architectures enhanced with empirical innovations can open new research avenues beyond simply providing alternative implementations of existing methods.
 
 \section{Conclusion}
 We have introduced Sprecher Networks (SNs), a trainable architecture built by re-imagining the components of David Sprecher's 1965 constructive proof as the building blocks for a modern deep learning model. By composing functional blocks that utilize shared monotonic and general splines, learnable mixing weights, explicit shifts, and optionally lateral mixing connections, SNs offer a distinct approach to function approximation that differs fundamentally from MLPs, KANs, and other existing architectures.
 
-The key contributions are demonstrating that Sprecher's shallow, highly-structured formula can be extended into an effective deep architecture with remarkable parameter efficiency: $O(LN + LG)$ compared to MLPs' $O(LN^2)$ or KANs' $O(LN^2G)$, and achieving unique memory complexity of $O(LN)$ through sequential computation strategies compared to MLPs' $O(LN^2)$. This dual efficiency in both parameters and memory comes from adhering to Sprecher's use of weight vectors rather than matrices, representing a strong architectural constraint that may serve as either beneficial inductive bias or limitation depending on the problem domain. The addition of lateral mixing connections provides a parameter-efficient mechanism for intra-block communication, partially addressing the limitations of the constrained weight structure while maintaining the overall efficiency of the architecture.
+The key contributions are demonstrating that Sprecher's shallow, highly-structured formula can be extended into an effective deep architecture with remarkable parameter efficiency: $O(LN + LG)$ compared to MLPs' $O(LN^2)$ or KANs' $O(LN^2G)$, and enabling $O(LN)$ \emph{forward working memory} (peak intermediate storage) through sequential computation strategies compared to MLPs' $O(LN^2)$. This dual efficiency in both parameters and memory comes from adhering to Sprecher's use of weight vectors rather than matrices, representing a strong architectural constraint that may serve as either beneficial inductive bias or limitation depending on the problem domain. The addition of lateral mixing connections provides a parameter-efficient mechanism for intra-block communication, partially addressing the limitations of the constrained weight structure while maintaining the overall efficiency of the architecture.
 
-Our initial demonstrations show SNs can successfully learn diverse functions and achieve competitive performance across synthetic regression benchmarks and PDE-constrained learning problems, with the added benefit of interpretable spline visualizations. The lateral mixing mechanism proves particularly valuable for vector-valued outputs and deeper networks, often resulting in smoother learned splines and faster convergence. The sequential computation mode enables training of architectures with wide layers that would otherwise exhaust available memory, making SNs particularly suitable for exploring high-capacity models under memory constraints. However, the need for more training iterations in some cases and theoretical gaps regarding deep network universality remain open questions. The theoretical status of lateral mixing—whether it represents a principled extension of Sprecher's construction or merely an empirical enhancement—requires further investigation.
+Our initial demonstrations show SNs can successfully learn diverse functions and achieve competitive performance across synthetic regression benchmarks and PDE-constrained learning problems, with the added benefit of interpretable spline visualizations. The lateral mixing mechanism proves particularly valuable for vector-valued outputs and deeper networks, often improving optimization and convergence behavior even though the learned $\Phi$ splines can remain highly oscillatory. The sequential computation mode enables training of architectures with wide layers that would otherwise exhaust available memory, making SNs particularly suitable for exploring high-capacity models under memory constraints. However, the need for more training iterations in some cases and theoretical gaps regarding deep network universality remain open questions. The theoretical status of lateral mixing --- whether it represents a principled extension of Sprecher's construction or merely an empirical enhancement --- requires further investigation.
 
 Whether SNs prove broadly useful or remain a fascinating special case, they demonstrate the value of mining classical mathematical results for architectural inspiration in modern deep learning. The successful integration of lateral mixing shows how theorem-inspired designs can be enhanced with empirical innovations while maintaining their core theoretical structure. The ability to evaluate SN layers with $O(LN)$ \emph{forward working memory} (peak intermediate storage) distinguishes SNs from other major architectures, suggesting applications in memory-constrained settings and when exploring extremely wide output layers. This synthesis of rigorous mathematical foundations with practical deep learning techniques points toward a promising direction for developing novel architectures that balance theoretical elegance with empirical effectiveness.
 
