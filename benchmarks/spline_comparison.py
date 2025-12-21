@@ -6,7 +6,7 @@ Side-by-side spline visualizer: Sprecher Network (SN) vs a (simple) Kolmogorovâ€
 What this does
 --------------
 1) Trains an SN and a KAN on a toy regression function from the KAN paper:
-       Toy2D in sn_core.data:  f(x1,x2) = exp(sin(11 x1)) + 3 x2 + 4 sin(8 x2)
+       Toy2D in sn_core.data:  f(x1,x2) = exp(sin(pi x1)) + x2^2)
 
 2) Saves ONE figure containing, for each model:
    - A 3D surface plot showing the learned function
