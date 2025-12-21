@@ -300,15 +300,15 @@ Global defaults are in `sn_core/config.py`:
 
 ```
 CONFIG = {
-    'train_phi_codomain': True,      # Learn Φ codomain parameters
-    'use_residual_weights': True,    # Enable residual connections
-    'use_lateral_mixing': True,      # Enable lateral mixing
-    'lateral_mixing_type': 'cyclic', # 'cyclic' or 'bidirectional'
-    'use_normalization': True,       # Enable normalization
-    'norm_type': 'batch',            # 'batch', 'layer', or 'none'
-    'norm_position': 'after',        # 'before' or 'after' blocks
-    'norm_skip_first': True,         # Skip norm on first block
-    'use_theoretical_domains': True, # Dynamic domain tracking
+    'train_phi_codomain': True,       # Learn Φ codomain parameters
+    'use_residual_weights': True,     # Enable residual connections
+    'use_lateral_mixing': True,       # Enable lateral mixing
+    'lateral_mixing_type': 'cyclic',  # 'cyclic' or 'bidirectional'
+    'use_normalization': True,        # Enable normalization
+    'norm_type': 'batch',             # 'batch', 'layer', or 'none'
+    'norm_position': 'after',         # 'before' or 'after' blocks
+    'norm_skip_first': True,          # Skip norm on first block
+    'use_theoretical_domains': True,  # Dynamic domain tracking
     'weight_decay': 1e-6,
     'max_grad_norm': 1.0,
     'seed': 45,
