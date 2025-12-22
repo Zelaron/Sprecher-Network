@@ -1,1 +1,0 @@
-python -m benchmarks.pinn_sn_vs_kan_poisson1 --model both --epochs 5000 --seed 0
