@@ -1,6 +1,6 @@
 # Sprecher Networks
 
-A PyTorch implementation of **Sprecher Networks (SNs)**, a neural architecture inspired by David Sprecher's 1965 constructive proof of the Kolmogorov-Arnold representation theorem. This implementation accompanies the paper *"Sprecher Networks: A Parameter-Efficient Architecture Inspired by the Kolmogorov-Arnold-Sprecher Theorem"* by Hägg, Kohn, Marchetti, and Shapiro.
+A PyTorch implementation of **Sprecher Networks (SNs)**, a neural architecture inspired by David Sprecher's 1965 constructive proof of the Kolmogorov-Arnold representation theorem. This implementation accompanies the paper *"Sprecher Networks: A Parameter-Efficient Kolmogorov-Arnold Architecture"* by Hägg, Kohn, Marchetti, and Shapiro.
 
 ## Overview
 
@@ -381,7 +381,7 @@ If you use this code, please cite:
 
 ```
 @article{hagg2025sprecher,
-  title={Sprecher Networks: A Parameter-Efficient Architecture Inspired by the Kolmogorov--Arnold--Sprecher Theorem},
+  title={Sprecher Networks: A Parameter-Efficient Kolmogorov-Arnold Architecture},
   author={H{\"a}gg, Christian and Kohn, Kathl{\'e}n and Marchetti, Giovanni Luca and Shapiro, Boris},
   year={2025}
 }
