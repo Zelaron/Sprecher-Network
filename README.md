@@ -4,7 +4,7 @@ A PyTorch implementation of **Sprecher Networks (SNs)**, a neural architecture i
 
 ## Overview
 
-Sprecher Networks implement the transformation:
+Sprecher Networks are built by composing layers (blocks) that each implement the transformation:
 
 **y_q = Φ(Σᵢ λᵢ φ(xᵢ + ηq) + αq)**
 
