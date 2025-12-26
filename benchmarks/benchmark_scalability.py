@@ -465,7 +465,7 @@ def main() -> None:
 
     model_names = list(MODEL_REGISTRY.keys())
 
-    print("\n=== Memory Battle Royale (Benchmark #6) ===")
+    print("\n=== Memory Battle Royale ===")
     print(f"Device: {device} | dtype: {dtype} | System RAM: {sys_ram_str}")
     print(f"Config: batch_size={batch_size}, input_dim={input_dim}, depth={depth}, output_dim={output_dim}")
     print(f"Widths: {widths}")
