@@ -1,13 +1,7 @@
-# benchmarks/benchmark_scalabilityA.py
+# benchmarks/benchmark_scalability.py
 """
 Memory Battle Royale: Find OOM breaking point for competing architectures
 while proving SN scales linearly.
-
-Changes from benchmark_scalability.py:
-  1. Added barebones KAN (Kolmogorov-Arnold Network)
-  2. Dynamic width doubling until all-but-one OOM
-  3. Condensed epoch logging (removed redundant print statements)
-  4. More aggressive memory cleanup between model runs
 """
 from __future__ import annotations
 
