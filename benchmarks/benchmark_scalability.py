@@ -15,6 +15,7 @@ from typing import Callable, Dict, List, Optional, Type
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 try:
     import psutil  # type: ignore
@@ -25,11 +26,6 @@ try:
     from torch.utils.checkpoint import checkpoint  # type: ignore
 except Exception:  # pragma: no cover
     checkpoint = None  # type: ignore
-
-try:
-    from tqdm import tqdm  # type: ignore
-except Exception:  # pragma: no cover
-    tqdm = None  # type: ignore
 
 
 # =============================================================================
@@ -589,23 +585,28 @@ def print_ascii_table(rows: List[ResultRow]) -> None:
 # =============================================================================
 
 
-def toy_1d(u: torch.Tensor) -> torch.Tensor:
-    """A simple 1D toy function (polynomial).
+def high_dim_function(x: torch.Tensor) -> torch.Tensor:
+    """A high-dimensional function from the KAN paper (adapted for 64D).
 
-    This matches the polynomial used by sn_core.data.Toy1DPoly:
-        (x - 3/10)^5 - (x - 1/3)^3 + (1/5)(x - 1/10)^2
+    f(x_1, ..., x_d) = exp( (1/d) * sum_{i=1}^{d} sin^2(π * x_i / 2) )
+
+    This is a true high-dimensional function where all input dimensions
+    contribute meaningfully to the output.
 
     Args:
-        u: (..., 1) or (...,) tensor with values in [0, 1].
+        x: (B, d) tensor with values typically in [0, 1].
     Returns:
-        (..., 1) tensor.
+        (B, 1) tensor.
     """
-    if u.ndim == 1:
-        u = u.unsqueeze(-1)
-    return (u - 3 / 10) ** 5 - (u - 1 / 3) ** 3 + (1 / 5) * (u - 1 / 10) ** 2
+    # sin^2(π * x / 2) for each dimension
+    sin_sq = torch.sin(math.pi * x / 2.0) ** 2  # (B, d)
+    # Mean over dimensions
+    mean_sin_sq = sin_sq.mean(dim=1, keepdim=True)  # (B, 1)
+    # Exponential
+    return torch.exp(mean_sin_sq)  # (B, 1)
 
 
-def make_toy_1d_batch(
+def make_high_dim_batch(
     *,
     batch_size: int,
     input_dim: int,
@@ -613,17 +614,17 @@ def make_toy_1d_batch(
     device: torch.device,
     dtype: torch.dtype,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Create a fixed training batch for a 'toy_1d' function.
+    """Create a fixed training batch for the high-dimensional function.
 
-    The benchmark uses input_dim=64 by default, so we embed the 1D scalar into
-    the first coordinate and keep all other coordinates at 0. That way, we
-    train *the same architecture* that survived the memory benchmark.
+    Generates inputs uniformly in [0, 1]^d and computes targets using
+    the high-dimensional function from the KAN paper.
     """
-    t = torch.linspace(0.0, 1.0, steps=int(batch_size), device=device, dtype=dtype).unsqueeze(1)
-    x = torch.zeros((int(batch_size), int(input_dim)), device=device, dtype=dtype)
-    x[:, 0:1] = t
+    # Use a fixed seed for reproducibility within the benchmark
+    generator = torch.Generator(device='cpu').manual_seed(42)
+    x = torch.rand(int(batch_size), int(input_dim), generator=generator)
+    x = x.to(device=device, dtype=dtype)
 
-    y = toy_1d(t)
+    y = high_dim_function(x)
     if int(output_dim) != 1:
         y = y.expand(int(batch_size), int(output_dim)).contiguous()
     return x, y
@@ -688,18 +689,18 @@ def train_survivors(
     output_dim: int,
     device: torch.device,
     dtype: torch.dtype,
-    epochs: int = 10,
+    epochs: int = 300,
     lr: float = 1e-3,
 ) -> List[TrainRow]:
     if not survivors:
         return []
 
     print("\n=== Training Survivors ===")
-    print(f"Toy task: toy_1d embedded in R^{input_dim} -> R^{output_dim}")
+    print(f"Target function: f(x) = exp( (1/{input_dim}) * Σ sin²(π·x_i/2) ), x ∈ [0,1]^{input_dim}")
     print(f"Train config: epochs={epochs}, batch_size={batch_size}, lr={lr}")
     print(f"Survivors at width={width}: {survivors}\n")
 
-    x_train, y_train = make_toy_1d_batch(
+    x_train, y_train = make_high_dim_batch(
         batch_size=batch_size,
         input_dim=input_dim,
         output_dim=output_dim,
@@ -719,6 +720,8 @@ def train_survivors(
         final_loss: Optional[float] = None
         best_loss: Optional[float] = None
 
+        print(f"--- Training {model_name} (w={width}, d={depth}, params={format_int(params)}) ---")
+
         try:
             model = cls(input_dim=input_dim, width=width, depth=depth, output_dim=output_dim)  # type: ignore[arg-type]
             model.to(device=device, dtype=dtype)
@@ -729,11 +732,7 @@ def train_survivors(
             best = float("inf")
             last = float("nan")
 
-            iterator = range(int(epochs))
-            if tqdm is not None:
-                iterator = tqdm(iterator, desc=f"Training {model_name} (w={width}, d={depth})")
-
-            for epoch in iterator:
+            for epoch in range(int(epochs)):
                 opt.zero_grad(set_to_none=True)
                 pred = model(x_train)
                 loss = F.mse_loss(pred, y_train)
@@ -745,9 +744,8 @@ def train_survivors(
                 if loss_val < best:
                     best = loss_val
 
-                if tqdm is not None:
-                    # type: ignore[union-attr]
-                    iterator.set_postfix({"loss": f"{loss_val:.2e}", "best": f"{best:.2e}"})
+                # Print each epoch on its own line
+                print(f"  Epoch {epoch + 1:3d}/{epochs}: loss={loss_val:.4e}, best={best:.4e}")
 
             final_loss = float(last)
             best_loss = float(best)
@@ -755,10 +753,13 @@ def train_survivors(
         except RuntimeError as e:
             if is_oom_error(e):
                 status = "OOM"
+                print(f"  OOM error during training!")
             else:
                 status = f"ERROR({type(e).__name__})"
+                print(f"  Error: {e}")
         except Exception as e:
             status = f"ERROR({type(e).__name__})"
+            print(f"  Error: {e}")
         finally:
             # Free memory as much as possible
             try:
@@ -848,6 +849,7 @@ def run_single_model_test(
         opt.step()
         sample_peak()
 
+        # Only compute peak_mb for successful runs
         dev_delta = max(0, peak_dev - base_dev)
         rss_delta = max(0, peak_rss - base_rss)
         peak_bytes = max(dev_delta, rss_delta)
@@ -856,20 +858,16 @@ def run_single_model_test(
     except RuntimeError as e:
         if is_oom_error(e):
             status = "OOM"
+            # FIX #1: Set peak_mb to None for OOM cases
+            # The partial measurement before crash is misleading
+            peak_mb = None
         else:
             status = f"ERROR({type(e).__name__})"
-
-        dev_delta = max(0, peak_dev - base_dev)
-        rss_delta = max(0, peak_rss - base_rss)
-        peak_bytes = max(dev_delta, rss_delta)
-        peak_mb = float(peak_bytes) / (1024**2)
+            peak_mb = None
 
     except Exception as e:
         status = f"ERROR({type(e).__name__})"
-        dev_delta = max(0, peak_dev - base_dev)
-        rss_delta = max(0, peak_rss - base_rss)
-        peak_bytes = max(dev_delta, rss_delta)
-        peak_mb = float(peak_bytes) / (1024**2)
+        peak_mb = None
 
     finally:
         # Aggressive cleanup after this model
@@ -1062,7 +1060,7 @@ def main() -> None:
             output_dim=output_dim,
             device=device,
             dtype=dtype,
-            epochs=10,
+            epochs=300,
             lr=1e-3,
         )
     else:
