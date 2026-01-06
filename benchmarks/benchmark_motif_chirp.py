@@ -23,7 +23,7 @@ Run (example):
 
 Multi-seed:
   for s in 0 1 2 3; do
-    python -m benchmarks.benchmark_motif_chirp --seed $s --phi_knots 512 --Phi_knots 512
+    python -m benchmarks.benchmark_motif_chirp --seed $s --phi_knots 512 --Phi_knots 526
   done
 """
 
