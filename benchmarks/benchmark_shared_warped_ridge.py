@@ -44,7 +44,7 @@ Single run:
 
 Seed sweep:
   for s in 0 1 2 3; do
-    python -m benchmarks.benchmark_shared_warped_ridge --seed $s --phi-knots 350 --Phi-knots 350
+    python -m benchmarks.benchmark_shared_warped_ridge --seed $s --phi-knots 340 --Phi-knots 350
   done
 """
 
