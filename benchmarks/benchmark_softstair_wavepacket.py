@@ -21,12 +21,12 @@ Target function choice (intentionally SN-friendly but reviewer-defensible):
 Run:
   python -m benchmarks.benchmark_softstair_wavepacket --seed 0
 
-Typical multi-seed loop:
+Typical multi-seed loop (knots chosen for parameter parity):
   for s in 0 1 2 3; do
     python -m benchmarks.benchmark_softstair_wavepacket \
       --seed $s \
       --sn_phi_knots 650 \
-      --sn_Phi_knots 650
+      --sn_Phi_knots 714
   done
 """
 
