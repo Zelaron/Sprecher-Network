@@ -12,7 +12,7 @@ Run:
   for s in 0 1 2 3; do
     python -m benchmarks.kan_sn_inputshift_bump_bench \
       --seed $s \
-      --sn_phi_knots 260 --sn_Phi_knots 260 \
+      --sn_phi_knots 254 --sn_Phi_knots 260 \
       --sn_arch 20,20 \
       --kan_arch 10,10 \
       --equalize_params \
