@@ -16,6 +16,14 @@ where φ is a **shared monotonic spline**, Φ is a **shared general spline**, λ
 - **Interpretability:** Learned splines can be visualized directly
 - **Lateral mixing:** Optional intra-block communication between output dimensions with only O(N) additional parameters
 
+**Scalability advantage over "Sprecher-inspired" alternatives:**
+Recent architectures like GS-KAN and SaKAN claim Sprecher-inspired efficiency but retain O(N²) weight matrices. In contrast, SNs use only vector weights, achieving genuinely linear scaling. In a scalability benchmark on 64-dimensional input with depth 3 (M2 MacBook, 8GB unified memory), we double layer width until architectures run out of memory:
+- At width 4096: GS-KAN fails (OOM)
+- At width 8192: Standard KAN fails (OOM)
+- At width 16384: MLP and SaKAN fail (OOM). **SN is the sole survivor** with 49K parameters and 7.4 MB peak memory, vs 538M+ parameters for competitors.
+
+The benchmark then trains SN at the surviving width, confirming the capacity is utilized (loss drops from 3.4 to 0.068 over 400 epochs).
+
 ## Installation
 
 ```
@@ -157,6 +165,16 @@ python sn_experiments.py --no_norm
 
 ## Benchmarks
 
+### Scalability: SN vs Competitors
+
+Compare memory scaling against MLP, KAN, GS-KAN, and SaKAN as layer width increases:
+
+```
+python -m benchmarks.benchmark_scalability
+```
+
+The script starts at width 512 with depth 3 on 64-dimensional input, then doubles the width until only one architecture survives without running out of memory. On an M2 MacBook with 8GB unified memory, SN is the sole survivor at width 16384—using 49K parameters and 7.4 MB peak memory while competitors would require 538M+ parameters. The script then trains the survivor to verify the capacity is actually utilized (not just allocated).
+
 ### Ablation Study
 
 Evaluate the contribution of each architectural component:
@@ -166,6 +184,26 @@ python -m benchmarks.ablations
 ```
 
 Tests progressive addition of: cyclic residuals → lateral mixing → domain tracking → resampling.
+
+### SN vs KAN: Barebones Comparisons
+
+The `benchmarks/` directory contains eight head-to-head comparisons between SNs and KANs under strict parameter parity, with no residuals, no normalization, and no lateral mixing. Each benchmark file includes recommended commands in its docstring. For example:
+
+```
+# Softstair-Wavepacket (10D) - run with 20 seeds
+for s in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19; do
+  python -m benchmarks.benchmark_softstair_wavepacket --seed $s \
+    --sn_phi_knots 650 --sn_Phi_knots 714
+done
+
+# Shared-Warped-Ridge (16D)
+for s in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19; do
+  python -m benchmarks.benchmark_shared_warped_ridge --seed $s \
+    --phi-knots 340 --Phi-knots 350
+done
+```
+
+See the individual benchmark files for full command-line options and parameter choices that achieve near-exact parameter parity.
 
 ### SN vs KAN: Poisson PINN
 
@@ -289,7 +327,16 @@ sprecher-network/
 │   └── export.py                        # Parameter export utilities
 └── benchmarks/                          # Comparison benchmarks
     ├── ablations.py                     # Feature ablation study
+    ├── benchmark_scalability.py         # Memory scaling vs competitors
     ├── pinn_sn_vs_kan_poisson.py        # PINN benchmark
+    ├── benchmark_softstair_wavepacket.py
+    ├── benchmark_shared_warped_ridge.py
+    ├── benchmark_shared_warp_chirp.py
+    ├── benchmark_motif_chirp.py
+    ├── kan_sn_inputshift_bump_bench.py
+    ├── kan_sn_oscillatory_headshift_bench.py
+    ├── benchmark_barebones_sn_vs_kan_pwl_vs_pchip.py
+    ├── quantile_harmonics.py
     ├── kan_sn_densehead_shift_bench.py  # Dense-head benchmark
     └── kan_sn_monoindex_bench.py        # Monotonic index benchmark
 ```
