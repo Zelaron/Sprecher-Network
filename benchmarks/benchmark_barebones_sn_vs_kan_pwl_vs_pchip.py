@@ -9,7 +9,7 @@ Run (example):
 
   # sweep seeds
   for s in 0 1 2 3; do
-    python -m benchmarks.benchmark_barebones_sn_vs_kan_pwl_vs_pchip --seed $s
+    python -m benchmarks.benchmark_barebones_sn_vs_kan_pwl_vs_pchip --seed $s --sn_phi_knots 420 --sn_Phi_knots 420 --freq 12
   done
 
 What this benchmark is designed to show
