@@ -17,10 +17,10 @@ where φ is a **shared monotonic spline**, Φ is a **shared general spline**, λ
 - **Lateral mixing:** Optional intra-block communication between output dimensions with only O(N) additional parameters
 
 **Scalability advantage over "Sprecher-inspired" alternatives:**
-Recent architectures like GS-KAN and SaKAN claim Sprecher-inspired efficiency but retain O(N²) weight matrices. In contrast, SNs use only vector weights, achieving genuinely linear scaling. In a scalability benchmark on 64-dimensional input with depth 3 (M2 MacBook, 8GB unified memory), we double layer width until architectures run out of memory:
+Recent architectures like GS-KAN and SaKAN claim Sprecher-inspired efficiency but retain O(N²) weight matrices. In contrast, SNs use only vector weights, achieving genuinely linear scaling. In a scalability benchmark (64-dimensional input, depth 3) on an M2 MacBook with 8GB unified memory, we double layer width until architectures run out of memory:
 - At width 4096: GS-KAN fails (OOM)
 - At width 8192: Standard KAN fails (OOM)
-- At width 16384: MLP and SaKAN fail (OOM). **SN is the sole survivor** with 49K parameters and 7.4 MB peak memory, vs 538M+ parameters for competitors.
+- At width 16384: MLP and SaKAN fail (OOM). **SN is the sole survivor** with 49K parameters vs 538M+ for competitors—a ~10,000× difference.
 
 The benchmark then trains SN at the surviving width, confirming the capacity is utilized (loss drops from 3.4 to 0.068 over 400 epochs).
 
@@ -167,13 +167,13 @@ python sn_experiments.py --no_norm
 
 ### Scalability: SN vs Competitors
 
-Compare memory scaling against MLP, KAN, GS-KAN, and SaKAN as layer width increases:
+Compare memory scaling against MLP, KAN, GS-KAN, and SaKAN:
 
 ```
 python -m benchmarks.benchmark_scalability
 ```
 
-The script starts at width 512 with depth 3 on 64-dimensional input, then doubles the width until only one architecture survives without running out of memory. On an M2 MacBook with 8GB unified memory, SN is the sole survivor at width 16384—using 49K parameters and 7.4 MB peak memory while competitors would require 538M+ parameters. The script then trains the survivor to verify the capacity is actually utilized (not just allocated).
+The script starts at width 512 with depth 3 on 64-dimensional input, then doubles the width until only one architecture survives without running out of memory. On our reference system (M2 MacBook, 8GB unified memory), SN is the sole survivor at width 16384, using 49K parameters and 7.4 MB while competitors would require 538M+ parameters. The script then trains the survivor to verify the capacity is actually utilized.
 
 ### Ablation Study
 
