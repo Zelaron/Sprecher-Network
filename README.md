@@ -20,7 +20,7 @@ where φ is a **shared monotonic spline**, Φ is a **shared general spline**, λ
 Recent architectures like GS-KAN and SaKAN claim Sprecher-inspired efficiency but retain O(N²) weight matrices. In contrast, SNs use only vector weights, achieving genuinely linear scaling. In a scalability benchmark (64-dimensional input, depth 3) on an M2 MacBook with 8GB unified memory, we double layer width until architectures run out of memory:
 - At width 4096: GS-KAN fails (OOM)
 - At width 8192: Standard KAN fails (OOM)
-- At width 16384: MLP and SaKAN fail (OOM). **SN is the sole survivor** with 49K parameters vs 538M+ for competitors—a ~10,000× difference.
+- At width 16384: MLP and SaKAN fail (OOM). **SN is the sole survivor** with 49K parameters vs 538M+ for competitors, a ~10,000× difference.
 
 The benchmark then trains SN at the surviving width, confirming the capacity is utilized (loss drops from 3.4 to 0.068 over 400 epochs).
 
