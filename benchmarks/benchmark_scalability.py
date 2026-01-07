@@ -689,7 +689,7 @@ def train_survivors(
     output_dim: int,
     device: torch.device,
     dtype: torch.dtype,
-    epochs: int = 300,
+    epochs: int = 400,
     lr: float = 1e-3,
 ) -> List[TrainRow]:
     if not survivors:
@@ -1060,7 +1060,7 @@ def main() -> None:
             output_dim=output_dim,
             device=device,
             dtype=dtype,
-            epochs=300,
+            epochs=400,
             lr=1e-3,
         )
     else:
