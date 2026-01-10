@@ -43,7 +43,7 @@ pip install -r requirements.txt
 python sn_experiments.py
 
 # 2D function with custom architecture and cubic splines
-python sn_experiments.py --dataset toy_2d --arch 10,10,10 --spline_type cubic --epochs 5000 --save_plots
+python sn_experiments.py --dataset toy_2d --arch 10,10,10 --spline_type cubic --epochs 4000 --save_plots
 
 # High-dimensional input (100D) with first-block normalization
 python sn_experiments.py --dataset toy_100d --arch 100 --epochs 100 --norm_first
