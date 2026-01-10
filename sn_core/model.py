@@ -148,50 +148,90 @@ class SimpleSpline(nn.Module):
     def _pchip_slopes(y: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """
         Compute PCHIP (shape-preserving) slopes at the knots.
-        y, x: shape [K], strictly increasing x.
+
+        y, x: shape [K], with strictly increasing x.
         Returns d: shape [K].
+
+        NOTE:
+        This implementation intentionally avoids adding a fixed epsilon directly to the
+        *delta* denominators in the harmonic-mean formula. Doing so creates an artificial
+        singularity at delta == -eps, which can yield finite forward values but NaN/Inf
+        gradients. (This was the root cause of the Fashion-MNIST instability.)
         """
         K = y.shape[0]
         device = y.device
         dtype = y.dtype
+
         if K == 1:
             return torch.zeros_like(y)
-        h = x[1:] - x[:-1]                    # [K-1]
-        delta = (y[1:] - y[:-1]) / (h + 1e-12)  # [K-1]
+
+        # Secant slopes per interval
+        h = x[1:] - x[:-1]  # [K-1]
+        # Guard against degenerate knot spacing (shouldn't happen, but keep it safe)
+        h_safe = h + 1e-12
+        delta = (y[1:] - y[:-1]) / h_safe  # [K-1]
 
         d = torch.zeros_like(y)
 
-        # interior slopes
-        hkm1 = h[:-1]
-        hk   = h[1:]
+        # With two knots, the slope at both endpoints is the secant slope.
+        if K == 2:
+            d[0] = delta[0]
+            d[1] = delta[0]
+            return d
+
+        # ---------------- interior slopes ----------------
+        hkm1 = h_safe[:-1]
+        hk = h_safe[1:]
         w1 = 2 * hk + hkm1
         w2 = hk + 2 * hkm1
-        same_sign = (delta[:-1] * delta[1:]) > 0
-        # harmonic mean with weights when signs agree; else 0
-        d_interior = (w1 + w2) / (w1 / (delta[:-1] + 1e-12) + w2 / (delta[1:] + 1e-12))
-        d[1:-1] = torch.where(same_sign, d_interior, torch.zeros_like(d_interior))
 
-        # endpoint slopes (MATLAB's pchip formula / monotone limiting)
-        # left endpoint
-        d0 = ((2 * h[0] + h[1]) * delta[0] - h[0] * delta[1]) / (h[0] + h[1] + 1e-12) if K > 2 else delta[0]
-        # right endpoint
-        dN = ((2 * h[-1] + h[-2]) * delta[-1] - h[-1] * delta[-2]) / (h[-1] + h[-2] + 1e-12) if K > 2 else delta[-1]
+        delta1 = delta[:-1]
+        delta2 = delta[1:]
 
-        # enforce monotone limits (avoid overshoot) at endpoints
+        # Only compute the harmonic mean where both deltas are finite and have the same (nonzero) sign.
+        same_sign = (delta1 * delta2) > 0
+        mask = same_sign & torch.isfinite(delta1) & torch.isfinite(delta2)
+
+        d_interior_full = torch.zeros_like(delta1)
+
+        if mask.any().item():
+            w1m = w1[mask]
+            w2m = w2[mask]
+            d1m = delta1[mask]
+            d2m = delta2[mask]
+
+            # Weighted harmonic mean (PCHIP). No epsilon added to delta denominators.
+            denom = (w1m / d1m) + (w2m / d2m)
+            d_interior = (w1m + w2m) / denom
+
+            # Extra safety: if any non-finite sneaks in, zero it out.
+            d_interior = torch.where(torch.isfinite(d_interior), d_interior, torch.zeros_like(d_interior))
+
+            d_interior_full[mask] = d_interior
+
+        d[1:-1] = d_interior_full
+
+        # ---------------- endpoint slopes ----------------
+        # MATLAB's pchip endpoint formula with monotone limiting
+        d0 = ((2 * h_safe[0] + h_safe[1]) * delta[0] - h_safe[0] * delta[1]) / (h_safe[0] + h_safe[1] + 1e-12)
+        dN = ((2 * h_safe[-1] + h_safe[-2]) * delta[-1] - h_safe[-1] * delta[-2]) / (h_safe[-1] + h_safe[-2] + 1e-12)
+
         def _limit_endpoint(di, deltai):
             di = torch.as_tensor(di, device=device, dtype=dtype)
             deltai = torch.as_tensor(deltai, device=device, dtype=dtype)
-            cond = (di * deltai) <= 0
-            di = torch.where(cond, torch.zeros_like(di), di)
-            # limit magnitude to 3*delta
+
+            # If slope points the wrong way, set to 0
+            di = torch.where((di * deltai) <= 0, torch.zeros_like(di), di)
+            # Limit magnitude to 3*delta
             di = torch.where(torch.abs(di) > 3 * torch.abs(deltai), 3 * deltai, di)
             return di
 
         d[0] = _limit_endpoint(d0, delta[0])
         d[-1] = _limit_endpoint(dN, delta[-1])
 
+        # Final safety: never return non-finite slopes
+        d = torch.where(torch.isfinite(d), d, torch.zeros_like(d))
         return d
-
     @staticmethod
     def _hermite_eval(x_vals: torch.Tensor, x: torch.Tensor, y: torch.Tensor, d: torch.Tensor) -> torch.Tensor:
         """
