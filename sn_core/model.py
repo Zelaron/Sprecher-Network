@@ -151,13 +151,8 @@ class SimpleSpline(nn.Module):
 
         y, x: shape [K], with strictly increasing x.
         Returns d: shape [K].
-
-        NOTE:
-        This implementation intentionally avoids adding a fixed epsilon directly to the
-        *delta* denominators in the harmonic-mean formula. Doing so creates an artificial
-        singularity at delta == -eps, which can yield finite forward values but NaN/Inf
-        gradients. (This was the root cause of the Fashion-MNIST instability.)
         """
+        
         K = y.shape[0]
         device = y.device
         dtype = y.dtype
@@ -271,7 +266,7 @@ class SimpleSpline(nn.Module):
 
     def get_cubic_critical_points(self) -> torch.Tensor:
         """
-        Return all interior critical x-locations (where derivative == 0) for the *current* spline,
+        Return all interior critical x-locations (where derivative == 0) for the current spline,
         across all segments, in a 1D tensor (can be empty). Only relevant for spline_kind='cubic'.
         """
         if self.spline_kind != 'cubic':
