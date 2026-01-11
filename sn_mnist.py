@@ -1,3 +1,4 @@
+
 """
 sn_mnist.py - MNIST classification using Sprecher Networks
 """
@@ -708,6 +709,25 @@ class MNISTSprecherNet(nn.Module):
         self.sprecher_net.print_domain_violation_report()
 
 
+def safe_update_all_domains(model):
+    """Safely call update_all_domains, catching NaN-related interval errors.
+
+    The Sprecher domain update can occasionally hit numerical edge cases (e.g., NaNs)
+    when computing theoretical bounds. In those cases we skip the update rather than
+    crashing evaluation/training, matching the behavior used in sn_fashion_mnist.py.
+    """
+    try:
+        model.update_all_domains()
+    except AssertionError as e:
+        # Only suppress the specific NaN/invalid-interval assertion; re-raise everything else
+        msg = str(e)
+        if ("Invalid interval" in msg) and ("nan" in msg.lower()):
+            pass
+        else:
+            raise
+
+
+
 def train_epoch(model, train_loader, optimizer, scheduler, loss_function, device):
     """Train for one epoch."""
     model.train()
@@ -729,7 +749,7 @@ def train_epoch(model, train_loader, optimizer, scheduler, loss_function, device
             
             # Update domains before each forward pass
             if CONFIG.get('use_theoretical_domains', True):
-                model.update_all_domains()
+                safe_update_all_domains(model)
             
             optimizer.zero_grad()
             outputs = model(images)
@@ -761,72 +781,74 @@ def train_epoch(model, train_loader, optimizer, scheduler, loss_function, device
     return epoch_loss / len(train_loader), accuracy
 
 
+
 def test_model(model, test_loader, device, use_batch_stats=True):
-    """Evaluate model on test set.
-    
-    Args:
-        model: The model to evaluate
-        test_loader: Test data loader
-        device: Device to use
-        use_batch_stats: If True, use batch statistics for BatchNorm (more consistent with training)
+    """Evaluate model on the test set.
+
+    NOTE on BatchNorm:
+    Sprecher Networks may call update_all_domains() during evaluation. That routine
+    computes normalization-aware theoretical bounds and uses the model.training flag
+    to decide whether BatchNorm is in "training" (batch stats) or "eval" (running stats)
+    mode. Therefore, if we choose to evaluate with BatchNorm batch statistics, we must
+    also keep the *whole model* in train(True) so that update_all_domains() stays
+    consistent with the BN behavior.
     """
     correct = 0
     total = 0
-    
+
     # Reset domain violation stats if tracking
     if CONFIG.get('track_domain_violations', False):
         model.reset_domain_violation_stats()
-    
-    # Use evaluation mode with proper BatchNorm handling
-    model.eval()
-    with torch.no_grad():
-        if use_batch_stats and has_batchnorm(model):
-            # Use batch statistics without updating running stats
+
+    was_training = model.training
+
+    # If requested, evaluate with BN batch statistics (training behavior) but without
+    # mutating BN running buffers.
+    if use_batch_stats and has_batchnorm(model):
+        model.train(True)
+        with torch.no_grad():
             with use_batch_stats_without_updating_bn(model):
                 for images, labels in tqdm(test_loader, desc="Testing"):
                     images, labels = images.to(device), labels.to(device)
-                    
-                    # Flatten and normalize to [0, 1]
+
+                    # Flatten and convert from normalized [-1, 1] back to [0, 1]
                     images = images.view(images.size(0), -1)
                     images = (images + 1) / 2
-                    
+
                     # Update domains before forward pass
                     if CONFIG.get('use_theoretical_domains', True):
-                        model.update_all_domains()
-                    
+                        safe_update_all_domains(model)
+
                     outputs = model(images)
                     _, predicted = torch.max(outputs.data, 1)
                     total += labels.size(0)
                     correct += (predicted == labels).sum().item()
-        else:
-            # Standard eval mode
+    else:
+        # Standard evaluation with BN running statistics
+        with evaluation_mode(model):
             for images, labels in tqdm(test_loader, desc="Testing"):
                 images, labels = images.to(device), labels.to(device)
-                
-                # Flatten and normalize to [0, 1]
+
                 images = images.view(images.size(0), -1)
                 images = (images + 1) / 2
-                
-                # Update domains before forward pass
+
                 if CONFIG.get('use_theoretical_domains', True):
-                    model.update_all_domains()
-                
+                    safe_update_all_domains(model)
+
                 outputs = model(images)
                 _, predicted = torch.max(outputs.data, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
-    
-    # Restore training mode
-    model.train()
-    
-    # Print domain violation report if tracking
+
+    # Restore original training/eval mode
+    model.train(was_training)
+
     if CONFIG.get('track_domain_violations', False):
         print("\nTest set domain violations:")
         model.print_domain_violation_report()
-    
+
     accuracy = 100 * correct / total
     return accuracy
-
 
 def print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_size, lr, 
                         effective_norm_type, norm_position, final_norm_skip_first, use_residual,
@@ -1367,7 +1389,7 @@ def test_mnist(args):
     
     # Update domains after loading
     if CONFIG.get('use_theoretical_domains', True):
-        model.update_all_domains()
+        safe_update_all_domains(model)
     
     # Count parameters
     param_counts = count_parameters_detailed(model)
@@ -1461,7 +1483,7 @@ def infer_mnist(args):
     
     # Update domains
     if CONFIG.get('use_theoretical_domains', True):
-        model.update_all_domains()
+        safe_update_all_domains(model)
     
     # Process image
     if not os.path.exists(args.image):
@@ -1598,7 +1620,7 @@ def plot_mnist_splines(args):
     # Update domains
     if CONFIG.get('use_theoretical_domains', True):
         print("Updating spline domains based on loaded parameters...")
-        model.update_all_domains()
+        safe_update_all_domains(model)
     
     # Print domain information
     print("\nSpline domains after theoretical update:")
@@ -1729,3 +1751,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
