@@ -103,8 +103,8 @@ def parse_args():
     # Export (Nintendo DS) options
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="Checkpoint to load for export_nds mode (default: most recent in current directory)")
-    parser.add_argument("--export_out", type=str, default="sn_weights.bin",
-                        help="Output path for export_nds weights (default: sn_weights.bin)")
+    parser.add_argument("--export_out", type=str, default="sprecher_ds/sn_weights.bin",
+                        help="Output path for export_nds weights (default: sprecher_ds/sn_weights.bin)")
     
     # Training options
     parser.add_argument("--retrain", action="store_true",
@@ -1926,7 +1926,12 @@ def export_nds(args):
     # ------------------------------------------------------------------
     # Write binary file (SNDS v3)
     # ------------------------------------------------------------------
-    out_path = getattr(args, 'export_out', None) or "sn_weights.bin"
+    out_path = getattr(args, 'export_out', None) or "sprecher_ds/sn_weights.bin"
+
+    # Ensure output directory exists
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
 
     # Global header info
     num_blocks = len(model.sprecher_net.layers)
