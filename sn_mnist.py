@@ -1,4 +1,3 @@
-
 """
 sn_mnist.py - MNIST classification using Sprecher Networks
 """
@@ -11,12 +10,20 @@ import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchvision.transforms as transforms
-from torchvision.datasets import MNIST
+_TORCHVISION_IMPORT_ERROR = None
+try:
+    import torchvision.transforms as transforms
+    from torchvision.datasets import MNIST
+except Exception as _tv_e:
+    transforms = None
+    MNIST = None
+    _TORCHVISION_IMPORT_ERROR = _tv_e
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from PIL import Image
 import numpy as np
+import struct
+import math
 import matplotlib
 import matplotlib.pyplot as plt
 
@@ -32,13 +39,22 @@ from sn_core import (
 from sn_core.config import CONFIG, MNIST_CONFIG
 
 
+def _require_torchvision():
+    """Raise a helpful error if torchvision failed to import."""
+    if transforms is None or MNIST is None:
+        raise ImportError(
+            "torchvision is required for this mode, but it failed to import. "
+            f"Original error: {_TORCHVISION_IMPORT_ERROR!r}"
+        )
+
+
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Train Sprecher Networks on MNIST")
     
     # Mode selection
     parser.add_argument("--mode", type=str, required=True,
-                        choices=["train", "test", "infer", "plot"],
+                        choices=["train", "test", "infer", "plot", "export_nds"],
                         help="Operation mode: train, test, infer, or plot")
     
     # Model selection for test/infer/plot modes
@@ -83,6 +99,12 @@ def parse_args():
                         help="Data directory path (default: from MNIST_CONFIG)")
     parser.add_argument("--image", type=str, default="digit.png",
                         help="Image file for inference mode (default: digit.png)")
+
+    # Export (Nintendo DS) options
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="Checkpoint to load for export_nds mode (default: most recent in current directory)")
+    parser.add_argument("--export_out", type=str, default="sn_weights.bin",
+                        help="Output path for export_nds weights (default: sn_weights.bin)")
     
     # Training options
     parser.add_argument("--retrain", action="store_true",
@@ -891,6 +913,7 @@ def print_configuration(args, architecture, phi_knots, Phi_knots, epochs, batch_
 
 
 def train_mnist(args):
+    _require_torchvision()
     """Training mode."""
     # Get configuration values
     architecture = [int(x) for x in args.arch.split(",")] if args.arch else MNIST_CONFIG['architecture']
@@ -1306,6 +1329,7 @@ def train_mnist(args):
 
 
 def test_mnist(args):
+    _require_torchvision()
     """Testing mode."""
     # Auto-discover and select model
     model_path, model_config = auto_discover_and_select_model(args, "test")
@@ -1722,6 +1746,408 @@ def plot_mnist_splines(args):
         print("Tip: Use --no_show flag to avoid GUI dependencies in the future.")
 
 
+
+
+# ============================================================
+# Nintendo DS export (fixed-point binary weights)
+# ============================================================
+
+def _q16_16_from_float(x: float) -> int:
+    """Convert Python float to signed Q16.16 int32 with saturation."""
+    v = int(round(float(x) * (1 << 16)))
+    if v > 0x7FFFFFFF:
+        return 0x7FFFFFFF
+    if v < -0x80000000:
+        return -0x80000000
+    return v
+
+
+def _tensor_to_q16_16_np(t: torch.Tensor) -> np.ndarray:
+    """Convert a torch tensor to a little-endian int32 numpy array in Q16.16."""
+    arr = t.detach().cpu().numpy().astype(np.float64)
+    scaled = np.round(arr * (1 << 16))
+    scaled = np.clip(scaled, -0x80000000, 0x7FFFFFFF).astype(np.int32)
+    return scaled
+
+
+def _write_u32(f, v: int):
+    f.write(struct.pack('<I', int(v) & 0xFFFFFFFF))
+
+
+def _write_i32(f, v: int):
+    f.write(struct.pack('<i', int(v)))
+
+
+def _write_i32_array(f, arr_i32: np.ndarray):
+    """Write a numpy int32 array as little-endian bytes."""
+    if arr_i32.dtype != np.int32:
+        arr_i32 = arr_i32.astype(np.int32)
+    # Ensure little-endian on disk
+    if arr_i32.dtype.byteorder not in ('<', '='):
+        arr_i32 = arr_i32.byteswap().newbyteorder('<')
+    f.write(arr_i32.tobytes(order='C'))
+
+
+def _get_effective_linear_spline_knot_values(spline: nn.Module) -> torch.Tensor:
+    """
+    Return the effective y-values at the spline knots for export.
+
+    This handles the case where the spline uses a trainable codomain transform
+    (train_codomain=True). Evaluating the spline at its own knot locations yields
+    exactly the effective knot values used by the forward pass.
+    """
+    with torch.no_grad():
+        knots = spline.knots  # 1D tensor
+        y = spline(knots)
+    return y
+
+
+def export_nds(args):
+    """
+    Export the most recent (or selected) MNIST SprecherNet checkpoint to a
+    Nintendo DS-friendly fixed-point binary format.
+
+    Usage:
+        python sn_mnist.py --mode export_nds [--checkpoint PATH] [--export_out sn_weights.bin]
+    """
+    device = torch.device("cpu")
+
+    # ------------------------------------------------------------------
+    # Select checkpoint
+    # ------------------------------------------------------------------
+    model_path = None
+    model_config = None
+    checkpoint = None
+
+    if args.checkpoint:
+        model_path = args.checkpoint
+        checkpoint, model_config = load_checkpoint_and_extract_config(model_path, device)
+        if checkpoint is None:
+            raise FileNotFoundError(f"Checkpoint not found or could not be loaded: {model_path}")
+    else:
+        # Default to the most recently modified sn_mnist_model-*.pth in CWD.
+        # If the user passed --arch or --model-index, defer to the interactive selector.
+        if args.arch is not None or args.model_index is not None:
+            model_path, model_config = auto_discover_and_select_model(args)
+            if model_path is None:
+                print("No model selected/found. Use --arch or --model-index, or pass --checkpoint.")
+                return
+            checkpoint, model_config = load_checkpoint_and_extract_config(model_path, device)
+        else:
+            import glob
+            candidates = glob.glob("sn_mnist_model-*.pth")
+            if not candidates:
+                print("No checkpoints found (expected files matching sn_mnist_model-*.pth).")
+                print("Train first with: python sn_mnist.py --mode train --arch 100,100 --epochs 5")
+                return
+            model_path = max(candidates, key=os.path.getmtime)
+            checkpoint, model_config = load_checkpoint_and_extract_config(model_path, device)
+
+    assert model_config is not None
+
+    # ------------------------------------------------------------------
+    # Configure global CONFIG to match the checkpoint
+    # ------------------------------------------------------------------
+    # Feature flags (these live in sn_core.config.CONFIG)
+    CONFIG['use_residual_weights'] = bool(model_config.get('use_residual', True))
+    CONFIG['residual_style'] = model_config.get('residual_style', 'node')
+    CONFIG['use_lateral_mixing'] = bool(model_config.get('use_lateral', True))
+    CONFIG['lateral_mixing_type'] = model_config.get('lateral_type', 'cyclic')
+
+    # Spline kinds (MNIST export currently supports piecewise-linear splines)
+    phi_spline_type = model_config.get('phi_spline_type', 'linear')
+    Phi_spline_type = model_config.get('Phi_spline_type', 'linear')
+    if phi_spline_type == 'pwl':
+        phi_spline_type = 'linear'
+    if Phi_spline_type == 'pwl':
+        Phi_spline_type = 'linear'
+    if phi_spline_type != 'linear' or Phi_spline_type != 'linear':
+        raise ValueError(
+            "export_nds currently supports only piecewise-linear ('linear' / 'pwl') splines. "
+            f"Checkpoint uses phi={phi_spline_type}, Phi={Phi_spline_type}."
+        )
+
+    architecture = model_config.get('architecture')
+    if architecture is None:
+        raise ValueError("Could not determine architecture from checkpoint.")
+
+    # ------------------------------------------------------------------
+    # Build & load model
+    # ------------------------------------------------------------------
+    model = MNISTSprecherNet(
+        architecture=architecture,
+        phi_knots=model_config.get('phi_knots', MNIST_CONFIG['phi_knots']),
+        Phi_knots=model_config.get('Phi_knots', MNIST_CONFIG['Phi_knots']),
+        norm_type=model_config.get('norm_type', 'batch'),
+        norm_position=model_config.get('norm_position', 'after'),
+        norm_skip_first=model_config.get('norm_skip_first', True),
+        phi_spline_type=phi_spline_type,
+        Phi_spline_type=Phi_spline_type,
+        initialize_domains=False,
+    ).to(device)
+
+    # Load weights (supports both dict-style checkpoints and raw state_dicts)
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        model.load_state_dict(checkpoint)
+
+    # Restore BN stats if present
+    if isinstance(checkpoint, dict) and 'bn_statistics' in checkpoint:
+        try:
+            for name, stats in checkpoint['bn_statistics'].items():
+                module = dict(model.named_modules()).get(name, None)
+                if module is not None and hasattr(module, 'running_mean'):
+                    module.running_mean = stats['running_mean'].to(device)
+                    module.running_var = stats['running_var'].to(device)
+        except Exception as e:
+            print(f"Warning: Could not restore bn_statistics: {e}")
+
+    model.eval()
+
+    # Ensure spline domains/knots are up-to-date
+    safe_update_all_domains(model)
+
+    # ------------------------------------------------------------------
+    # Validate DS-supported residual configuration
+    # ------------------------------------------------------------------
+    if CONFIG.get('use_residual_weights', True):
+        if CONFIG.get('residual_style', 'node') == 'linear':
+            # DS export could support linear residual projection but it breaks O(N) scaling.
+            # If any projection exists, refuse to export with a clear message.
+            for layer in model.sprecher_net.layers:
+                if getattr(layer, 'residual_projection', None) is not None:
+                    raise ValueError(
+                        "This checkpoint uses residual_style='linear' with a projection matrix "
+                        "(O(d_in*d_out) parameters). This is not DS-friendly and is not supported "
+                        "by export_nds. Train with residual_style='node' instead."
+                    )
+
+    # ------------------------------------------------------------------
+    # Write binary file (SNDS v3)
+    # ------------------------------------------------------------------
+    out_path = getattr(args, 'export_out', None) or "sn_weights.bin"
+
+    # Global header info
+    num_blocks = len(model.sprecher_net.layers)
+    input_dim = int(model.sprecher_net.layers[0].d_in)
+    output_dim = int(model.sprecher_net.layers[-1].d_out)
+    max_dim = max([max(int(l.d_in), int(l.d_out)) for l in model.sprecher_net.layers])
+
+    # Compute param counts
+    try:
+        param_counts = count_parameters_detailed(model)
+        total_params = int(param_counts.get('total', sum(p.numel() for p in model.parameters())))
+    except Exception:
+        total_params = int(sum(p.numel() for p in model.parameters()))
+        param_counts = {'total': total_params}
+
+    # Equivalent MLP param count for the same (784 -> arch -> 10) dims
+    dims = [784] + list(architecture) + [10]
+    mlp_params = 0
+    for a, b in zip(dims[:-1], dims[1:]):
+        mlp_params += a * b + b
+
+    # Build global flags
+    FLAG_USE_LATERAL = 1 << 0
+    FLAG_LATERAL_BIDIR = 1 << 1
+    FLAG_USE_RESIDUAL = 1 << 2
+    FLAG_RESIDUAL_LINEAR = 1 << 3
+    FLAG_NORM_NONE = 0 << 4
+    FLAG_NORM_BATCH = 1 << 4
+    FLAG_NORM_LAYER = 2 << 4
+    FLAG_NORM_MASK = 3 << 4
+    FLAG_NORM_BEFORE = 1 << 6
+    FLAG_NORM_SKIP_FIRST = 1 << 7
+
+    flags = 0
+    if model_config.get('use_lateral', True):
+        flags |= FLAG_USE_LATERAL
+        if model_config.get('lateral_type', 'cyclic') == 'bidirectional':
+            flags |= FLAG_LATERAL_BIDIR
+    if model_config.get('use_residual', True):
+        flags |= FLAG_USE_RESIDUAL
+        if model_config.get('residual_style', 'node') == 'linear':
+            flags |= FLAG_RESIDUAL_LINEAR
+
+    norm_type = model_config.get('norm_type', 'batch')
+    if norm_type == 'none':
+        flags |= FLAG_NORM_NONE
+    elif norm_type == 'layer':
+        flags |= FLAG_NORM_LAYER
+    else:
+        flags |= FLAG_NORM_BATCH
+
+    if model_config.get('norm_position', 'after') == 'before':
+        flags |= FLAG_NORM_BEFORE
+    if model_config.get('norm_skip_first', True):
+        flags |= FLAG_NORM_SKIP_FIRST
+
+    q_factor = float(CONFIG.get('q_values_factor', MNIST_CONFIG.get('q_values_factor', 1.0)))
+    q_factor_fix = _q16_16_from_float(q_factor)
+
+    # Write file
+    with open(out_path, "wb") as f:
+        # Header
+        f.write(b"SNDS")
+        _write_u32(f, 3)              # version
+        _write_u32(f, 16)             # fix_shift
+        _write_u32(f, flags)
+        _write_u32(f, num_blocks)
+        _write_u32(f, input_dim)
+        _write_u32(f, output_dim)
+        _write_u32(f, total_params)
+        _write_u32(f, max_dim)
+        _write_i32(f, q_factor_fix)
+
+        # Blocks
+        for i, layer in enumerate(model.sprecher_net.layers):
+            d_in = int(layer.d_in)
+            d_out = int(layer.d_out)
+
+            phi = layer.phi
+            Phi = layer.Phi
+
+            phi_knots = _tensor_to_q16_16_np(phi.knots)
+            phi_coeffs = _tensor_to_q16_16_np(phi.get_coeffs())
+
+            Phi_knots = _tensor_to_q16_16_np(Phi.knots)
+            # Effective knot values (handles train_codomain)
+            Phi_coeffs = _tensor_to_q16_16_np(_get_effective_linear_spline_knot_values(Phi))
+
+            lambdas = _tensor_to_q16_16_np(layer.lambdas)
+
+            # Per-block features
+            has_lateral = getattr(layer, 'lateral_scale', None) is not None
+            lateral_scale = _q16_16_from_float(layer.lateral_scale.item()) if has_lateral else 0
+            lateral_type = model_config.get('lateral_type', 'cyclic')
+
+            # Residual
+            residual_type = 0  # 0 none, 1 scalar, 2 pooling, 3 broadcast, 4 projection
+            residual_scalar = 0
+            residual_pool = None
+            residual_bcast = None
+            if CONFIG.get('use_residual_weights', True):
+                if getattr(layer, 'residual_weight', None) is not None:
+                    residual_type = 1
+                    residual_scalar = _q16_16_from_float(layer.residual_weight.item())
+                elif getattr(layer, 'residual_pooling_weights', None) is not None:
+                    residual_type = 2
+                    residual_pool = _tensor_to_q16_16_np(layer.residual_pooling_weights)
+                elif getattr(layer, 'residual_broadcast_weights', None) is not None:
+                    residual_type = 3
+                    residual_bcast = _tensor_to_q16_16_np(layer.residual_broadcast_weights)
+                elif getattr(layer, 'residual_projection', None) is not None:
+                    residual_type = 4
+                    # Not DS-friendly; should have been caught above, but keep a final guard.
+                    raise ValueError("Residual projection is not supported by export_nds.")
+
+            # Norm export (pre-folded affine). norm_dim==0 means no norm for this block.
+            norm_dim = 0
+            norm_scale = None
+            norm_bias = None
+            if norm_type != 'none':
+                norm_layer = model.sprecher_net.norm_layers[i]
+                if isinstance(norm_layer, nn.BatchNorm1d):
+                    if not isinstance(norm_layer, nn.Identity):
+                        # Identity BN layers are represented as nn.Identity
+                        # Determine dim from the module itself
+                        norm_dim = int(norm_layer.num_features)
+                        w = norm_layer.weight.detach().cpu() if norm_layer.affine else torch.ones(norm_dim)
+                        b = norm_layer.bias.detach().cpu() if norm_layer.affine else torch.zeros(norm_dim)
+                        rm = norm_layer.running_mean.detach().cpu()
+                        rv = norm_layer.running_var.detach().cpu()
+                        eps = float(norm_layer.eps)
+                        inv_std = 1.0 / torch.sqrt(rv + eps)
+                        scale = w * inv_std
+                        bias = b - rm * scale
+                        norm_scale = _tensor_to_q16_16_np(scale)
+                        norm_bias = _tensor_to_q16_16_np(bias)
+                elif isinstance(norm_layer, nn.LayerNorm):
+                    # LayerNorm on DS is not currently supported.
+                    raise ValueError("LayerNorm export is not supported by export_nds (use --norm_type batch or none).")
+
+            eta_fix = _q16_16_from_float(layer.eta.item())
+
+            # Block header
+            block_flags = 0
+            if has_lateral:
+                block_flags |= 1 << 0
+            if norm_dim > 0:
+                block_flags |= 1 << 1
+
+            _write_u32(f, d_in)
+            _write_u32(f, d_out)
+            _write_u32(f, int(phi_knots.shape[0]))
+            _write_u32(f, int(Phi_knots.shape[0]))
+            _write_u32(f, block_flags)
+            _write_u32(f, int(residual_type))
+            _write_u32(f, int(norm_dim))
+            _write_i32(f, eta_fix)
+
+            # Spline data and core params
+            _write_i32_array(f, phi_knots)
+            _write_i32_array(f, phi_coeffs)
+            _write_i32_array(f, Phi_knots)
+            _write_i32_array(f, Phi_coeffs)
+            _write_i32_array(f, lambdas)
+
+            # Lateral mixing params
+            if has_lateral:
+                _write_i32(f, lateral_scale)
+                if lateral_type == 'bidirectional':
+                    lat_wf = _tensor_to_q16_16_np(layer.lateral_weights_forward)
+                    lat_wb = _tensor_to_q16_16_np(layer.lateral_weights_backward)
+                    _write_i32_array(f, lat_wf)
+                    _write_i32_array(f, lat_wb)
+                else:
+                    lat_w = _tensor_to_q16_16_np(layer.lateral_weights)
+                    _write_i32_array(f, lat_w)
+
+            # Residual params
+            if residual_type == 1:
+                _write_i32(f, residual_scalar)
+            elif residual_type == 2:
+                _write_i32_array(f, residual_pool)
+            elif residual_type == 3:
+                _write_i32_array(f, residual_bcast)
+
+            # Norm params
+            if norm_dim > 0:
+                _write_i32_array(f, norm_scale)
+                _write_i32_array(f, norm_bias)
+
+        # Footer
+        out_scale_fix = _q16_16_from_float(model.sprecher_net.output_scale.item())
+        out_bias_fix = _q16_16_from_float(model.sprecher_net.output_bias.item())
+        _write_i32(f, out_scale_fix)
+        _write_i32(f, out_bias_fix)
+
+    # ------------------------------------------------------------------
+    # Print summary
+    # ------------------------------------------------------------------
+    file_size = os.path.getsize(out_path)
+    print("\n=== Nintendo DS Export Complete ===")
+    print(f"Checkpoint: {model_path}")
+    print(f"Output:     {out_path} ({file_size / 1024:.1f} KiB)")
+    print(f"Arch:       784 -> {', '.join(str(x) for x in architecture)} -> 10  ({num_blocks} blocks)")
+    print(f"Max dim:    {max_dim}")
+    print(f"SN params:  {total_params}")
+    print(f"MLP params: {mlp_params}")
+    print("Features:")
+    print(f"  Lateral mixing: {'ON' if model_config.get('use_lateral', True) else 'OFF'} ({model_config.get('lateral_type', 'cyclic')})")
+    print(f"  Residuals:      {'ON' if model_config.get('use_residual', True) else 'OFF'} ({model_config.get('residual_style', 'node')})")
+    print(f"  Norm:           {norm_type} (position={model_config.get('norm_position','after')}, skip_first={model_config.get('norm_skip_first', True)})")
+    print(f"  Splines:        phi={phi_spline_type}, Phi={Phi_spline_type}")
+    print("Param breakdown:")
+    for k, v in param_counts.items():
+        if k != 'total':
+            print(f"  {k:22s}: {v}")
+    print("  " + "-" * 30)
+    print(f"  {'total':22s}: {param_counts.get('total', total_params)}")
+    print("==================================\n")
+
+
 def main():
     """Main function."""
     args = parse_args()
@@ -1747,9 +2173,9 @@ def main():
         infer_mnist(args)
     elif args.mode == "plot":
         plot_mnist_splines(args)
+    elif args.mode == "export_nds":
+        export_nds(args)
 
 
 if __name__ == "__main__":
     main()
-
-
