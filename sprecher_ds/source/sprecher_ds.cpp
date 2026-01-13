@@ -1,4 +1,5 @@
 
+
 // sprecher_ds.cpp
 // Nintendo DS / DS Lite homebrew demo: MNIST digit classification with Sprecher Networks
 // Build environment: devkitPro (libnds + libfat)
@@ -51,30 +52,51 @@ static inline fix16 fix_mul(fix16 a, fix16 b) {
 
 static inline fix16 fix_div(fix16 a, fix16 b) {
     if (b == 0) return (a >= 0) ? (fix16)INT32_MAX : (fix16)INT32_MIN;
-    int64_t num = ((int64_t)a << FIX_SHIFT);
+    // Avoid left-shifting negative values (undefined behavior). Multiply instead.
+    int64_t num = (int64_t)a * (int64_t)FIX_ONE;
     return sat_i64(num / (int64_t)b);
 }
 
-static inline float fix_to_float(fix16 x) {
-    return (float)x / (float)(1 << FIX_SHIFT);
+static void iprint_fix16_4(fix16 v) {
+    bool neg = (v < 0);
+    uint32_t uv = neg ? (uint32_t)(-v) : (uint32_t)v;
+    uint32_t ip = (uv >> FIX_SHIFT);
+
+    // frac in [0, 65535]. Convert to 4 decimals with rounding.
+    uint32_t frac = (uv & 0xFFFF);
+    uint32_t frac4 = (frac * 10000U + 32768U) >> FIX_SHIFT;  // rounded
+
+    if (frac4 >= 10000U) { frac4 = 0; ip++; } // handle carry from rounding
+
+    iprintf("%s%lu.%04lu", neg ? "-" : "", (unsigned long)ip, (unsigned long)frac4);
 }
 
 
-
-static void iprint_fix16_3(fix16 v) {
+static void fix16_to_str_4(fix16 v, char* out, size_t out_len) {
+    // Convert Q16.16 to a human-readable decimal string with 4 fractional digits.
+    // Note: Uses integer math only (no floats).
     int64_t vv = (int64_t)v;
     bool neg = (vv < 0);
-    if (neg) vv = -vv;
+    uint64_t uv = neg ? (uint64_t)(-vv) : (uint64_t)vv;
 
-    int32_t ip = (int32_t)(vv >> FIX_SHIFT);
-    uint32_t frac = (uint32_t)(vv & 0xFFFF);
+    uint32_t ip = (uint32_t)(uv >> FIX_SHIFT);
+    uint32_t frac = (uint32_t)(uv & 0xFFFFu);
+    uint32_t frac4 = (frac * 10000u + 0x8000u) >> FIX_SHIFT;
 
-    // 3 decimals with rounding: (frac / 65536) * 1000
-    uint32_t frac1000 = (uint32_t)((frac * 1000u + 0x8000u) >> FIX_SHIFT);
-    if (frac1000 >= 1000u) { ip += 1; frac1000 -= 1000u; }
+    // Carry if rounding pushed us to 10000.
+    if (frac4 >= 10000u) {
+        frac4 = 0;
+        ip++;
+    }
 
-    if (neg) iprintf("-%ld.%03lu", (long)ip, (unsigned long)frac1000);
-    else     iprintf("%ld.%03lu",  (long)ip, (unsigned long)frac1000);
+    if (neg) snprintf(out, out_len, "-%lu.%04lu", (unsigned long)ip, (unsigned long)frac4);
+    else     snprintf(out, out_len,  "%lu.%04lu", (unsigned long)ip, (unsigned long)frac4);
+}
+
+static void clear_row(int row) {
+    // DS console is 32 cols wide, but printing exactly 32 chars can wrap/scroll.
+    // Clear 31 columns to avoid accidental wrap on the last row.
+    iprintf("\x1b[%d;0H                               ", row);
 }
 // ============================================================
 // Spline (piecewise-linear)
@@ -136,12 +158,12 @@ static void prepare_spline(Spline* sp) {
 static fix16 spline_eval(const Spline* sp, fix16 x) {
     if (!sp || sp->n_knots < 2) return 0;
 
-    if (x <= sp->x0) {
+    if (x < sp->x0) {
         if (sp->monotonic) return 0;
         return fix_add(sp->coeffs[0], fix_mul(sp->slope0, fix_sub(x, sp->x0)));
     }
 
-    if (x >= sp->xN) {
+    if (x > sp->xN) {
         if (sp->monotonic) return FIX_ONE;
         return fix_add(sp->coeffs[sp->n_knots - 1], fix_mul(sp->slopeN, fix_sub(x, sp->xN)));
     }
@@ -336,7 +358,10 @@ static void net_forward(const SprecherNet* net, const fix16* input, fix16* outpu
 
     for (uint32_t bi = 0; bi < net->num_blocks; bi++) {
         const Block* blk = &net->blocks[bi];
-        if (show_progress) iprintf("\x1b[17;0H Layer %lu/%lu     ", (unsigned long)(bi+1), (unsigned long)net->num_blocks);
+        if (show_progress) {
+            clear_row(16);
+            iprintf("\x1b[16;0HLayer %lu/%lu", (unsigned long)(bi+1), (unsigned long)net->num_blocks);
+        }
         if (blk->d_in != cur_dim) break;
         bool do_norm = (blk->norm_dim > 0) && !(net->norm_skip_first && bi == 0);
         if (net->norm_before && do_norm) apply_norm_inplace(blk, a);
@@ -676,14 +701,127 @@ static void downsample_28x28(uint8_t out[28*28]) {
             int sum = 0, count = 0;
             for (int yy = y0; yy < y1; yy++)
                 for (int xx = x0; xx < x1; xx++) { sum += g_canvas[yy * CANVAS_W + xx]; count++; }
-            out[y * 28 + x] = count > 0 ? (uint8_t)(sum / count) : 0;
+            out[y * 28 + x] = count > 0 ? (uint8_t)((sum + (count>>1)) / count) : 0;
         }
     }
 }
+// MNIST-like preprocessing: crop to bounding box, scale to 20x20 preserving aspect,
+// center in 28x28, then shift by center-of-mass (similar to common MNIST drawing preprocess).
+static bool preprocess_mnist_like_28(const uint8_t in28[28*28], uint8_t out28[28*28]) {
+    const int THR = 20;          // ignore very faint pixels
+    const int TARGET = 20;       // MNIST uses ~20x20 glyph in 28x28 canvas
+
+    int min_x = 28, min_y = 28, max_x = -1, max_y = -1;
+    for (int y = 0; y < 28; y++) {
+        for (int x = 0; x < 28; x++) {
+            uint8_t v = in28[y*28 + x];
+            if (v > THR) {
+                if (x < min_x) min_x = x;
+                if (x > max_x) max_x = x;
+                if (y < min_y) min_y = y;
+                if (y > max_y) max_y = y;
+            }
+        }
+    }
+
+    if (max_x < 0) {
+        // No ink.
+        memset(out28, 0, 28*28);
+        return false;
+    }
+
+    int w = (max_x - min_x + 1);
+    int h = (max_y - min_y + 1);
+    int max_side = (w > h) ? w : h;
+
+    int new_w = (w * TARGET + max_side/2) / max_side;
+    int new_h = (h * TARGET + max_side/2) / max_side;
+    if (new_w < 1) new_w = 1;
+    if (new_h < 1) new_h = 1;
+    if (new_w > TARGET) new_w = TARGET;
+    if (new_h > TARGET) new_h = TARGET;
+
+    // Resample cropped box -> new_w x new_h using area averaging.
+    uint8_t tmp[TARGET * TARGET];
+    memset(tmp, 0, sizeof(tmp));
+
+    for (int dy = 0; dy < new_h; dy++) {
+        int sy0 = min_y + (dy * h) / new_h;
+        int sy1 = min_y + ((dy + 1) * h) / new_h;
+        if (sy1 <= sy0) sy1 = sy0 + 1;
+        if (sy1 > (max_y + 1)) sy1 = (max_y + 1);
+
+        for (int dx = 0; dx < new_w; dx++) {
+            int sx0 = min_x + (dx * w) / new_w;
+            int sx1 = min_x + ((dx + 1) * w) / new_w;
+            if (sx1 <= sx0) sx1 = sx0 + 1;
+            if (sx1 > (max_x + 1)) sx1 = (max_x + 1);
+
+            int sum = 0;
+            int cnt = 0;
+            for (int sy = sy0; sy < sy1; sy++) {
+                for (int sx = sx0; sx < sx1; sx++) {
+                    sum += in28[sy*28 + sx];
+                    cnt++;
+                }
+            }
+            tmp[dy*TARGET + dx] = (uint8_t)(sum / (cnt ? cnt : 1));
+        }
+    }
+
+    // Center the resized glyph inside 28x28.
+    memset(out28, 0, 28*28);
+    int off_x = (28 - new_w) / 2;
+    int off_y = (28 - new_h) / 2;
+    for (int y = 0; y < new_h; y++) {
+        for (int x = 0; x < new_w; x++) {
+            out28[(off_y + y)*28 + (off_x + x)] = tmp[y*TARGET + x];
+        }
+    }
+
+    // Center-of-mass shift to (14,14).
+    int64_t sum = 0;
+    int64_t mx = 0;
+    int64_t my = 0;
+    for (int y = 0; y < 28; y++) {
+        for (int x = 0; x < 28; x++) {
+            int v = (int)out28[y*28 + x];
+            sum += v;
+            mx += (int64_t)x * v;
+            my += (int64_t)y * v;
+        }
+    }
+    if (sum > 0) {
+        int cx = (int)(mx / sum);
+        int cy = (int)(my / sum);
+        int dx = 14 - cx;
+        int dy = 14 - cy;
+
+        uint8_t shifted[28*28];
+        memset(shifted, 0, 28*28);
+        for (int y = 0; y < 28; y++) {
+            for (int x = 0; x < 28; x++) {
+                int nx = x + dx;
+                int ny = y + dy;
+                if ((unsigned)nx < 28U && (unsigned)ny < 28U) {
+                    shifted[ny*28 + nx] = out28[y*28 + x];
+                }
+            }
+        }
+        memcpy(out28, shifted, 28*28);
+    }
+
+    return true;
+}
+
+
 
 static void pixels_to_input(const uint8_t pix[28*28], fix16 out[28*28]) {
-    for (int i = 0; i < 28*28; i++)
-        out[i] = (fix16)(((uint32_t)pix[i] << FIX_SHIFT) / 255);
+    // Convert 0..255 grayscale into Q16.16 in [0,1] with rounding.
+    for (int i = 0; i < 28*28; i++) {
+        uint32_t num = (uint32_t)pix[i] * (uint32_t)FIX_ONE + 127u;
+        out[i] = (fix16)(num / 255u);
+    }
 }
 
 // ============================================================
@@ -722,8 +860,8 @@ int main(void) {
 
     clear_canvas(gfx);
 
-    iprintf("\n Sprecher Network on Nintendo DS\n");
-    iprintf(" ================================\n\n");
+    iprintf("\nSprecher Network on Nintendo DS\n");
+    iprintf("===============================\n\n");
     iprintf(" Stylus: draw on bottom screen\n");
     iprintf(" A: classify digit\n");
     iprintf(" B: clear canvas\n");
@@ -806,13 +944,20 @@ int main(void) {
             drawing = false;
         }
 
+
         if ((down & KEY_A) && net_ok && logits_buf) {
-            iprintf("\x1b[18;0H Running inference...        \n");
+            // Clear result area (rows 16..23) so old characters don't linger.
+            for (int r = 16; r <= 23; r++) clear_row(r);
+
+            iprintf("\x1b[17;0HRunning inference...");
 
             uint8_t pix28[28*28];
+            uint8_t proc28[28*28];
             fix16 input[28*28];
+
             downsample_28x28(pix28);
-            pixels_to_input(pix28, input);
+            preprocess_mnist_like_28(pix28, proc28);
+            pixels_to_input(proc28, input);
 
             memset(logits_buf, 0, net.output_dim * sizeof(fix16));
             net_forward(&net, input, logits_buf, true);
@@ -823,19 +968,53 @@ int main(void) {
                 if (logits_buf[i] > best) { best = logits_buf[i]; pred = (int)i; }
             }
 
-            iprintf("\x1b[18;0H                             \n");
-            iprintf("\x1b[19;0H >>> PREDICTED: %d <<<       \n", pred);
+            // Clear status + progress lines.
+            clear_row(16);
+            clear_row(17);
+
+            clear_row(18);
+            iprintf("\x1b[18;0H>>> PREDICTED: %d <<<", pred);
 
             if (net.output_dim <= 10) {
-                for (uint32_t i = 0; i < net.output_dim; i++) {
-                    iprintf("\x1b[%d;0H  %lu: ", 21 + (int)i, (unsigned long)i);
-                    iprint_fix16_3(logits_buf[i]);
-                    iprintf(" %s\n", (i == (uint32_t)pred) ? "<" : " ");
+                // Two-column logits display (fits 32-col console without wrapping).
+                // Each row prints exactly 31 characters: 15 + 1 + 15.
+                for (int row = 0; row < 5; row++) {
+                    uint32_t i = (uint32_t)row;
+                    uint32_t j = (uint32_t)(row + 5);
+
+                    char left[16]  = "";
+                    char right[16] = "";
+
+                    if (i < net.output_dim) {
+                        char vbuf[16];
+                        fix16_to_str_4(logits_buf[i], vbuf, sizeof(vbuf));
+                        snprintf(left, sizeof(left), "%lu: %s", (unsigned long)i, vbuf);
+                    }
+                    if (j < net.output_dim) {
+                        char vbuf[16];
+                        fix16_to_str_4(logits_buf[j], vbuf, sizeof(vbuf));
+                        snprintf(right, sizeof(right), "%lu: %s", (unsigned long)j, vbuf);
+                    }
+
+                    int screen_row = 19 + row;
+                    iprintf("\x1b[%d;0H%-15s %-15s", screen_row, left, right);
+                }
+            } else {
+                // Fallback: print the first few logits (one per row).
+                for (uint32_t i = 0; (i < 5u) && (i < net.output_dim); i++) {
+                    int screen_row = 19 + (int)i;
+                    clear_row(screen_row);
+
+                    char vbuf[16];
+                    fix16_to_str_4(logits_buf[i], vbuf, sizeof(vbuf));
+                    iprintf("\x1b[%d;0H%lu: %s", screen_row, (unsigned long)i, vbuf);
                 }
             }
-        } else if ((down & KEY_A) && !net_ok) {
-            iprintf("\x1b[18;0H No weights loaded!          \n");
+} else if ((down & KEY_A) && !net_ok) {
+            clear_row(17);
+            iprintf("\x1b[17;0H No weights loaded!          ");
         }
+
     }
 
     if (logits_buf) free(logits_buf);
