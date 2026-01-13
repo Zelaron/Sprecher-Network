@@ -1,5 +1,3 @@
-
-
 // sprecher_ds.cpp
 // Nintendo DS / DS Lite homebrew demo: MNIST digit classification with Sprecher Networks
 // Build environment: devkitPro (libnds + libfat)
