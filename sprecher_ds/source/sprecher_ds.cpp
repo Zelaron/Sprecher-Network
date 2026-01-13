@@ -1,3 +1,4 @@
+
 // sprecher_ds.cpp
 // Nintendo DS / DS Lite homebrew demo: MNIST digit classification with Sprecher Networks
 // Build environment: devkitPro (libnds + libfat)
@@ -8,6 +9,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+
+// libnds API compatibility: newer libnds removed irqInit().
+// Declare it as an optional weak symbol so this code builds against both old and new libnds.
+extern "C" void irqInit(void) __attribute__((weak));
+
+// Top screen text console
+static PrintConsole topScreen;
 
 // ============================================================
 // CRITICAL: VBlank interrupt handler prevents white screen freeze
@@ -683,38 +691,32 @@ static void pixels_to_input(const uint8_t pix[28*28], fix16 out[28*28]) {
 // ============================================================
 
 int main(void) {
-    // CRITICAL: Set up VBlank interrupt handler to prevent white screen freeze
+    // IRQ init (compat): call irqInit() if the symbol exists (older libnds),
+    // otherwise skip it (newer libnds initializes IRQs before main).
+    if (irqInit) irqInit();
     irqSet(IRQ_VBLANK, VblankHandler);
     irqEnable(IRQ_VBLANK);
 
-    // ------------------------------------------------------------
-    // Video / console setup
-    //
-    // We want:
-    //   * TOP screen (MAIN engine): text console (iprintf)
-    //   * BOTTOM screen (SUB engine): 16-bit bitmap canvas (VRAM_C)
-    //
-    // NOTE:
-    //   consoleDemoInit() initializes the console on the SUB screen.
-    //   If we then use VRAM_C for a bitmap background, console writes
-    //   will corrupt the bitmap (horizontal line artifacts) and you'll
-    //   see no text output. So we explicitly init a console on MAIN.
-    // ------------------------------------------------------------
+    powerOn(POWER_ALL_2D);
 
+    // Make sure the main 2D engine (A) is on the top screen and the sub engine (B) is on the bottom.
     lcdMainOnTop();
 
+    // ----------------------------
+    // Top screen: text console (MAIN)
+    // ----------------------------
     videoSetMode(MODE_0_2D);
-    videoSetModeSub(MODE_5_2D);
-
     vramSetBankA(VRAM_A_MAIN_BG);
-    vramSetBankC(VRAM_C_SUB_BG);
 
-    static PrintConsole topConsole;
-    consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
-    consoleSelect(&topConsole);
+    consoleInit(&topScreen, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
+    consoleSelect(&topScreen);
     consoleClear();
 
-    // Bottom screen: framebuffer for drawing
+    // ----------------------------
+    // Bottom screen: 16-bit bitmap for drawing (SUB)
+    // ----------------------------
+    videoSetModeSub(MODE_5_2D);
+    vramSetBankC(VRAM_C_SUB_BG);
     int bg = bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
     u16* gfx = (u16*)bgGetGfxPtr(bg);
 
