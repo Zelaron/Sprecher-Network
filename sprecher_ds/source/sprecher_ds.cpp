@@ -687,12 +687,34 @@ int main(void) {
     irqSet(IRQ_VBLANK, VblankHandler);
     irqEnable(IRQ_VBLANK);
 
-    // Initialize console on top screen
-    consoleDemoInit();
+    // ------------------------------------------------------------
+    // Video / console setup
+    //
+    // We want:
+    //   * TOP screen (MAIN engine): text console (iprintf)
+    //   * BOTTOM screen (SUB engine): 16-bit bitmap canvas (VRAM_C)
+    //
+    // NOTE:
+    //   consoleDemoInit() initializes the console on the SUB screen.
+    //   If we then use VRAM_C for a bitmap background, console writes
+    //   will corrupt the bitmap (horizontal line artifacts) and you'll
+    //   see no text output. So we explicitly init a console on MAIN.
+    // ------------------------------------------------------------
+
+    lcdMainOnTop();
+
+    videoSetMode(MODE_0_2D);
+    videoSetModeSub(MODE_5_2D);
+
+    vramSetBankA(VRAM_A_MAIN_BG);
+    vramSetBankC(VRAM_C_SUB_BG);
+
+    static PrintConsole topConsole;
+    consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
+    consoleSelect(&topConsole);
+    consoleClear();
 
     // Bottom screen: framebuffer for drawing
-    videoSetModeSub(MODE_5_2D);
-    vramSetBankC(VRAM_C_SUB_BG);
     int bg = bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
     u16* gfx = (u16*)bgGetGfxPtr(bg);
 
