@@ -1,3 +1,4 @@
+
 // sprecher_ds.cpp
 // Nintendo DS / DS Lite homebrew demo: MNIST digit classification with Sprecher Networks
 // Build environment: devkitPro (libnds + libfat)
@@ -8,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 
 // libnds API compatibility: newer libnds removed irqInit().
 // Declare it as an optional weak symbol so this code builds against both old and new libnds.
@@ -35,6 +37,12 @@ static inline fix16 sat_i64(int64_t v) {
     return (fix16)v;
 }
 
+static inline fix16 sat_shl32(int32_t v, int n) {
+    if (n <= 0) return (fix16)v;
+    if (n >= 31) return (v < 0) ? (fix16)INT32_MIN : (fix16)INT32_MAX;
+    return sat_i64(((int64_t)v) << n);
+}
+
 static inline fix16 fix_add(fix16 a, fix16 b) {
     return sat_i64((int64_t)a + (int64_t)b);
 }
@@ -54,8 +62,105 @@ static inline fix16 fix_div(fix16 a, fix16 b) {
     int64_t num = (int64_t)a * (int64_t)FIX_ONE;
     return sat_i64(num / (int64_t)b);
 }
+// -----------------------------------------------------------------------------
+// Fast exp() + softmax helpers (Q16.16).
+// We use this only for displaying probabilities on-screen.
+// -----------------------------------------------------------------------------
 
-static void iprint_fix16_4(fix16 v) {
+// LUT for 2^(k/256) in Q16.16, k=0..256 (inclusive).
+static const uint32_t EXP2_LUT_Q16[257] = {
+    65536u, 65714u, 65892u, 66071u, 66250u, 66429u, 66609u, 66790u,
+    66971u, 67153u, 67335u, 67517u, 67700u, 67884u, 68068u, 68252u,
+    68438u, 68623u, 68809u, 68996u, 69183u, 69370u, 69558u, 69747u,
+    69936u, 70126u, 70316u, 70507u, 70698u, 70889u, 71082u, 71274u,
+    71468u, 71661u, 71856u, 72050u, 72246u, 72442u, 72638u, 72835u,
+    73032u, 73230u, 73429u, 73628u, 73828u, 74028u, 74229u, 74430u,
+    74632u, 74834u, 75037u, 75240u, 75444u, 75649u, 75854u, 76060u,
+    76266u, 76473u, 76680u, 76888u, 77096u, 77305u, 77515u, 77725u,
+    77936u, 78147u, 78359u, 78572u, 78785u, 78998u, 79212u, 79427u,
+    79642u, 79858u, 80075u, 80292u, 80510u, 80728u, 80947u, 81166u,
+    81386u, 81607u, 81828u, 82050u, 82273u, 82496u, 82719u, 82944u,
+    83169u, 83394u, 83620u, 83847u, 84074u, 84302u, 84531u, 84760u,
+    84990u, 85220u, 85451u, 85683u, 85915u, 86148u, 86382u, 86616u,
+    86851u, 87086u, 87322u, 87559u, 87796u, 88034u, 88273u, 88513u,
+    88752u, 88993u, 89234u, 89476u, 89719u, 89962u, 90206u, 90451u,
+    90696u, 90942u, 91188u, 91436u, 91684u, 91932u, 92181u, 92431u,
+    92682u, 92933u, 93185u, 93438u, 93691u, 93945u, 94200u, 94455u,
+    94711u, 94968u, 95226u, 95484u, 95743u, 96002u, 96263u, 96524u,
+    96785u, 97048u, 97311u, 97575u, 97839u, 98104u, 98370u, 98637u,
+    98905u, 99173u, 99442u, 99711u, 99982u, 100253u, 100524u, 100797u,
+    101070u, 101344u, 101619u, 101895u, 102171u, 102448u, 102726u, 103004u,
+    103283u, 103564u, 103844u, 104126u, 104408u, 104691u, 104975u, 105260u,
+    105545u, 105831u, 106118u, 106406u, 106694u, 106984u, 107274u, 107565u,
+    107856u, 108149u, 108442u, 108736u, 109031u, 109326u, 109623u, 109920u,
+    110218u, 110517u, 110816u, 111117u, 111418u, 111720u, 112023u, 112327u,
+    112631u, 112937u, 113243u, 113550u, 113858u, 114167u, 114476u, 114787u,
+    115098u, 115410u, 115723u, 116036u, 116351u, 116667u, 116983u, 117300u,
+    117618u, 117937u, 118257u, 118577u, 118899u, 119221u, 119544u, 119869u,
+    120194u, 120519u, 120846u, 121174u, 121502u, 121832u, 122162u, 122493u,
+    122825u, 123158u, 123492u, 123827u, 124163u, 124500u, 124837u, 125176u,
+    125515u, 125855u, 126197u, 126539u, 126882u, 127226u, 127571u, 127917u,
+    128263u, 128611u, 128960u, 129310u, 129660u, 130012u, 130364u, 130718u,
+    131072u
+};
+
+// exp(x) in Q16.16, using exp(x)=2^(x/ln2) with an exp2 LUT.
+static inline fix16 exp_fix(fix16 x) {
+    // round(1/ln(2) * 65536) = 94548
+    const int32_t INV_LN2_Q16 = 94548;
+    // y = x / ln(2) in Q16.16
+    fix16 y = sat_i64(((int64_t)x * (int64_t)INV_LN2_Q16) >> FIX_SHIFT);
+    int32_t n = (int32_t)(y >> FIX_SHIFT);
+    uint32_t frac = (uint32_t)(y & (FIX_ONE - 1)); // 0..65535
+    uint32_t idx = frac >> 8;                      // 0..255
+    uint32_t t   = frac & 0xFF;                    // 0..255
+
+    int32_t v0 = (int32_t)EXP2_LUT_Q16[idx];
+    int32_t v1 = (int32_t)EXP2_LUT_Q16[idx + 1];
+    int32_t v  = v0 + (int32_t)(((int64_t)(v1 - v0) * (int64_t)t) >> 8);
+
+    // Apply 2^n (n can be negative). Note: v is always positive.
+    if (n >= 0) {
+        if (n >= 15) return INT32_MAX; // avoid undefined shift / overflow
+        return sat_shl32(v, n);
+    } else {
+        int sh = -n;
+        if (sh >= 31) return 0;
+        // Round while shifting right.
+        return (fix16)((v + (1 << (sh - 1))) >> sh);
+    }
+}
+
+// softmax(logits) -> probs, all Q16.16. 'tmp_exp' must have length >= n.
+static void softmax_fix(const fix16* logits, int n, fix16* probs, fix16* tmp_exp) {
+    if (n <= 0) return;
+    fix16 maxv = logits[0];
+    for (int i = 1; i < n; i++) {
+        if (logits[i] > maxv) maxv = logits[i];
+    }
+
+    int64_t sum = 0;
+    for (int i = 0; i < n; i++) {
+        fix16 shifted = logits[i] - maxv; // <= 0
+        fix16 e = exp_fix(shifted);
+        tmp_exp[i] = e;
+        sum += (int64_t)e;
+    }
+    if (sum <= 0) {
+        // Should never happen (max element yields exp(0)=1), but be defensive.
+        fix16 inv_n = fix_div(FIX_ONE, (fix16)(n << FIX_SHIFT));
+        for (int i = 0; i < n; i++) probs[i] = inv_n;
+        return;
+    }
+
+    fix16 sum_fix = sat_i64(sum);
+    for (int i = 0; i < n; i++) {
+        probs[i] = fix_div(tmp_exp[i], sum_fix);
+    }
+}
+
+
+static void __attribute__((unused)) iprint_fix16_4(fix16 v) {
     bool neg = (v < 0);
     uint32_t uv = neg ? (uint32_t)(-v) : (uint32_t)v;
     uint32_t ip = (uv >> FIX_SHIFT);
@@ -889,6 +994,9 @@ int main(void) {
     }
 
     fix16* logits_buf = NULL;
+    fix16* baseline_logits = NULL;
+    fix16* probs_buf = NULL;
+    bool have_baseline = false;
 
     if (!net_ok) {
         iprintf("\x1b[31m Load FAILED:\x1b[39m %s\n", err);
@@ -910,8 +1018,24 @@ int main(void) {
 
         iprintf("\n Ready! Draw a digit, press A.\n");
 
-        if (net.output_dim >= 1 && net.output_dim <= 64) {
+        if (net.output_dim < 1 || net.output_dim > 64) {
+            iprintf("\x1b[31m Bad output_dim: %lu\x1b[39m\n", (unsigned long)net.output_dim);
+            net_ok = false;
+        } else {
+            const unsigned long need = (unsigned long)(net.output_dim * 3 * sizeof(fix16));
             logits_buf = (fix16*)malloc(net.output_dim * sizeof(fix16));
+            baseline_logits = (fix16*)malloc(net.output_dim * sizeof(fix16));
+            probs_buf = (fix16*)malloc(net.output_dim * sizeof(fix16));
+            if (!logits_buf || !baseline_logits || !probs_buf) {
+                iprintf("\x1b[31m OOM\x1b[39m (need %lu B)\n", need);
+                net_ok = false;
+            } else {
+                // Compute blank baseline logits (all-zero input) once.
+                memset(net.work_a, 0, net.input_dim * sizeof(fix16));
+                net_forward(&net, net.work_a, baseline_logits, true);
+                have_baseline = true;
+                iprintf(" Calib: blank-baseline ON\n");
+            }
         }
     }
 
@@ -958,53 +1082,87 @@ int main(void) {
             pixels_to_input(proc28, input);
 
             memset(logits_buf, 0, net.output_dim * sizeof(fix16));
+            // Forward pass (raw logits).
             net_forward(&net, input, logits_buf, true);
 
+            // Raw argmax (useful for debugging).
+            int raw_pred = 0;
+            fix16 raw_best = logits_buf[0];
+            for (uint32_t i = 1; i < net.output_dim; i++) {
+                if (logits_buf[i] > raw_best) {
+                    raw_best = logits_buf[i];
+                    raw_pred = (int)i;
+                }
+            }
+
+            // Optional: blank-baseline calibration (removes constant class bias).
+            bool used_calib = have_baseline && (baseline_logits != NULL);
+            if (used_calib) {
+                for (uint32_t i = 0; i < net.output_dim; i++) {
+                    logits_buf[i] = fix_sub(logits_buf[i], baseline_logits[i]);
+                }
+            }
+
+            // Argmax on (possibly calibrated) logits.
             int pred = 0;
             fix16 best = logits_buf[0];
             for (uint32_t i = 1; i < net.output_dim; i++) {
-                if (logits_buf[i] > best) { best = logits_buf[i]; pred = (int)i; }
+                if (logits_buf[i] > best) {
+                    best = logits_buf[i];
+                    pred = (int)i;
+                }
             }
 
+            // Convert logits -> probabilities for display.
+            if (probs_buf) {
+                softmax_fix(logits_buf, (int)net.output_dim, probs_buf, net.scratch);
+            }
             // Clear status + progress lines.
             clear_row(16);
             clear_row(17);
 
             clear_row(18);
-            iprintf("\x1b[18;0H>>> PREDICTED: %d <<<", pred);
+            if (used_calib) {
+                iprintf("\x1b[18;0HPREDICTED: %d (raw %d)", pred, raw_pred);
+            } else {
+                iprintf("\x1b[18;0HPREDICTED: %d", pred);
+            }
 
             if (net.output_dim <= 10) {
-                // Two-column logits display (fits 32-col console without wrapping).
-                // Each row prints exactly 31 characters: 15 + 1 + 15.
+                // Two-column display (fits 32-col console without wrapping).
+                // By default we show softmax probabilities (over the calibrated logits).
+                const fix16* disp = probs_buf ? probs_buf : logits_buf;
                 for (int row = 0; row < 5; row++) {
                     uint32_t i = (uint32_t)row;
                     uint32_t j = (uint32_t)(row + 5);
 
-                    char left[16]  = "";
-                    char right[16] = "";
+                    char left[24]  = "";
+                    char right[24] = "";
 
                     if (i < net.output_dim) {
-                        char vbuf[16];
-                        fix16_to_str_4(logits_buf[i], vbuf, sizeof(vbuf));
+                        char vbuf[32];
+                        fix16_to_str_4(disp[i], vbuf, sizeof(vbuf));
                         snprintf(left, sizeof(left), "%lu: %s", (unsigned long)i, vbuf);
                     }
                     if (j < net.output_dim) {
-                        char vbuf[16];
-                        fix16_to_str_4(logits_buf[j], vbuf, sizeof(vbuf));
+                        char vbuf[32];
+                        fix16_to_str_4(disp[j], vbuf, sizeof(vbuf));
                         snprintf(right, sizeof(right), "%lu: %s", (unsigned long)j, vbuf);
                     }
 
                     int screen_row = 19 + row;
+                    clear_row(screen_row);
                     iprintf("\x1b[%d;0H%-15s %-15s", screen_row, left, right);
                 }
             } else {
-                // Fallback: print the first few logits (one per row).
+                // Fallback: print the first few values (one per row).
+                const fix16* disp = probs_buf ? probs_buf : logits_buf;
                 for (uint32_t i = 0; (i < 5u) && (i < net.output_dim); i++) {
                     int screen_row = 19 + (int)i;
                     clear_row(screen_row);
 
-                    char vbuf[16];
-                    fix16_to_str_4(logits_buf[i], vbuf, sizeof(vbuf));
+                    char vbuf[32];
+                    fix16_to_str_4(disp[i], vbuf, sizeof(vbuf));
                     iprintf("\x1b[%d;0H%lu: %s", screen_row, (unsigned long)i, vbuf);
                 }
             }
@@ -1015,7 +1173,10 @@ int main(void) {
 
     }
 
+    if (probs_buf) free(probs_buf);
+    if (baseline_logits) free(baseline_logits);
     if (logits_buf) free(logits_buf);
     free_net(&net);
     return 0;
 }
+
