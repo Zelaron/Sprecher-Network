@@ -9,30 +9,17 @@ The Nintendo DS has:
 - **4 MB RAM**
 - **No FPU** (floating-point unit)
 
-Consider a `784→[100,100]→10` network for MNIST classification:
+Sprecher Networks' O(N) parameter scaling (vs O(N²) for MLPs) enables architectures that would otherwise be impossible:
 
-| Architecture | Parameters | Memory (Q16.16) |
-|--------------|------------|-----------------|
-| **MLP** | ~89,000 | ~350 KB |
-| **Sprecher Network** | ~2,600 | ~10 KB |
+| Architecture | MLP Params | MLP Memory | SN Params | SN Memory |
+|--------------|------------|------------|-----------|-----------|
+| `784→[100,100]→10` | ~89,000 | ~350 KB | ~2,600 | ~10 KB |
+| `784→[512,512]→10` | ~670,000 | ~2.6 MB | ~5,200 | ~20 KB |
+| `784→[1024,1024]→10` | ~1.9M | **>4 MB (impossible!)** | ~8,300 | ~32 KB |
 
-At this modest size, an MLP would technically fit. But scale up to `784→[512,512]→10`:
+At width 1024, the MLP exceeds DS RAM entirely. The Sprecher Network fits with room to spare.
 
-| Architecture | Parameters | Memory (Q16.16) |
-|--------------|------------|-----------------|
-| **MLP** | ~670,000 | **~2.6 MB** |
-| **Sprecher Network** | ~5,200 | ~20 KB |
-
-Or try `784→[1024,1024]→10`:
-
-| Architecture | Parameters | Memory (Q16.16) |
-|--------------|------------|-----------------|
-| **MLP** | ~1.9M | **~7.4 MB** (exceeds DS RAM!) |
-| **Sprecher Network** | ~8,300 | ~32 KB |
-
-**The MLP cannot run. The Sprecher Network fits with room to spare.**
-
-This is the O(N) vs O(N²) scaling difference in action. Sprecher Networks enable architectures on resource-constrained hardware that would otherwise be completely infeasible.
+This is the O(N) vs O(N²) scaling difference in action.
 
 ## Prerequisites
 
