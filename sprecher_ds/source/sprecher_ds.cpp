@@ -1,4 +1,3 @@
-
 // sprecher_ds.cpp
 // Nintendo DS / DS Lite homebrew demo: MNIST digit classification with Sprecher Networks
 // Build environment: devkitPro (libnds + libfat)
@@ -1009,12 +1008,42 @@ int main(void) {
 
         iprintf("\n\x1b[32m Loaded SNDS v%lu\x1b[39m\n", (unsigned long)net.version);
         iprintf(" Blocks: %lu\n", (unsigned long)net.num_blocks);
+
+        // Print architecture with run-length encoding for consecutive identical dimensions
         iprintf(" Arch: %lu", (unsigned long)net.input_dim);
-        for (uint32_t bi = 0; bi < net.num_blocks; bi++)
-            iprintf("->%lu", (unsigned long)net.blocks[bi].d_out);
+        {
+            uint32_t prev_dim = 0;
+            int run_count = 0;
+            for (uint32_t bi = 0; bi < net.num_blocks; bi++) {
+                uint32_t d_out = net.blocks[bi].d_out;
+                if (bi == 0) {
+                    prev_dim = d_out;
+                    run_count = 1;
+                } else if (d_out == prev_dim) {
+                    run_count++;
+                } else {
+                    // Output the previous run
+                    if (run_count > 1) {
+                        iprintf("->%lu^%d", (unsigned long)prev_dim, run_count);
+                    } else {
+                        iprintf("->%lu", (unsigned long)prev_dim);
+                    }
+                    prev_dim = d_out;
+                    run_count = 1;
+                }
+            }
+            // Output the final run
+            if (run_count > 0) {
+                if (run_count > 1) {
+                    iprintf("->%lu^%d", (unsigned long)prev_dim, run_count);
+                } else {
+                    iprintf("->%lu", (unsigned long)prev_dim);
+                }
+            }
+        }
         iprintf("\n");
-        iprintf(" SN params:  %lu\n", (unsigned long)net.total_params);
-        iprintf(" MLP equiv:  %llu\n", (unsigned long long)mlp_params);
+
+        iprintf(" SN params: %lu  (MLP: %llu)\n", (unsigned long)net.total_params, (unsigned long long)mlp_params);
 
         iprintf("\n Ready! Draw a digit, press A.\n");
 
@@ -1136,8 +1165,8 @@ int main(void) {
                     uint32_t i = (uint32_t)row;
                     uint32_t j = (uint32_t)(row + 5);
 
-                    char left[24]  = "";
-                    char right[24] = "";
+                    char left[48]  = "";
+                    char right[48] = "";
 
                     if (i < net.output_dim) {
                         char vbuf[32];
@@ -1179,4 +1208,3 @@ int main(void) {
     free_net(&net);
     return 0;
 }
-
