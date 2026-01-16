@@ -65,7 +65,20 @@ python sn_mnist.py --mode infer --image digit.png
 python sn_mnist.py --mode plot
 ```
 
-A single-layer network `784→[100]→10` achieves ~92% accuracy with ~45,000 parameters.
+A single-layer network `784→[100]→10` achieves ~92% accuracy with ~2,600 parameters (vs ~89,000 for an equivalent MLP). The parameter advantage grows with width: at `784→[4096,4096]→10`, SN uses ~13K parameters vs ~84M for an MLP (~6,500× reduction).
+
+### Fashion-MNIST Classification
+
+```
+# Train on Fashion-MNIST
+python sn_fashion.py --mode train --arch 100,100 --epochs 20
+
+# Test accuracy
+python sn_fashion.py --mode test
+
+# Benchmark multiple seeds
+python sn_fashion.py --mode benchmark --seeds 5
+```
 
 ### Batch Experiments
 
@@ -191,13 +204,13 @@ The `benchmarks/` directory contains eight head-to-head comparisons between SNs 
 
 ```
 # Softstair-Wavepacket (10D) - run with 20 seeds
-for s in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19; do
+for s in $(seq 0 19); do
   python -m benchmarks.benchmark_softstair_wavepacket --seed $s \
     --sn_phi_knots 650 --sn_Phi_knots 714
 done
 
 # Shared-Warped-Ridge (16D)
-for s in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19; do
+for s in $(seq 0 19); do
   python -m benchmarks.benchmark_shared_warped_ridge --seed $s \
     --phi-knots 340 --Phi-knots 350
 done
@@ -220,7 +233,7 @@ Both networks use cubic splines, identical parameter counts, same optimizer. SN'
 Multi-head regression benchmark favoring SN's shift-based structure:
 
 ```
-for s in 0 1 2 3 4 5 6 7 8 9; do
+for s in $(seq 0 9); do
   python -m benchmarks.kan_sn_densehead_shift_bench \
     --dims 12 --heads 64 --test_size 50000 \
     --alpha 0.08 --beta 0.7 --q_bias 0.15 \
@@ -241,7 +254,7 @@ done
 Multi-output benchmark with monotonicity constraints:
 
 ```
-for s in 0 1 2 3 4 5 6 7 8 9; do
+for s in $(seq 0 9); do
   python -m benchmarks.kan_sn_monoindex_bench \
     --dims 20 --n_quantiles 9 --test_size 50000 \
     --epochs 4000 --device cpu --seed $s \
@@ -255,6 +268,29 @@ for s in 0 1 2 3 4 5 6 7 8 9; do
     --equalize_params --prefer_leq
 done
 ```
+
+## Embedded Deployment: Nintendo DS Demo
+
+As a demonstration of extreme parameter efficiency, this repository includes a complete **Nintendo DS homebrew application** that performs real-time MNIST digit classification on 2004-era hardware (67 MHz ARM9, 4 MB RAM, no FPU).
+
+The implementation uses Q16.16 fixed-point arithmetic and achieves:
+- **~2,600 parameters** for a `784→[100,100]→10` network (an equivalent MLP would need ~89,000)
+- Real-time inference with touchscreen digit drawing
+- Full forward pass without floating-point operations
+
+To export a trained model for the DS:
+
+```
+# Train a model (if not already trained)
+python sn_mnist.py --mode train --arch 100,100 --epochs 10
+
+# Export weights in SNDS v3 format (Q16.16 fixed-point)
+python sn_mnist.py --mode export_nds
+```
+
+This creates `sprecher_ds/sn_weights.bin` containing the quantized network weights.
+
+**For full setup instructions** (including devkitPro toolchain setup, melonDS emulator configuration, and running on real DS hardware with flashcarts), see [`sprecher_ds/README.md`](sprecher_ds/README.md).
 
 ## Command Reference
 
@@ -312,33 +348,38 @@ done
 
 ```
 sprecher-network/
-├── sn_experiments.py                    # Main CLI for function approximation
-├── sn_mnist.py                          # MNIST classification example
-├── sn_sweeps.py                         # Batch experiment runner
-├── requirements.txt                     # Dependencies
+├── sn_experiments.py          # Main CLI for function approximation
+├── sn_mnist.py                # MNIST classification example
+├── sn_fashion.py              # Fashion-MNIST classification
+├── sn_sweeps.py               # Batch experiment runner
+├── requirements.txt           # Dependencies
 ├── README.md
-├── sn_core/                             # Core package
-│   ├── __init__.py                      # Package exports
-│   ├── model.py                         # Splines, blocks, network architecture
-│   ├── train.py                         # Training loop, schedulers, BN utilities
-│   ├── data.py                          # Dataset implementations
-│   ├── plotting.py                      # Visualization utilities
-│   ├── config.py                        # Global configuration
-│   └── export.py                        # Parameter export utilities
-└── benchmarks/                          # Comparison benchmarks
-    ├── ablations.py                     # Feature ablation study
-    ├── benchmark_scalability.py         # Memory scaling vs competitors
-    ├── pinn_sn_vs_kan_poisson.py        # PINN benchmark
-    ├── benchmark_softstair_wavepacket.py
-    ├── benchmark_shared_warped_ridge.py
-    ├── benchmark_shared_warp_chirp.py
-    ├── benchmark_motif_chirp.py
-    ├── kan_sn_inputshift_bump_bench.py
-    ├── kan_sn_oscillatory_headshift_bench.py
-    ├── benchmark_barebones_sn_vs_kan_pwl_vs_pchip.py
-    ├── quantile_harmonics.py
-    ├── kan_sn_densehead_shift_bench.py  # Dense-head benchmark
-    └── kan_sn_monoindex_bench.py        # Monotonic index benchmark
+│
+├── sn_core/                   # Core library
+│   ├── __init__.py            # Package exports
+│   ├── model.py               # Splines, blocks, network architecture
+│   ├── train.py               # Training loop, schedulers, BN utilities
+│   ├── data.py                # Dataset implementations
+│   ├── plotting.py            # Visualization utilities
+│   ├── config.py              # Global configuration
+│   └── export.py              # Parameter export utilities
+│
+├── benchmarks/                # Comparison benchmarks
+│   ├── ablations.py
+│   ├── benchmark_scalability.py
+│   ├── pinn_sn_vs_kan_poisson.py
+│   ├── benchmark_softstair_wavepacket.py
+│   ├── benchmark_shared_warped_ridge.py
+│   ├── kan_sn_densehead_shift_bench.py
+│   ├── kan_sn_monoindex_bench.py
+│   └── ...
+│
+└── sprecher_ds/               # Nintendo DS homebrew demo
+    ├── README.md              # DS-specific setup instructions
+    ├── source/
+    │   └── sprecher_ds.cpp    # Fixed-point inference engine
+    ├── Makefile
+    └── make_sd.py             # SD card image creator
 ```
 
 ## Configuration
@@ -420,7 +461,7 @@ Sprecher (1965) showed that any continuous f:[0,1]ⁿ → ℝ can be represented
 
 with a single monotonic φ, a continuous Φ, and scalar weights λₚ. The sum over q runs from 0 to 2n. This architecture directly implements this formula with learnable components and extends it to deep compositions.
 
-**Key insight:** The use of weight *vectors* rather than *matrices* maintains fidelity to Sprecher's construction while providing O(LN + LG) parameter scaling-dramatically more efficient than MLPs' O(LN²) or KANs' O(LN²G).
+**Key insight:** The use of weight *vectors* rather than *matrices* maintains fidelity to Sprecher's construction while providing O(LN + LG) parameter scaling - dramatically more efficient than MLPs' O(LN²) or KANs' O(LN²G).
 
 ## Citation
 
@@ -430,6 +471,7 @@ If you use this code, please cite:
 @article{hagg2025sprecher,
   title={Sprecher Networks: A Parameter-Efficient Kolmogorov-Arnold Architecture},
   author={H{\"a}gg, Christian and Kohn, Kathl{\'e}n and Marchetti, Giovanni Luca and Shapiro, Boris},
+  journal={arXiv preprint arXiv:2512.19367},
   year={2025}
 }
 ```
