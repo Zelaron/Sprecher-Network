@@ -2,7 +2,7 @@
 
 A real-time MNIST digit classifier running on the Nintendo DS, demonstrating the extreme parameter efficiency of Sprecher Networks. This implementation performs neural network inference on 2004-era hardware using only **fixed-point arithmetic** - no floating-point unit required.
 
-## Why This Exists
+## Why this exists
 
 The Nintendo DS has:
 - **67 MHz ARM9** processor
@@ -32,7 +32,7 @@ This is the O(N) vs O(N²) scaling difference in action.
 | [melonDS](https://melonds.kuribo64.net/) | DS emulator (recommended over DeSmuME) |
 | MSYS2 | Build environment (included with devkitPro on Windows) |
 
-### For Real Hardware
+### For real hardware
 
 | Hardware | Purpose |
 |----------|---------|
@@ -43,13 +43,13 @@ This is the O(N) vs O(N²) scaling difference in action.
 
 ---
 
-## Quick Start (Emulator)
+## Quick start (Emulator)
 
-### Step 1: Train and Export
+### Step 1: Train and export
 
 From the main project directory:
 
-```bash
+```
 # Train the model
 python sn_mnist.py --mode train --arch 100,100 --epochs 10
 
@@ -61,7 +61,7 @@ python sn_mnist.py --mode export_nds
 
 Open the **MSYS2/devkitPro terminal**, then:
 
-```bash
+```
 cd /path/to/sprecher-network/sprecher_ds
 make clean
 make
@@ -69,9 +69,9 @@ make
 
 This produces `sprecher_ds.nds` (~250 KB).
 
-### Step 3: Create SD Card Image
+### Step 3: Create SD card image
 
-```bash
+```
 python make_sd.py
 ```
 
@@ -96,15 +96,15 @@ The top screen displays network info and predictions with confidence scores.
 
 ---
 
-## Real Hardware Setup
+## Real hardware setup
 
-### Step 1: Prepare Files
+### Step 1: Prepare files
 
 After building (Steps 1-2 above), you need two files:
 - `sprecher_ds.nds` - the ROM
 - `sn_weights.bin` - the trained weights
 
-### Step 2: Set Up Flashcart
+### Step 2: Set up flashcart
 
 #### For R4-style cards (R4, R4i Gold, Ace3DS+, DSTT, etc.)
 
@@ -128,7 +128,7 @@ If running via TWiLight Menu++ or similar:
 3. Power on and select `sprecher_ds.nds`
 4. Draw and classify!
 
-### Hardware Notes
+### Hardware notes
 
 - **DS Lite** has the best screen quality for the touch interface
 - **DSi/3DS** work but may require specific DLDI patches (usually auto-patched by TWiLight Menu++)
@@ -148,7 +148,7 @@ If running via TWiLight Menu++ or similar:
 
 ---
 
-## File Reference
+## File reference
 
 | File | Description |
 |------|-------------|
@@ -163,24 +163,13 @@ If running via TWiLight Menu++ or similar:
 
 ## Troubleshooting
 
-### White Screen on Startup
-
-The VBlank interrupt handler may be missing. Ensure `sprecher_ds.cpp` contains:
-
-```cpp
-void VblankHandler() { }
-// ... in main():
-irqSet(IRQ_VBLANK, VblankHandler);
-irqEnable(IRQ_VBLANK);
-```
-
 ### "FAT init FAILED!" (Emulator)
 
 - Verify DLDI is enabled in melonDS settings
 - Check that `sd.img` path is correct
 - Regenerate with `python make_sd.py`
 
-### "FAT init FAILED!" (Real Hardware)
+### "FAT init FAILED!" (Real hardware)
 
 - Reformat SD card as FAT32
 - Try a different SD card (some old cards have compatibility issues)
@@ -192,13 +181,13 @@ irqEnable(IRQ_VBLANK);
 - On real hardware, ensure the file is in the SD card root
 - Check filename - some systems convert to `SN_WEIGH.BIN`
 
-### Compilation Errors
+### Compilation errors
 
 - Use the MSYS2 terminal from devkitPro (not regular cmd/PowerShell)
 - Verify `DEVKITARM` environment variable is set
 - Run `pacman -S nds-dev` if libnds is missing
 
-### Poor Recognition Accuracy
+### Poor recognition accuracy
 
 - Train for more epochs (10+ recommended)
 - Draw digits **centered** and **large** on the screen
@@ -207,24 +196,24 @@ irqEnable(IRQ_VBLANK);
 
 ---
 
-## Technical Details
+## Technical details
 
-### Fixed-Point Arithmetic
+### Fixed-point arithmetic
 
 All computation uses **Q16.16 format** (16 integer bits, 16 fractional bits):
 
-```cpp
+```
 typedef int32_t fixed;
 #define FIX_SHIFT 16
 #define FLOAT_TO_FIX(f) ((fixed)((f) * 65536.0f))
 #define FIX_MUL(a, b) ((fixed)(((int64_t)(a) * (b)) >> 16))
 ```
 
-### Saturating Operations
+### Saturating operations
 
 Overflow protection prevents wrap-around errors:
 
-```cpp
+```
 static inline fixed fix_add_sat(fixed a, fixed b) {
     int64_t sum = (int64_t)a + b;
     if (sum > INT32_MAX) return INT32_MAX;
@@ -233,16 +222,16 @@ static inline fixed fix_add_sat(fixed a, fixed b) {
 }
 ```
 
-### Fast Exp Approximation
+### Fast exp approximation
 
 Softmax requires exponentiation, implemented via lookup table:
 
-```cpp
+```
 // 257-entry table for 2^(k/256), k=0..256
 // exp(x) ≈ 2^(x / ln(2))
 ```
 
-### SNDS v3 Binary Format
+### SNDS binary format
 
 The weight file uses a compact binary format:
 
@@ -255,7 +244,7 @@ All values: Q16.16 fixed-point (4 bytes each)
 
 ---
 
-## Building from Scratch
+## Building from scratch
 
 Full rebuild sequence:
 
