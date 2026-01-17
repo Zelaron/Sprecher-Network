@@ -1043,7 +1043,7 @@ int main(void) {
         }
         iprintf("\n");
 
-        iprintf(" SN params: %lu  (MLP: %llu)\n", (unsigned long)net.total_params, (unsigned long long)mlp_params);
+        iprintf(" SN params: %lu (MLP: %llu)\n", (unsigned long)net.total_params, (unsigned long long)mlp_params);
 
         iprintf("\n Ready! Draw a digit, press A.\n");
 
