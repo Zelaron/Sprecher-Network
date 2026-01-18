@@ -56,7 +56,7 @@ python sn_mnist.py --mode train --arch 100,100 --epochs 10
 # Export weights for NDS (creates sprecher_ds/sn_weights.bin)
 python sn_mnist.py --mode export_nds
 
-# Note that a default sprecher_ds/sn_weights.bin file from the above two commands is included in the codebase.
+# Note that a default sprecher_ds/sn_weights.bin file from the above two commands is included in the codebase
 ```
 
 ### Step 2: Build the ROM
