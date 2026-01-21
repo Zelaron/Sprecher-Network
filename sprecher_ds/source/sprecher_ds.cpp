@@ -1114,16 +1114,6 @@ int main(void) {
             // Forward pass (raw logits).
             net_forward(&net, input, logits_buf, true);
 
-            // Raw argmax (useful for debugging).
-            int raw_pred = 0;
-            fix16 raw_best = logits_buf[0];
-            for (uint32_t i = 1; i < net.output_dim; i++) {
-                if (logits_buf[i] > raw_best) {
-                    raw_best = logits_buf[i];
-                    raw_pred = (int)i;
-                }
-            }
-
             // Optional: blank-baseline calibration (removes constant class bias).
             bool used_calib = have_baseline && (baseline_logits != NULL);
             if (used_calib) {
@@ -1151,11 +1141,7 @@ int main(void) {
             clear_row(17);
 
             clear_row(18);
-            if (used_calib) {
-                iprintf("\x1b[18;0HPREDICTED: %d (raw %d)", pred, raw_pred);
-            } else {
-                iprintf("\x1b[18;0HPREDICTED: %d", pred);
-            }
+            iprintf("\x1b[18;0HPREDICTED: %d", pred);
 
             if (net.output_dim <= 10) {
                 // Two-column display (fits 32-col console without wrapping).
