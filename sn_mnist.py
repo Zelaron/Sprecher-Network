@@ -535,7 +535,6 @@ def auto_discover_and_select_model(args, mode_name):
             print(f"ERROR: Could not find model file")
             return None, None
         
-        # Determine device
         if args.device == "auto":
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -1077,7 +1076,6 @@ def train_mnist(args):
         model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False), strict=False)
         print(f"Loaded saved model from {model_path} for further training.")
     
-    # Setup data
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))  # This gives [-1, 1], we'll convert to [0, 1] later
@@ -1085,14 +1083,12 @@ def train_mnist(args):
     train_dataset = MNIST(root=data_dir, train=True, download=True, transform=transform)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     
-    # Setup optimizer
     optimizer = optim.AdamW(
         model.parameters(), 
         lr=lr,
         weight_decay=MNIST_CONFIG.get('weight_decay', 1e-6)
     )
     
-    # Setup scheduler if requested
     scheduler = None
     if CONFIG.get('use_advanced_scheduler', False):
         from sn_core.train import PlateauAwareCosineAnnealingLR

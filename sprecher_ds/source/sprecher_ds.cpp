@@ -100,7 +100,6 @@ static const uint32_t EXP2_LUT_Q16[257] = {
 
 // exp(x) in Q16.16, using exp(x)=2^(x/ln2) with an exp2 LUT.
 static inline fix16 exp_fix(fix16 x) {
-    // round(1/ln(2) * 65536) = 94548
     const int32_t INV_LN2_Q16 = 94548;
     // y = x / ln(2) in Q16.16
     fix16 y = sat_i64(((int64_t)x * (int64_t)INV_LN2_Q16) >> FIX_SHIFT);
