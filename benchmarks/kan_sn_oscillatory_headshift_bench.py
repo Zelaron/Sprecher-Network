@@ -90,7 +90,7 @@ class OscillatoryHeadShiftTask:
     heads: int
     alpha: float = 0.35            # head-phase shift scale
     omega: float = 6.0 * math.pi   # base angular frequency
-    seed: int = 20240518           # fixed seed so the target function is the same across runs
+    seed: int = 20270809           # fixed seed so the target function is the same across runs
 
     def __post_init__(self) -> None:
         g = torch.Generator()

@@ -207,7 +207,6 @@ class SimpleSpline(nn.Module):
         d[1:-1] = d_interior_full
 
         # ---------------- endpoint slopes ----------------
-        # MATLAB's pchip endpoint formula with monotone limiting
         d0 = ((2 * h_safe[0] + h_safe[1]) * delta[0] - h_safe[0] * delta[1]) / (h_safe[0] + h_safe[1] + 1e-12)
         dN = ((2 * h_safe[-1] + h_safe[-2]) * delta[-1] - h_safe[-1] * delta[-2]) / (h_safe[-1] + h_safe[-2] + 1e-12)
 
@@ -788,7 +787,6 @@ class SprecherLayerBlock(nn.Module):
         self.input_range = TheoreticalRange(0.0, 1.0) if layer_num == 0 else None
         self.output_range = None
 
-        # NEW: per-channel input/output intervals (populated by network during updates)
         self.input_min_per_dim = None   # tensor[d_in] or None
         self.input_max_per_dim = None   # tensor[d_in] or None
         self.output_min_per_q = None    # tensor[d_out] (post-Φ+residual, pre-sum) or None
@@ -1073,7 +1071,7 @@ class SprecherLayerBlock(nn.Module):
 
     def compute_pooling_residual_bounds_per_output(self, input_interval, a_per_dim=None, b_per_dim=None):
         """
-        NEW (tight): Compute per-output pooling residual intervals for composition.
+        Compute per-output pooling residual intervals for composition.
         """
         device = self.phi.knots.device
         if self.residual_pooling_weights is None:

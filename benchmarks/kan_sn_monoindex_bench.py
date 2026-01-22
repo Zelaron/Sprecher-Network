@@ -11,17 +11,6 @@ where:
   - z_j are fixed quantile locations (e.g., Normal inverse CDF at τ_j).
   - g is a smooth, bounded, monotone squashing (tanh).
 
-Why this favors SN (but remains fair)
--------------------------------------
-• Structural match: SN blocks compute s_q = Σ_i λ_i φ(x_i + η q) + ... and pass through Φ.
-  The learned q-shift (η·q) + monotone φ + outer Φ naturally represent families of outputs
-  that are smooth shifts of a common latent index. KANs can approximate this, but do not
-  share this inductive bias and use fixed clamped-uniform knots.
-
-• Fairness preserved: parameter parity (KAN K picked to match SN params), same BN semantics
-  at test (“batch_no_update” by default), same residual style (linear) and outside behavior,
-  identical training inputs/targets, and equal epochs.
-
 Metrics
 -------
 We report:

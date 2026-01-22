@@ -5,7 +5,7 @@ sn_fashion_mnist.py - Fashion-MNIST classification using Sprecher Networks
 This script provides a benchmark for comparing Sprecher Networks against
 GS-KAN and other KAN architectures on the Fashion-MNIST dataset.
 
-GS-KAN reference results (from Eliasson 2025):
+GS-KAN reference results:
   - Architecture: [784, 15, 15, 10]
   - Parameters: 12,346
   - Best Test Accuracy: 87.03 ± 0.32%
@@ -28,8 +28,6 @@ from tqdm import tqdm
 import numpy as np
 import matplotlib
 
-# Set non-interactive backend before importing pyplot if saving plots or not showing
-# This fixes tkinter issues on Windows systems without proper Tcl/Tk configuration
 if '--save_plots' in sys.argv or '--no_show' in sys.argv:
     matplotlib.use('Agg')
 
@@ -74,7 +72,6 @@ FASHION_CONFIG = {
 # =============================================================================
 
 def safe_update_all_domains(model):
-    """Safely call update_all_domains, catching NaN-related errors."""
     try:
         model.update_all_domains()
     except AssertionError as e:
@@ -287,7 +284,6 @@ def train_epoch(model, train_loader, optimizer, scheduler, loss_function, device
 
             outputs = model(images)
 
-            # Guard: outputs must be finite
             if not torch.isfinite(outputs).all():
                 skipped_batches += 1
                 if first_skip_info is None:
@@ -296,7 +292,6 @@ def train_epoch(model, train_loader, optimizer, scheduler, loss_function, device
 
             loss = loss_function(outputs, labels)
 
-            # Guard: loss must be finite
             if not torch.isfinite(loss):
                 skipped_batches += 1
                 if first_skip_info is None:
@@ -305,7 +300,6 @@ def train_epoch(model, train_loader, optimizer, scheduler, loss_function, device
 
             loss.backward()
 
-            # Guard: gradients must be finite (prevents Inf*0 -> NaN during clipping)
             grads_finite = True
             for p in model.parameters():
                 if p.grad is None:
@@ -327,10 +321,8 @@ def train_epoch(model, train_loader, optimizer, scheduler, loss_function, device
             # Safe gradient clipping
             max_norm = float(CONFIG.get('max_grad_norm', 1.0))
             try:
-                # PyTorch >= 1.12 supports error_if_nonfinite
                 grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm, error_if_nonfinite=True)
             except TypeError:
-                # Older PyTorch: do regular clipping (we already verified grads are finite)
                 grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
             except RuntimeError:
                 # Non-finite norm detected
@@ -444,7 +436,7 @@ def print_comparison_header():
     print("\n" + "="*70)
     print("FASHION-MNIST BENCHMARK: Sprecher Networks vs GS-KAN")
     print("="*70)
-    print("\nGS-KAN Reference (Eliasson 2025):")
+    print("\nGS-KAN Reference Baseline:")
     print("  Architecture: [784, 15, 15, 10]")
     print("  Parameters: 12,346")
     print("  Test Accuracy: 87.03 ± 0.32%")

@@ -9,15 +9,6 @@ version of a shared latent index. This favors SN's "shared φ/Φ + per-head shif
 inductive bias but remains fair to KAN via parameter parity and aligned BN eval
 semantics.
 
-Key design points (aligned with your repo):
-- Uses the same parity helpers and BN evaluation modes as in
-  benchmarks/kan_sn_parity_bench.py (imported directly).
-- CLI flags match the command you attempted to run:
-    --dims, --heads, --test_size, --alpha, --beta, --q_bias,
-    the full block of --sn_* flags, the full block of --kan_* flags,
-    and parity/eval flags including --equalize_params, --prefer_leq,
-    --bn_eval_mode, --eval_batch_size.
-
 Dataset (DenseHeadShift)
 ------------------------
 Let x ∈ [0,1]^D, heads j = 0..(m-1). We build:
@@ -30,9 +21,9 @@ Targets:
   y_j(x) = tanh( β * [ μ(x) + σ(x)*z_j + α*q_j + q_bias*q_j ] )
 
 Where:
-  - β  = tanh squashing strength (your --beta)
-  - α  = head shift strength (your --alpha)
-  - q_bias adds a simple linear bias across heads (your --q_bias)
+  - β  = tanh squashing strength
+  - α  = head shift strength
+  - q_bias adds a simple linear bias across heads
 
 Outputs are ordered in j and typically monotone in j; we also report a
 monotonicity-violation rate like the MQSI bench.

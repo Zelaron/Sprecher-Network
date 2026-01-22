@@ -17,12 +17,6 @@ KAN (Kolmogorov-Arnold Network):
   - NO SiLU residual, NO grid updates, NO normalization
   - Fixed knot locations (no grid adaptation)
 
-Fairness:
----------
-  - Same train/test data, optimizer, LR schedule, dtype, epochs.
-  - Parameters are matched: by default, KAN's knot count is automatically chosen so that
-    the total parameter count matches the SN's parameter count as closely as possible.
-
 Target function (chosen to highlight an inherent SN advantage):
 --------------------------------------------------------------
 High-dimensional *shared-warp ridge* function on x ∈ [0,1]^d:

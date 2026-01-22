@@ -14,12 +14,7 @@
 // Declare it as an optional weak symbol so this code builds against both old and new libnds.
 extern "C" void irqInit(void) __attribute__((weak));
 
-// Top screen text console
 static PrintConsole topScreen;
-
-// ============================================================
-// CRITICAL: VBlank interrupt handler prevents white screen freeze
-// ============================================================
 void VblankHandler() { }
 
 // ============================================================

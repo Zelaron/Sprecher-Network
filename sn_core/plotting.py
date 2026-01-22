@@ -5,17 +5,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.ticker import MultipleLocator
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (imported for side-effect: 3D projection)
+from mpl_toolkits.mplot3d import Axes3D
 from contextlib import contextmanager
 
 from .config import CONFIG
-# NEW: import BN-safe helpers so plotting forwards match training semantics
 from .train import has_batchnorm, use_batch_stats_without_updating_bn
 
 
 # ---------------------------------------------------------------------
-# Helper: run a forward pass for visualization in **eval()** (no grads)
-# while making only BN layers temporarily use **batch stats** without
+# Helper: run a forward pass for visualization in eval() (no grads)
+# while making only BN layers temporarily use batch stats without
 # mutating their running statistics. This avoids vertical offsets that
 # arise from eval-mode BN running stats on the final scalar output.
 # ---------------------------------------------------------------------
@@ -24,11 +23,11 @@ def nonmutating_infer(model):
     """
     Context manager for visualization/evaluation forwards that:
 
-      - Puts the whole model in **eval()** for the duration of the block
+      - Puts the whole model in eval() for the duration of the block
         (Dropout disabled etc.).
       - If the model has BatchNorm layers, they temporarily use **batch
-        statistics** (train behavior) with *track_running_stats=False*,
-        so **no running stats are updated**. Everything is restored on
+        statistics** (train behavior) with track_running_stats=False,
+        so no running stats are updated. Everything is restored on
         exit.
       - Runs under torch.no_grad().
 

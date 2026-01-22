@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
 """benchmarks/benchmark_shared_warp_chirp.py
 
-Barebones benchmark: **piecewise-linear Sprecher Network (SN)** vs **cubic PCHIP KAN**.
-
-Design goals (per request):
-  - SN: PWL splines (φ and Φ are piecewise-linear) + **domain warmup** for ~10% epochs.
-  - KAN: **cubic Hermite splines with PCHIP slopes** on every edge (no grid updates).
-  - No extras: no residuals, no lateral mixing, no normalization, no grid updates.
-  - Fairness: parameter-matched (within ~1% by default; often exact).
+Barebones benchmark: piecewise-linear Sprecher Network (SN) vs cubic PCHIP KAN.
 
 Target function rationale (why SN can win fairly):
   The target is *permutation-symmetric* and has a *shared monotone per-coordinate warp*:
@@ -638,9 +632,9 @@ def main() -> None:
     args = parse_args()
 
     if int(args.epochs) != 4000:
-        print(f"[note] epochs is {args.epochs}; request asked for 4000.")
+        print(f"[note] epochs is {args.epochs}.")
     if int(args.sn_domain_warmup) != 400:
-        print(f"[note] sn_domain_warmup is {args.sn_domain_warmup}; request asked for 400.")
+        print(f"[note] sn_domain_warmup is {args.sn_domain_warmup}.")
 
     if int(args.width) > 20:
         raise ValueError("Please keep --width <= 20 for this benchmark.")

@@ -35,8 +35,6 @@ CONFIGURATION:
     - Number of epochs (default: 5000)
     - Number of seeds (default: 10)
     - And more...
-
-Author: Auto-generated for SN paper ablation study
 """
 
 import sys

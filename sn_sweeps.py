@@ -1,5 +1,5 @@
 """
-Modernized batch sweep runner for Sprecher Network experiments.
+Batch sweep runner for Sprecher Network experiments.
 
 This script can run multiple experiments in parallel, allows selecting specific
 sweeps to run, and provides a rich, dynamic progress display.

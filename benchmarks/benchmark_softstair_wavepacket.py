@@ -12,7 +12,7 @@ Key constraints (by design):
   - 4000 training epochs (steps), SN domain updates only for first 400 epochs.
   - Parameter-matched (KAN knot count auto-chosen to closely match SN parameter count).
 
-Target function choice (intentionally SN-friendly but reviewer-defensible):
+Target function choice:
   - A permutation-invariant "ridge" function that depends on inputs through an average of a shared
     monotone 1D transform (inner φ-like structure), followed by a localized high-frequency wavepacket.
   - This highlights SN's *parameter sharing* across dimensions (single learned φ reused everywhere)
@@ -374,9 +374,9 @@ def main() -> None:
     # ---- enforce constraints
     hidden = parse_arch(args.arch)
     if args.epochs != 4000:
-        print(f"[note] --epochs={args.epochs} (default in paper: 4000).")
+        print(f"[note] --epochs={args.epochs}")
     if args.domain_warmup != 400:
-        print(f"[note] --domain_warmup={args.domain_warmup} (default in paper: 400).")
+        print(f"[note] --domain_warmup={args.domain_warmup}")
     if args.domain_warmup > args.epochs:
         raise ValueError(f"domain_warmup ({args.domain_warmup}) cannot exceed epochs ({args.epochs})")
     if args.input_dim < 2:

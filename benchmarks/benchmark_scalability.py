@@ -1,7 +1,6 @@
 # benchmarks/benchmark_scalability.py
 """
-Memory Battle Royale: Find OOM breaking point for competing architectures
-while proving SN scales linearly.
+Find OOM breaking point for competing architectures while proving SN scales linearly.
 """
 from __future__ import annotations
 
@@ -179,7 +178,7 @@ class KANNet(nn.Module):
 
 class _GSKANLayer(nn.Module):
     """
-    GS-KAN layer proxy (per user's spec):
+    GS-KAN layer proxy:
       y_q = sum_p lambda_{p,q} * psi(x_p + epsilon_q)
     """
 
@@ -232,7 +231,7 @@ class GSKANNet(nn.Module):
 
 class _SaKANLayer(nn.Module):
     """
-    SaKAN proxy (per user's spec):
+    SaKAN proxy:
       output = spline_path(shared) + residual_path(x @ U)
 
     O(N^2) bottleneck is the residual matrix U (n_in x n_out).
@@ -858,8 +857,6 @@ def run_single_model_test(
     except RuntimeError as e:
         if is_oom_error(e):
             status = "OOM"
-            # FIX #1: Set peak_mb to None for OOM cases
-            # The partial measurement before crash is misleading
             peak_mb = None
         else:
             status = f"ERROR({type(e).__name__})"
@@ -944,7 +941,6 @@ def run_width_test(
 def main() -> None:
     torch.manual_seed(0)
 
-    # Fixed config
     depth = 3
     batch_size = 32
     input_dim = 64
